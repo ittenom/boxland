@@ -36,6 +36,10 @@ var TruncateOrder = []string{
 	"publish_diffs",
 	"drafts",
 	"designers",
+	"player_email_verifications",
+	"player_sessions",
+	"player_oauth_links",
+	"players",
 }
 
 // Reset deletes every row from every table in TruncateOrder. Errors per

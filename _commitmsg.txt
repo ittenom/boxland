@@ -1,109 +1,102 @@
-Tasks 73-87: ECS sim core + persistence layer
+Tasks 88-97: player auth, OAuth, WebSocket gateway, broadcaster
 
-The runtime ECS is in place end-to-end: sparse-set storage, deterministic
-system scheduler, swept-AABB collision (cross-runtime gated), AOI version
-vectors, A* pathfinding, plus the Postgres + Redis Streams persistence
-flow with full recovery.
+The full WS surface is up: realm-tagged Auth handshake, single
+ClientMessage dispatcher, per-connection rate limiter, broadcaster with
+three subscriber policies. Player auth + JWT + email verification + OAuth
+linking land alongside.
 
-  ECS core (73-75):
-    - EntityID with packed 24-bit index + 8-bit generation; sentinel 0
-      reserved as invalid; generations skip 0 on uint8 wraparound
-    - World: spawn/despawn/alive/count with O(1) recycle list
-    - ComponentStore[T]: dense + owners + sparse arrays; O(1) Set/Get/
-      Remove via swap-with-last; Each() loop is safe to mutate the
-      current entity (re-checks owners[i] each step)
-    - Stores bundle with Position/Velocity/Sprite/Collider; Despawn
-      auto-cleans every store
-    - Microbenchmark gate: 10k entities Position+Velocity tick — measured
-      35-36 µs median per tick (28x headroom under the 1ms budget). Gates
-      both BenchmarkTick_10kEntities and TestPerf_10kEntitiesTickUnder1ms.
-      Just bench wired with a single-quoted '-bench=.' so PowerShell
-      stops globbing the pattern.
+  Player auth + email verification (88-89):
+    - migration 0016_players: players (citext email, password_hash NULL
+      allowed), player_oauth_links, player_sessions, player_email_
+      verifications. Deferred constraint trigger enforces "every player
+      has either a password or at least one OAuth link" so single-tx
+      OAuth signups (player + link in same statement) pass.
+    - internal/auth/player: argon2id password hashing (reuses the
+      designer package's helpers), email verification with one-shot
+      sha256-hashed tokens (24h TTL), refresh sessions (30d), JWT
+      access tokens (HS256, 15min, claims include realm="player").
+      VerifyEmail is transactional + double-consume safe. 11 tests.
 
-  System scheduler (76):
-    - Stage enum: Input(10) -> AI(20) -> Movement(30) -> Collision(40)
-      -> Trigger(50) -> Audio(60) -> Broadcast(70)
-    - Insertion sort keeps registration order stable within a stage
-    - Step propagates the first system error and SKIPS the rest so a
-      failure surfaces immediately; tick counter only advances on success
-    - 6 unit tests: order, stable-within-stage, tick counter, error
-      propagation, duplicate-name panic, context cancellation
+  OAuth (90):
+    - Provider interface (Name, AuthCodeURL, Exchange) + Registry
+    - GoogleProvider as the working reference using golang.org/x/oauth2
+      with PKCE S256 challenges; pulls userinfo from Google's OIDC
+      endpoint to get sub + email + email_verified
+    - LinkOrCreatePlayer: 3-way path -- existing link returns linked
+      player; existing email links to that player; otherwise creates
+      a new OAuth-only account in one transaction
+    - State + PKCE helpers + cookie wrappers for the round-trip
+    - 9 tests including registry duplication panic, PKCE length
+      conformance to RFC 7636, link-or-create flow paths
 
-  Spatial index (77):
-    - Uniform grid with 16-tile chunks (16 * 32 = 512 px per chunk)
-    - ChunkID packs (cx, cy) into a uint64; floor-div for negative coords
-    - Add/Move/Remove are O(1); QueryChunk + QueryRange exposed
-    - Per-chunk Version() bumps on every mutation -- consumed by AOI
-    - 8 unit tests covering chunk math, range queries, version bumps,
-      and stats reporting
+  WebSocket gateway + dispatcher + rate limiter (91-93):
+    - github.com/coder/websocket for the upgrade
+    - Connection holds (id, realm, subject, clientKind, version,
+      Subscription, closed atomic bool)
+    - performAuthHandshake: reads first FB frame, decodes Auth, dispatches
+      to AuthBackend (player JWT verify or designer ticket redeem) based
+      on Realm, mutates conn.realm/subject/etc on success
+    - Dispatcher: HandlePlayer + HandleDesigner registration; designer-
+      only verbs check connection.Realm() never the token
+    - RateLimiter: token bucket (50/s sustained, 100 burst), 5-strike
+      escalation closes the connection with PolicyViolation
+    - Default verbs registered: JoinMap, LeaveMap, Move, Interact,
+      Heartbeat, AckTick, Spectate (player); DesignerCommand (designer)
+    - 5 integration tests over real WS: player auth + heartbeat
+      dispatched; bad token -> PolicyViolation close; designer-only
+      verb on player realm -> realm-violation close; same verb on
+      designer realm -> handler invoked with correct conn.Realm();
+      3 concurrent connections all register
 
-  Server-side swept-AABB collision (78):
-    - LITERAL Go port of schemas/collision.md and web/src/collision/move.ts
-    - All math int32 fixed-point sub-pixels (1 px = 256 sub-units)
-    - corpus_test.go runs every entry in /shared/test-vectors/collision.json
-      against the Go implementation -- ALL 32 vectors produce byte-
-      identical resolved deltas to the TS implementation. The
-      cross-runtime invariant from PLAN.md §1a now holds end-to-end on
-      both runtimes.
+  Broadcaster (94):
+    - Three policies: Player (bounded AOI, minimal fields), Designer
+      (unbounded, inspector fields), Spectator (bounded, minimal,
+      no own-entity)
+    - DiffEncoder is the per-conn blob builder; tests can inject a stub
+    - Tick walks every connection, skips conns without a Subscription
+      (haven't joined a map yet), writes the encoded blob with a 5s
+      write timeout, closes on write failure
+    - SetPolicy / Forget for designer spectator overrides
+    - 3 broadcaster tests: realm defaults are correct, Tick delivers
+      the encoded blob to subscribed conns over real WS, un-subscribed
+      conns are skipped
 
-  Tile + Static + Movement system (79):
-    - Tile component (layer_id, gx, gy)
-    - Static tag component (zero fields; presence-only)
-    - Movement system in internal/sim/systems/movement.go iterates
-      Velocity dense slice, skips entities owning Static, respects
-      MaxSpeed component-wise. 4 tests including the static-skip behavior
+  Verb wiring + reconnect + htmx-ext-ws (95-97):
+    - Move + Interact handlers exist + log; world integration deferred
+      to the runtime-glue task that wires per-instance world goroutines
+    - Reconnect path: AckTickPayload handler exists; the AOI
+      subscription's Reset() method (already shipped in task #80)
+      forces a full re-deliver on next Broadcast; gap-threshold check
+      land alongside world wiring
+    - htmx-ext-ws: vendored at /static/vendor/htmx-ext-ws.min.js
+      already; gateway accepts both binary (FlatBuffers, game traffic)
+      and text (htmx swaps) WS frames -- no server-side change needed
+      for designer surfaces to use it once the JS is wired
 
-  AOI subscriptions (80):
-    - Per-subscriber Acked map: chunk_id -> last-acked Version
-    - VisibleChunks computes the (2r+1)^2 window around FocusChunk
-    - DirtyChunks compares grid Version against the Acked vector,
-      returning only chunks whose state has actually advanced
-    - SetFocus / Reset / ForgetChunk / AckAll for the WS gateway's
-      reconnect + per-chunk-backpressure paths
-    - 8 unit tests covering radius math, dirty filtering, ack flow,
-      reset + forget, focus changes
-
-  A* pathfinding (81):
-    - 4-connected grid search with a min-heap open set
-    - Manhattan heuristic (admissible for 4-connected grids)
-    - Walkability check honors the entity's collision-layer mask -- a
-      tile is walkable iff its mask doesn't intersect the entity's mask
-      OR all its edge bits are clear
-    - Search budget cap returns ErrSearchExhausted instead of running
-      unbounded; 4096-node default
-    - 7 unit tests including layer-mask filtering, no-path detection,
-      gap threading, budget exhaustion, path-starts-at-start invariant
-
-  Persistence layer (82-87):
-    - migration 0015_map_state with PRIMARY KEY (map_id, instance_id)
-    - persist.EncodeMapState / DecodeMapState wrap the FlatBuffers
-      MapState codec; one schema serves Postgres warm-state blobs AND
-      Redis WAL checkpoints (PLAN.md §1)
-    - persist.ApplyMapState reconstitutes entities + tiles into a
-      fresh world for the recovery boot path
-    - persist.Mutation + EncodeMutation/DecodeMutation for individual
-      WAL entries
-    - WAL: per-instance stream wal:map:{map}:{instance} with
-      Append/Range/Trim and a flushFailing backpressure flag; XADD uses
-      MAXLEN ~ 100000 as the safety bound
-    - Persister.Flush: serialize world -> upsert map_state in tx ->
-      XTRIM MINID. On Postgres failure marks WAL as failing so future
-      Appends honor backpressure (refuse near MAXLEN)
-    - Recover: load snapshot blob, ApplyMapState, replay WAL entries
-      with .Tick > last_flushed_tick via the supplied applier
-
-  Test totals: 23 Go packages, 118 TS tests, all green under -p 1.
+  Test totals: 25 Go packages, all green. Cumulative: ~150+ Go tests,
+  118 TS tests.
 
   Decisions worth flagging:
-    * The Go MapState encoder splits world entities into two FB vectors:
-      tile entities (Tile component owners) go into MapState.Tiles; free
-      entities go into MapState.Entities. ApplyMapState reverses this.
-      Tile-and-free distinction matches the unified-entity model in
-      PLAN.md §1 (tiles ARE entities) but persists efficiently because
-      tiles need fewer per-row bytes.
-    * Persister.Flush trims AFTER Postgres commit; the brief overlap on
-      crash means recovery may replay already-snapshotted mutations.
-      PLAN.md §4k explicitly accepts this (mutations are idempotent at
-      the replay layer).
-    * Pathfinding "walkable" rule treats ANY edge bit as blocking. A
-      future one-way-edge extension (PLAN.md §11 #6) would refine this.
+    * The defer-constraint trigger on players is the cleanest way to
+      assert "needs password OR oauth link" since CHECK constraints
+      can't span tables. INITIALLY DEFERRED so the OAuth signup tx
+      (insert player + insert link) commits cleanly.
+    * Player JWT TTL is 15 min on purpose -- the WS connection
+      reauths via the long-lived refresh token if needed. Short
+      access tokens limit blast radius if one is leaked.
+    * GoogleProvider returns nil when its config is empty so the
+      gateway can decide whether to register based on a single check
+      ("did NewGoogleProvider yield a value?"). Adding Discord/Apple
+      follows the same pattern.
+    * The dispatcher's "additive" model (HandlePlayer is reachable on
+      both realms; HandleDesigner is designer-only) keeps from
+      registering most verbs twice while preserving the strict realm
+      boundary on the few designer-only opcodes.
+    * The rate limiter is intentionally generous (50/s sustained); it's
+      anti-bug rather than DDoS protection. Real DDoS lives at the
+      Cloudflare layer in front of Railway.
+    * Reconnect handling is built around AckTick + AOI.Reset rather
+      than a separate "snapshot resend" message. The next tick after
+      Reset() rolls every visible chunk back into DirtyChunks, so the
+      reconnect path falls naturally out of the per-tick broadcaster
+      loop without bespoke code.
