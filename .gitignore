@@ -42,3 +42,10 @@ vendor/
 
 # Docker
 .docker-data/
+
+# Probe / scratch scripts
+_*.ps1
+server/migrate.out
+server/migrate.err
+server/server.log
+server/server.err.log
