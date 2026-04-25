@@ -18,7 +18,7 @@ describe("mountPreview", () => {
 			imageSmoothingEnabled: false,
 			drawImage: () => undefined,
 			clearRect: () => undefined,
-		})) as typeof c.getContext;
+		})) as unknown as typeof c.getContext;
 		mountPreview(c, { url: "data:,", gridW: 24, gridH: 16, fps: 4 });
 		expect(c.width).toBe(24);
 		expect(c.height).toBe(16);
@@ -37,7 +37,7 @@ describe("autoMountPreviews", () => {
 				imageSmoothingEnabled: false,
 				drawImage: () => undefined,
 				clearRect: () => undefined,
-			})) as typeof c.getContext;
+			})) as unknown as typeof c.getContext;
 		}
 		autoMountPreviews();
 		const widths = [...document.querySelectorAll("canvas")].map((c) => c.width);
@@ -51,7 +51,7 @@ describe("autoMountPreviews", () => {
 			imageSmoothingEnabled: false,
 			drawImage: () => undefined,
 			clearRect: () => undefined,
-		})) as typeof c.getContext;
+		})) as unknown as typeof c.getContext;
 		autoMountPreviews();
 		const first = (c as HTMLCanvasElement & { __bxStop?: () => void }).__bxStop;
 		autoMountPreviews();

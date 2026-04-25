@@ -33,6 +33,7 @@ import (
 	"boxland/server/internal/logging"
 	mapsservice "boxland/server/internal/maps"
 	"boxland/server/internal/persistence"
+	"boxland/server/internal/playerweb"
 	"boxland/server/internal/publishing/artifact"
 	"boxland/server/internal/sim/runtime"
 	"boxland/server/internal/ws"
@@ -196,6 +197,17 @@ func runServe() error {
 	//   csrfMW( loadSessionMW( designer routes ) )
 	designerMount := csrfMW(loadSessionMW(designerhandlers.New(designerDeps)))
 
+	playerWebDeps := playerweb.Deps{
+		Auth:          playerAuthSvc,
+		Maps:          mapsSvc,
+		SecureCookies: cfg.Env == "prod",
+		// WSURL left empty -> handlers derive ws://host/ws from the
+		// request. Production deployments behind a reverse proxy can
+		// override via cfg in a future revision.
+	}
+	playerLoadSessionMW := playerweb.LoadSession(playerWebDeps)
+	playerMount := csrfMW(playerLoadSessionMW(playerweb.New(playerWebDeps)))
+
 	rootHandler := httpserver.New(
 		httpserver.Health{
 			Postgres: pgPool, // *pgxpool.Pool implements Ping(context.Context) error
@@ -203,6 +215,7 @@ func runServe() error {
 		},
 		httpserver.Mounts{
 			Designer: designerMount,
+			Player:   playerMount,
 			WS:       wsGateway.HTTPHandler(),
 		},
 	)

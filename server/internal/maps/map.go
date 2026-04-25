@@ -199,6 +199,19 @@ func (s *Service) List(ctx context.Context, search string) ([]Map, error) {
 	return s.Repo.List(ctx, opts)
 }
 
+// ListPublic returns every public map ordered by name. Used by the
+// player map picker (PLAN.md §6h); private maps stay invisible to the
+// player realm even before the spectator-policy gate runs.
+func (s *Service) ListPublic(ctx context.Context, search string) ([]Map, error) {
+	opts := repo.ListOpts{Order: "name ASC, id ASC"}
+	conds := squirrel.And{squirrel.Eq{"public": true}}
+	if search != "" {
+		conds = append(conds, squirrel.ILike{"name": "%" + search + "%"})
+	}
+	opts.Where = conds
+	return s.Repo.List(ctx, opts)
+}
+
 // Delete removes a map. Layers + tiles cascade.
 func (s *Service) Delete(ctx context.Context, id int64) error {
 	if err := s.Repo.Delete(ctx, id); err != nil {

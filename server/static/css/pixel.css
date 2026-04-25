@@ -790,3 +790,64 @@ p, li {
 .bx-scroll::-webkit-scrollbar-thumb        { background: var(--bx-line); border: var(--bx-px) solid var(--bx-bg-1); }
 .bx-scroll::-webkit-scrollbar-thumb:hover  { background: var(--bx-line-hi); }
 .bx-scroll::-webkit-scrollbar-corner       { background: var(--bx-bg-1); }
+
+
+/* -- Player surface (PLAN.md §6h) --------------------------------------- */
+/* Card grid used by the /play/maps picker. */
+.bx-cards {
+    list-style: none;
+    margin: 0; padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: var(--bx-s3);
+}
+.bx-card {
+    background: var(--bx-bg-2);
+    border: var(--bx-px) solid var(--bx-line);
+    padding: var(--bx-s3);
+    transition: transform 60ms ease, border-color 60ms ease;
+}
+.bx-card:hover {
+    border-color: var(--bx-accent);
+    transform: translateY(-1px);
+}
+.bx-card__title {
+    display: block;
+    font-weight: 700;
+    color: var(--bx-fg);
+    text-decoration: none;
+    margin-bottom: var(--bx-s1);
+}
+.bx-card__title:hover { color: var(--bx-accent); }
+.bx-card__meta { margin: 0; }
+
+/* Game shell: a Pixi canvas takes over the viewport with a small HUD. */
+.bx-game-body { overflow: hidden; }
+.bx-game-shell {
+    position: fixed;
+    inset: 36px 0 0 0; /* leave room for the topnav */
+    background: var(--bx-bg);
+    overflow: hidden;
+}
+.bx-game-shell canvas {
+    display: block;
+    image-rendering: pixelated;
+    width: 100%;
+    height: 100%;
+}
+.bx-game-hud {
+    position: fixed;
+    bottom: var(--bx-s3);
+    left: var(--bx-s3);
+    background: rgba(20, 16, 40, 0.85);
+    border: var(--bx-px) solid var(--bx-line);
+    padding: var(--bx-s2) var(--bx-s3);
+    color: var(--bx-fg-2);
+    pointer-events: none;
+    z-index: 10;
+}
+.bx-game-hud__row {
+    display: flex;
+    align-items: center;
+    gap: var(--bx-s2);
+}

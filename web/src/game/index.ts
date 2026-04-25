@@ -1,0 +1,35 @@
+// Boxland — game/ barrel.
+//
+// Public surface for the player game module. The Sandbox UI (task #131)
+// re-uses GameLoop + the prediction module to drive its own viewport.
+
+export { GameLoop } from "./loop";
+export type { GameLoopOptions, RendererLike, HudLike, LoopScheduler } from "./loop";
+
+export { PlaceholderCatalog } from "./catalog";
+
+export {
+	predictStep,
+	reconcile,
+	resolveHost,
+	freshLocalState,
+	HOST_SPEED_SUB_PER_MS,
+	RECONCILE_HARD_SNAP_SUB,
+} from "./prediction";
+
+export {
+	MovementIntent,
+	buildMovementCommands,
+	installMovementBindings,
+} from "./intents";
+
+export { mailboxAsWorld } from "./world";
+
+export type {
+	GameBootConfig,
+	LocalState,
+	ReconcileResult,
+	HostEntity,
+} from "./types";
+
+export { bootGame } from "./entry-game";

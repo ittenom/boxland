@@ -1,0 +1,89 @@
+package views
+
+import (
+	"fmt"
+
+	"boxland/server/internal/maps"
+)
+
+// PlayMapsProps drives /play/maps. Server picker is folded into the
+// same surface for v1 (single-tenant deploy = single server); the
+// header still names the active server so the future multi-server
+// picker has a place to slot in.
+type PlayMapsProps struct {
+	Player      string // displayed name (email if no display_name)
+	ServerName  string // "Default server" until multi-tenant
+	Items       []maps.Map
+	Search      string
+}
+
+templ PlayMapsPage(p PlayMapsProps) {
+	@Layout(LayoutProps{
+		Title:      "Maps",
+		Surface:    "play-maps",
+		HideTopNav: true,
+	}) {
+		@PlayTopNav(p.Player, p.ServerName)
+		<section class="bx-stack" style="max-width: 760px; margin: 0 auto;">
+			<header class="bx-row bx-row--apart">
+				<h1 data-copy-slot="play.maps.title">Pick a map</h1>
+				<form
+					class="bx-row"
+					hx-get="/play/maps"
+					hx-trigger="input from:input changed delay:200ms"
+					hx-target="#play-maps-grid"
+					hx-select="#play-maps-grid"
+					hx-swap="outerHTML"
+				>
+					<input
+						type="search"
+						name="q"
+						value={ p.Search }
+						placeholder="Lorem ipsum search…"
+						class="bx-input"
+						style="max-width: 240px;"
+						data-copy-slot="play.maps.search.placeholder"
+					/>
+				</form>
+			</header>
+			@PlayMapsGrid(p)
+		</section>
+	}
+}
+
+templ PlayMapsGrid(p PlayMapsProps) {
+	<ul id="play-maps-grid" class="bx-cards">
+		if len(p.Items) == 0 {
+			<li class="bx-muted bx-card" data-copy-slot="play.maps.empty">
+				Lorem ipsum dolor sit amet. No public maps yet — check back soon.
+			</li>
+		}
+		for _, m := range p.Items {
+			<li class="bx-card">
+				<a href={ templ.URL(fmt.Sprintf("/play/game/%d", m.ID)) } class="bx-card__title">
+					{ m.Name }
+				</a>
+				<p class="bx-card__meta bx-small bx-muted">
+					{ fmt.Sprintf("%d × %d • %s • %s", m.Width, m.Height, m.Mode, m.PersistenceMode) }
+				</p>
+			</li>
+		}
+	</ul>
+}
+
+templ PlayTopNav(playerName, serverName string) {
+	<nav class="bx-topnav" aria-label="Player navigation">
+		<ol>
+			<li><a href="/play/maps" data-copy-slot="play.nav.maps">Maps</a></li>
+		</ol>
+		<div class="bx-row" style="gap: var(--bx-s2);">
+			<span class="bx-small bx-muted">{ serverName }</span>
+			<span class="bx-small">{ playerName }</span>
+			<form method="post" action="/play/logout">
+				<button type="submit" class="bx-btn bx-btn--ghost bx-small" data-copy-slot="play.nav.logout">
+					Log out
+				</button>
+			</form>
+		</div>
+	</nav>
+}

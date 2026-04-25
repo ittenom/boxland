@@ -48,6 +48,16 @@ export default defineConfig({
       // #116, mapmaker in #104, sandbox in #131, pixel editor in #61).
       input: {
         boot: resolve(here, "src/boot.ts"),
+        game: resolve(here, "src/game/entry-game.ts"),
+      },
+      // Stable filenames so the Templ pages can <script src="/static/web/<entry>.js"/>
+      // without templating in build hashes. Long-cache headers come from
+      // the Go static handler; cache busting works via deploy ids on the
+      // outer URL.
+      output: {
+        entryFileNames: "[name].js",
+        chunkFileNames: "chunks/[name]-[hash].js",
+        assetFileNames: "assets/[name]-[hash][extname]",
       },
     },
   },

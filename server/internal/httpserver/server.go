@@ -29,6 +29,7 @@ type Health struct {
 // be nil; the corresponding routes simply won't exist.
 type Mounts struct {
 	Designer http.Handler // /design/* and (later) /auth/designer/*
+	Player   http.Handler // /play/* (player surface: login, server picker, map picker, game view)
 	WS       http.Handler // /ws (single endpoint; realm decided by Auth handshake)
 }
 
@@ -39,6 +40,9 @@ func New(h Health, m Mounts) http.Handler {
 	mux.Handle("GET /static/", staticHandler())
 	if m.Designer != nil {
 		mux.Handle("/design/", m.Designer)
+	}
+	if m.Player != nil {
+		mux.Handle("/play/", m.Player)
 	}
 	if m.WS != nil {
 		// One canonical WS endpoint; realm is decided by the FlatBuffers

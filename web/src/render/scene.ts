@@ -148,6 +148,6 @@ export class Scene {
 	 * Exposed for tests; production code goes through `update()`.
 	 */
 	entitySprites(): readonly Sprite[] {
-		return this.entityRoot.children as readonly Sprite[];
+		return this.entityRoot.children as unknown as readonly Sprite[];
 	}
 }

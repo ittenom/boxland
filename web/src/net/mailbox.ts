@@ -99,6 +99,10 @@ export class Mailbox {
 		return this.tiles.get(tileKey(layerId, gx, gy));
 	}
 	tileCount(): number { return this.tiles.size; }
+	/** Iterate every cached tile across all layers. Used by the game
+	 *  loop to feed the collision module's World shape (PLAN.md §6h
+	 *  client-side prediction). Cheap; single Map.values() walk. */
+	allTiles(): IterableIterator<CachedTile> { return this.tiles.values(); }
 
 	getLighting(gx: number, gy: number): CachedLighting | undefined {
 		return this.lighting.get(lightingKey(gx, gy));

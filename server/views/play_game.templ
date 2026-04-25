@@ -1,0 +1,51 @@
+package views
+
+import (
+	"fmt"
+	"strconv"
+
+	"boxland/server/internal/maps"
+)
+
+// PlayGameProps drives /play/game/{map_id}. The HTML is intentionally
+// thin — it boots the web/src/game/ Pixi entry, which takes over the
+// whole viewport from there.
+type PlayGameProps struct {
+	Player      string
+	ServerName  string
+	Map         maps.Map
+	WSURL       string // ws:// or wss:// path the client opens
+	AccessToken string // short-lived player JWT for the WS Auth handshake
+}
+
+templ PlayGamePage(p PlayGameProps) {
+	@Layout(LayoutProps{
+		Title:      p.Map.Name,
+		Surface:    "play-game",
+		HideTopNav: true,
+		BodyClass:  "bx-game-body",
+	}) {
+		@PlayTopNav(p.Player, p.ServerName)
+		<main class="bx-game-shell" id="bx-game-host"
+			data-bx-map-id={ strconv.FormatInt(p.Map.ID, 10) }
+			data-bx-map-name={ p.Map.Name }
+			data-bx-map-width={ fmt.Sprintf("%d", p.Map.Width) }
+			data-bx-map-height={ fmt.Sprintf("%d", p.Map.Height) }
+			data-bx-ws-url={ p.WSURL }
+			data-bx-access-token={ p.AccessToken }
+		>
+			<noscript>
+				<p class="bx-toast bx-toast--error" data-copy-slot="play.game.noscript">
+					Lorem ipsum: this page needs JavaScript to render the game.
+				</p>
+			</noscript>
+		</main>
+		<aside class="bx-game-hud" id="bx-game-hud" aria-live="polite">
+			<div class="bx-game-hud__row">
+				<span class="bx-badge" data-bx-state-badge>connecting</span>
+				<span class="bx-small bx-muted" data-bx-tick></span>
+			</div>
+		</aside>
+		<script type="module" src="/static/web/game.js" defer></script>
+	}
+}
