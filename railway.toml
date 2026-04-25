@@ -1,0 +1,82 @@
+# Boxland — Railway service definition.
+#
+# PLAN.md §142: four services -- the Go server, Postgres, Redis, and
+# an S3-compatible object store (Cloudflare R2 in production).
+#
+# Cloudflare-in-front-of-R2 is the recommended CDN configuration:
+# point a `cdn.boxland.example` CNAME at the R2 public hostname,
+# enable Cloudflare's caching rules for sha256-keyed asset paths
+# (immutable, max-age=31536000) so every asset URL is cached
+# globally on first hit.
+
+[deploy]
+# Health check used by Railway's edge to decide when a deploy is live.
+# /healthz returns 200 with each pinger's status; production requires
+# postgres + redis to be ok before traffic flips.
+healthcheckPath = "/healthz"
+healthcheckTimeout = 10
+
+# Restart on non-zero exits; matches the graceful-shutdown behaviour
+# in cmd/boxland/main.go (PLAN.md §140).
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+
+[build]
+# Multi-stage Dockerfile is the source of truth.
+builder = "DOCKERFILE"
+dockerfilePath = "docker/Dockerfile"
+
+# ---- Service: boxland (the Go server) ----
+[[services]]
+name = "boxland"
+[services.envs]
+BOXLAND_ENV = "prod"
+BOXLAND_HTTP_ADDR = ":8080"
+BOXLAND_LOG_FORMAT = "json"
+BOXLAND_LOG_LEVEL = "info"
+
+# Pool the references to Railway-managed services. Railway resolves
+# ${{Postgres.DATABASE_URL}} et al. to the attached service's
+# connection string at deploy time.
+DATABASE_URL = "${{Postgres.DATABASE_URL}}"
+REDIS_URL = "${{Redis.REDIS_URL}}"
+
+# Object storage: Cloudflare R2 + a Cloudflare-fronted CDN domain.
+# The R2 endpoint is the per-account hostname; S3_PUBLIC_BASE_URL
+# is the externally-visible CDN URL clients fetch from.
+S3_ENDPOINT = "${{R2_ENDPOINT}}"
+S3_REGION = "auto"
+S3_BUCKET = "${{R2_BUCKET}}"
+S3_ACCESS_KEY_ID = "${{R2_ACCESS_KEY_ID}}"
+S3_SECRET_ACCESS_KEY = "${{R2_SECRET_ACCESS_KEY}}"
+S3_USE_PATH_STYLE = "false"
+S3_PUBLIC_BASE_URL = "${{CDN_PUBLIC_BASE_URL}}"
+
+# Auth secrets MUST be supplied via Railway env (never committed).
+SESSION_COOKIE_SECRET     = "${{SESSION_COOKIE_SECRET}}"
+JWT_SIGNING_SECRET        = "${{JWT_SIGNING_SECRET}}"
+DESIGNER_WS_TICKET_SECRET = "${{DESIGNER_WS_TICKET_SECRET}}"
+
+# ---- Service: postgres (managed by Railway) ----
+[[services]]
+name = "Postgres"
+plugin = "postgresql"
+
+# ---- Service: redis (managed by Railway) ----
+[[services]]
+name = "Redis"
+plugin = "redis"
+
+# ---- Service: object store (external; Cloudflare R2) ----
+# R2 lives outside Railway. Provision the bucket via the Cloudflare
+# dashboard, generate an S3-compatible API token, then set the env
+# variables R2_ENDPOINT / R2_BUCKET / R2_ACCESS_KEY_ID /
+# R2_SECRET_ACCESS_KEY / CDN_PUBLIC_BASE_URL on the boxland service.
+#
+# Cloudflare CDN config (recommended):
+#   1. Create an R2 bucket and enable a public custom domain
+#      (assets.boxland.example).
+#   2. In Cloudflare Caching Rules: when URI starts with "/", set
+#      Edge TTL = 1y, Browser TTL = 1y, "Eligible for cache" = on.
+#      Sha256 paths are content-addressed so this is safe.
+#   3. Set CDN_PUBLIC_BASE_URL = "https://assets.boxland.example".

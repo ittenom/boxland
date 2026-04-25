@@ -9,8 +9,8 @@
 #
 # Build context is the repo root: `docker build -f docker/Dockerfile .`
 
-ARG GO_VERSION=1.23
-ARG NODE_VERSION=20
+ARG GO_VERSION=1.26
+ARG NODE_VERSION=22
 ARG FLATC_VERSION=24.3.25
 
 # ---------- 1. flatc bindings ----------
