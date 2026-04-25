@@ -43,24 +43,50 @@ dev:
 #
 # Prereqs: Docker Desktop, Go, Node. The Docker stack hosts Postgres,
 # Redis, Mailpit, and MinIO so users don't install any of those by hand.
-design:
-    @just up
-    @cd server && go run ./cmd/boxland migrate up
-    @cd web && npm install --silent --no-audit --no-fund
-    @cd web && npm run build --silent
-    @just _stage-web
-    @node web/scripts/banner.mjs
-    @cd server && go run ./cmd/boxland serve
+#
+# Cross-platform note: each step is a separate sub-recipe with its own
+# `working-directory` attribute, so just spawns one shell per command
+# without ever needing shell-specific `cd && cmd` chaining. Works
+# under PowerShell 5.1 on Windows + sh on macOS/Linux without
+# branching.
+design: up _design-migrate _design-npm-install _design-npm-build _stage-web _design-banner _design-serve
+
+[private]
+[working-directory: 'server']
+_design-migrate:
+    go run ./cmd/boxland migrate up
+
+[private]
+[working-directory: 'web']
+_design-npm-install:
+    npm install --silent --no-audit --no-fund
+
+[private]
+[working-directory: 'web']
+_design-npm-build:
+    npm run build --silent
+
+[private]
+_design-banner:
+    node web/scripts/banner.mjs
+
+[private]
+[working-directory: 'server']
+_design-serve:
+    go run ./cmd/boxland serve
 
 # Internal: copy the freshly-built web bundle into the Go server's
 # embed tree so /static/web/*.js resolves at runtime. The production
 # Docker image does the same copy in its multi-stage build.
+#
+# Pure-Node implementation so the recipe is identical on every
+# platform; requires Node (already a hard dep for the web bundle).
 [private]
 _stage-web:
-    powershell -NoProfile -Command "if (Test-Path 'server/static/web') { Get-ChildItem 'server/static/web' -Exclude '.gitkeep' | Remove-Item -Recurse -Force }; New-Item -ItemType Directory -Force -Path 'server/static/web' | Out-Null; Copy-Item -Force -Recurse 'web/dist/*' 'server/static/web/'"
+    node web/scripts/stage-web.mjs
 
 # Run Go + TS tests.
-test: test-go test-web realm-isolation
+test: test-go test-web realm-isolation test-scripts
 
 [working-directory: 'server']
 test-go:
@@ -82,6 +108,12 @@ test-web:
 [working-directory: 'server']
 realm-isolation:
     go test -count=1 -run 'TestRealmIsolation_|TestSpectate_(SandboxInstance|PrivateMap)_' ./internal/ws/...
+
+# Smoke test the Node helper scripts just/CI rely on (banner, stage-web,
+# sync-fonts). Pure-Node so it runs identically on Windows / macOS /
+# Linux without a shell-specific test runner.
+test-scripts:
+    node web/scripts/scripts.test.mjs
 
 # Run the Go linter (golangci-lint must be on PATH or installed via 'go install').
 [working-directory: 'server']
@@ -120,11 +152,13 @@ gen-sqlc:
 gen-templ:
     templ generate -path views
 
-# Sync canonical fonts from /shared/fonts/ into the server's static dir so
-# they ship with the binary. /shared/fonts/ is the source of truth (used by
-# the future iOS bundle too); server/static/fonts/ is a build artifact.
+# Sync canonical fonts from /shared/fonts/ into the server's static dir
+# so they ship with the binary. /shared/fonts/ is the source of truth
+# (used by the future iOS bundle too); server/static/fonts/ is a build
+# artifact (gitignored). Pure-Node implementation -- identical on
+# every platform.
 sync-fonts:
-    powershell -NoProfile -Command "if (-not (Test-Path 'server/static/fonts')) { New-Item -ItemType Directory -Path 'server/static/fonts' | Out-Null }; Copy-Item -Force shared/fonts/*.ttf server/static/fonts/"
+    node web/scripts/sync-fonts.mjs
 
 # Regenerate the placeholder 16x16 icon sprite sheet at server/static/icons/sprites.png.
 # Replaced with hand-pixeled art before v1; for now ensures the templates

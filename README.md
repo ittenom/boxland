@@ -1,12 +1,6 @@
 # Boxland
 
-A 2D MMORPG engine and design suite. Authoritative Go server, thin Pixi-based web client, Templ+HTMX design tools. 32-pixel pixel-art aesthetic, zero vector curves.
-
-> Working name. Native iOS client deferred to v1.1; v1 ships web-only and is iOS-protocol-ready.
-
-## Status
-
-Pre-alpha. See [PLAN.md](./PLAN.md) for the full architecture, decisions, and the linearized task list (§13) currently being executed.
+Boxland is a designer-friendly MMORPG engine that makes it easy to turn on your server and invite players faster. Bring your 32x32 tiles, textures, and sprites (we recommend the wonderful [Aseprite](https://dacap.itch.io/aseprite) for asset generation) and define worlds with persistent places, instanced locations, and NPCs. Use Boxland's no-code event triggers and entity behaviors to make your creations interactive and alive.
 
 ## Layout
 
@@ -21,7 +15,7 @@ docker/      Dockerfile, docker-compose, pinned flatc build image
 ## Prerequisites
 
 - [Just](https://just.systems) — task runner. Install via `winget install Casey.Just`, `brew install just`, `cargo install just`, or your distro's package manager.
-- Go 1.22+ (`winget install GoLang.Go`)
+- Go 1.26+ (`winget install GoLang.Go` / `brew install go` / `apt install golang`)
 - Node 20+ (for the web build)
 - Docker + Docker Compose (for the local dev stack)
 - Optional: [`golangci-lint`](https://golangci-lint.run) for `just lint` (`go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`)
@@ -36,9 +30,10 @@ Install [Docker Desktop](https://www.docker.com/products/docker-desktop/),
 just design
 ```
 
-That single command brings up Postgres + Redis + Mailpit + MinIO in
-Docker, runs migrations, builds the web bundle, and starts the Go
-server. If everything works, you'll see this:
+Works the same on Windows, macOS, and Linux. That single command
+brings up Postgres + Redis + Mailpit + MinIO in Docker, runs
+migrations, builds the web bundle, and starts the Go server. If
+everything works, you'll see this:
 
 ```
    ██████╗   ██████╗  ██╗  ██╗ ██╗       █████╗  ███╗   ██╗ ██████╗
