@@ -44,6 +44,15 @@ templ Layout(p LayoutProps) {
 	</html>
 }
 
+// CSRFInput renders the hidden form field that plain (non-HTMX) <form
+// method="post"> submissions use to ship the CSRF token. HTMX requests
+// already get the X-CSRF-Token header from boot.js, so this is only
+// needed on full-page form posts (login, signup, logout). Centralised
+// so future forms can't forget it.
+templ CSRFInput() {
+	<input type="hidden" name={ csrf.FormField } value={ csrf.Token(ctx) }/>
+}
+
 // TopNav is the persistent top navigation. Stub now, fleshed out in task #34.
 templ TopNav() {
 	<nav class="bx-topnav" aria-label="Main navigation">

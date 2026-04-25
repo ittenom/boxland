@@ -81,6 +81,7 @@ templ PlayTopNav(playerName, serverName string) {
 			<span class="bx-small bx-muted">{ serverName }</span>
 			<span class="bx-small">{ playerName }</span>
 			<form method="post" action="/play/logout">
+				@CSRFInput()
 				<button type="submit" class="bx-btn bx-btn--ghost bx-small" data-copy-slot="play.nav.logout">
 					Log out
 				</button>

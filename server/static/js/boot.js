@@ -40,6 +40,9 @@
 
   // 3. Wire HTMX CSRF: copy the meta token onto every request as the
   //    X-CSRF-Token header so server-side csrf middleware passes.
+  //    Plain (non-HTMX) <form method="post"> submissions can't set
+  //    headers, so they ship the token as a hidden `csrf_token` field
+  //    instead — see views.CSRFInput().
   document.body.addEventListener("htmx:configRequest", (e) => {
     const token = document
       .querySelector('meta[name="csrf-token"]')

@@ -23,6 +23,7 @@ templ LoginPage(p LoginProps) {
 				<div class="bx-toast bx-toast--error" role="alert">{ p.FormError }</div>
 			}
 			<form method="post" class="bx-stack" action={ templ.URL(actionFor(p.Mode)) }>
+				@CSRFInput()
 				<div class="bx-field">
 					<label for="email" class="bx-label" data-copy-slot="auth.email">Email</label>
 					<input

@@ -4,8 +4,16 @@
 // On every response a CSRF cookie is set if missing. The Templ shell mirrors
 // the cookie value into a <meta name="csrf-token"> tag; web/static/js wires
 // HTMX (htmx:configRequest) to copy the meta value into an X-CSRF-Token
-// header on every state-changing request. This middleware verifies the
-// header equals the cookie for unsafe methods (POST/PUT/PATCH/DELETE).
+// header on every state-changing request. This middleware verifies that
+// the submitted token equals the cookie for unsafe methods (POST/PUT/
+// PATCH/DELETE).
+//
+// Two ways to submit the token are accepted, in order:
+//  1. X-CSRF-Token request header — used by HTMX/fetch.
+//  2. csrf_token form field — used by plain <form method="post">, which
+//     cannot set custom headers. Only consulted for form-encoded bodies
+//     (application/x-www-form-urlencoded, multipart/form-data) so JSON
+//     handlers that re-parse the body downstream aren't affected.
 //
 // Safe methods (GET/HEAD/OPTIONS) are passed through unchecked so links and
 // HTMX hx-get calls don't need the header. WebSocket upgrades go through a
@@ -19,11 +27,15 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/http"
+	"strings"
 )
 
 const (
 	CookieName = "boxland_csrf"
 	HeaderName = "X-CSRF-Token"
+	// FormField is the hidden-input name for plain HTML form submissions.
+	// The views.CSRFInput() Templ helper emits this for every plain form.
+	FormField  = "csrf_token"
 	tokenBytes = 32 // 256 bits
 )
 
@@ -77,14 +89,38 @@ func Middleware(cfg Config) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			header := r.Header.Get(HeaderName)
-			if header == "" || subtle.ConstantTimeCompare([]byte(header), []byte(tok)) != 1 {
+			submitted := r.Header.Get(HeaderName)
+			if submitted == "" && isFormBody(r) {
+				// PostFormValue parses the body into r.PostForm. That's
+				// fine for form-encoded handlers (they read from
+				// r.PostForm / r.FormValue too), but we don't want to
+				// touch JSON bodies — handlers like ws-ticket / settings
+				// re-decode the raw stream.
+				submitted = r.PostFormValue(FormField)
+			}
+			if submitted == "" || subtle.ConstantTimeCompare([]byte(submitted), []byte(tok)) != 1 {
 				http.Error(w, "csrf: token mismatch", http.StatusForbidden)
 				return
 			}
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// isFormBody reports whether the request body is form-encoded (and so safe
+// to feed to PostFormValue without disrupting downstream parsing). Anything
+// else — JSON, octet-stream, FlatBuffers, etc. — is left untouched.
+func isFormBody(r *http.Request) bool {
+	ct := r.Header.Get("Content-Type")
+	if ct == "" {
+		return false
+	}
+	// Strip any "; charset=..." / "; boundary=..." parameters.
+	if i := strings.IndexByte(ct, ';'); i >= 0 {
+		ct = ct[:i]
+	}
+	ct = strings.TrimSpace(strings.ToLower(ct))
+	return ct == "application/x-www-form-urlencoded" || ct == "multipart/form-data"
 }
 
 // getOrSetToken returns the CSRF token from the request cookie, generating

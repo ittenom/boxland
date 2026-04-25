@@ -32,6 +32,7 @@ templ ShellHome(p ShellProps) {
 				</p>
 			}
 			<form method="post" action="/design/logout" class="bx-row bx-row--end">
+				@CSRFInput()
 				<button type="submit" class="bx-btn bx-btn--ghost" data-copy-slot="shell.logout">
 					Log out
 				</button>

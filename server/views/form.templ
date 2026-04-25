@@ -29,6 +29,7 @@ templ Form(p FormProps) {
 		hx-target={ p.HXTarget }
 		class="bx-stack bx-form"
 	>
+		@CSRFInput()
 		for _, f := range p.Fields {
 			@FormField(f, p.Values[f.Key])
 		}
