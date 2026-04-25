@@ -1,0 +1,188 @@
+package views
+
+import (
+	"encoding/json"
+	"fmt"
+
+	"boxland/server/internal/configurable"
+	"boxland/server/internal/entities"
+	"boxland/server/internal/entities/components"
+)
+
+// EntityDetailProps drives the per-entity-type editor modal.
+type EntityDetailProps struct {
+	EntityType  entities.EntityType
+	Components  []entities.ComponentRow
+	AllKinds    []components.Kind        // every registered kind, for the "add component" picker
+	Descriptors map[components.Kind][]configurable.FieldDescriptor
+	SpriteURL   string                    // CDN URL of the sprite asset, "" if unset
+}
+
+templ EntityDetail(p EntityDetailProps) {
+	<div class="bx-modal-backdrop" data-bx-dismissible role="dialog" aria-modal="true">
+		<div class="bx-modal" style="width: min(720px, 95vw);">
+			<header class="bx-modal__header">
+				<h2 data-copy-slot="entities.detail.title">{ p.EntityType.Name }</h2>
+				<button
+					type="button"
+					class="bx-btn bx-btn--ghost"
+					hx-on:click="this.closest('.bx-modal-backdrop').remove()"
+					aria-label="Close"
+				>Esc</button>
+			</header>
+			<div class="bx-modal__body bx-stack">
+				<div class="bx-row" style="align-items: flex-start;">
+					<div style="flex: 0 0 192px;">
+						@ColliderOverlay(p)
+					</div>
+					<div style="flex: 1;">
+						@Form(FormProps{
+							Action:      fmt.Sprintf("/design/entities/%d/draft", p.EntityType.ID),
+							SubmitLabel: "Save draft",
+							HXTarget:    "#entity-draft-status",
+							Fields:      entities.EntityTypeDraft{}.Descriptor(),
+							Values:      entityValues(p.EntityType),
+						})
+						<div id="entity-draft-status" aria-live="polite"></div>
+					</div>
+				</div>
+
+				<section class="bx-stack-tight">
+					<h3 data-copy-slot="entities.components.title">Components</h3>
+					if len(p.Components) == 0 {
+						<p class="bx-muted" data-copy-slot="entities.components.empty">
+							Lorem ipsum dolor sit amet. No components attached. Use the
+							"Add component" picker below to compose behavior.
+						</p>
+					}
+					for _, c := range p.Components {
+						@ComponentEditor(p.EntityType.ID, c, p.Descriptors[c.Kind])
+					}
+					@ComponentPicker(p.EntityType.ID, p.AllKinds, p.Components)
+				</section>
+			</div>
+			<footer class="bx-modal__footer">
+				<button
+					type="button"
+					class="bx-btn bx-btn--danger"
+					hx-delete={ fmt.Sprintf("/design/entities/%d", p.EntityType.ID) }
+					hx-confirm="Delete this entity type? Components, automations, and tile-edge assignments go with it."
+					hx-target="#entities-grid"
+					hx-swap="outerHTML"
+					hx-on:htmx:after-request="document.querySelector('.bx-modal-backdrop')?.remove()"
+					data-copy-slot="entities.detail.delete"
+				>
+					Delete
+				</button>
+			</footer>
+		</div>
+	</div>
+}
+
+// ComponentEditor renders one component sub-form. Each component's
+// Descriptor() is rendered through the shared Form partial; on save the
+// HTMX POST hits /design/entities/{id}/components/{kind}.
+templ ComponentEditor(entityTypeID int64, c entities.ComponentRow, descriptors []configurable.FieldDescriptor) {
+	<div class="bx-panel bx-component-editor">
+		<header class="bx-row bx-row--apart">
+			<h4 data-copy-slot={ "components." + string(c.Kind) + ".title" }>{ string(c.Kind) }</h4>
+			<button
+				type="button"
+				class="bx-btn bx-btn--ghost bx-small"
+				hx-delete={ fmt.Sprintf("/design/entities/%d/components/%s", entityTypeID, string(c.Kind)) }
+				hx-target="closest .bx-component-editor"
+				hx-swap="outerHTML"
+				hx-confirm="Detach this component?"
+				data-copy-slot="entities.components.remove"
+			>Remove</button>
+		</header>
+		@Form(FormProps{
+			Action:      fmt.Sprintf("/design/entities/%d/components/%s", entityTypeID, string(c.Kind)),
+			SubmitLabel: "Save",
+			HXTarget:    "#entity-draft-status",
+			Fields:      descriptors,
+			Values:      decodeConfig(c.ConfigJSON),
+		})
+	</div>
+}
+
+// ComponentPicker is the "add component" affordance. Filters out kinds
+// already attached.
+templ ComponentPicker(entityTypeID int64, allKinds []components.Kind, attached []entities.ComponentRow) {
+	<form
+		class="bx-row"
+		hx-post={ fmt.Sprintf("/design/entities/%d/components/add", entityTypeID) }
+		hx-target="#modal-host"
+		hx-swap="innerHTML"
+	>
+		<select name="kind" class="bx-select" required>
+			<option value="" disabled selected data-copy-slot="entities.components.add">Add component…</option>
+			for _, k := range allKinds {
+				if !alreadyAttached(k, attached) {
+					<option value={ string(k) }>{ string(k) }</option>
+				}
+			}
+		</select>
+		<button type="submit" class="bx-btn" data-copy-slot="entities.components.add-btn">Add</button>
+	</form>
+}
+
+// ColliderOverlay paints the sprite (if any) plus a 1-px outline of the
+// AABB on top, in the brand accent color. Driven by a small TS helper so
+// the overlay scales with the canvas.
+templ ColliderOverlay(p EntityDetailProps) {
+	<div class="bx-asset-detail__preview">
+		<canvas
+			class="bx-collider-overlay"
+			data-bx-collider-overlay
+			data-sprite-url={ p.SpriteURL }
+			data-collider-w={ fmt.Sprintf("%d", p.EntityType.ColliderW) }
+			data-collider-h={ fmt.Sprintf("%d", p.EntityType.ColliderH) }
+			data-anchor-x={ fmt.Sprintf("%d", p.EntityType.ColliderAnchorX) }
+			data-anchor-y={ fmt.Sprintf("%d", p.EntityType.ColliderAnchorY) }
+			width="64" height="64"
+			aria-label={ "Collider overlay for " + p.EntityType.Name }
+		></canvas>
+	</div>
+}
+
+// ---- helpers ----
+
+func entityValues(et entities.EntityType) map[string]any {
+	out := map[string]any{
+		"name":                   et.Name,
+		"collider_w":             et.ColliderW,
+		"collider_h":             et.ColliderH,
+		"collider_anchor_x":      et.ColliderAnchorX,
+		"collider_anchor_y":      et.ColliderAnchorY,
+		"default_collision_mask": et.DefaultCollisionMask,
+		"tags":                   et.Tags,
+	}
+	if et.SpriteAssetID != nil {
+		out["sprite_asset_id"] = *et.SpriteAssetID
+	}
+	if et.DefaultAnimationID != nil {
+		out["default_animation_id"] = *et.DefaultAnimationID
+	}
+	return out
+}
+
+func decodeConfig(raw json.RawMessage) map[string]any {
+	if len(raw) == 0 {
+		return map[string]any{}
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return map[string]any{}
+	}
+	return m
+}
+
+func alreadyAttached(k components.Kind, attached []entities.ComponentRow) bool {
+	for _, c := range attached {
+		if c.Kind == k {
+			return true
+		}
+	}
+	return false
+}

@@ -1,0 +1,112 @@
+package views
+
+import (
+	"fmt"
+
+	"boxland/server/internal/entities"
+)
+
+// EntitiesListProps drives the Entity Manager landing page.
+type EntitiesListProps struct {
+	Items  []entities.EntityType
+	Search string
+}
+
+templ EntitiesList(p EntitiesListProps) {
+	@Layout(LayoutProps{
+		Title:   "Entity types",
+		Surface: "entity-manager",
+	}) {
+		<section class="bx-stack">
+			<header class="bx-row bx-row--apart">
+				<h1 data-copy-slot="entities.title">Entity types</h1>
+				<div class="bx-row">
+					<button
+						type="button"
+						class="bx-btn bx-btn--primary"
+						data-copy-slot="entities.new"
+						hx-get="/design/entities/new"
+						hx-target="#modal-host"
+						hx-swap="innerHTML"
+					>
+						New entity type
+					</button>
+				</div>
+			</header>
+
+			<form
+				class="bx-row"
+				hx-get="/design/entities/grid"
+				hx-target="#entities-grid"
+				hx-swap="outerHTML"
+				hx-trigger="input from:input changed delay:200ms"
+			>
+				<input
+					type="search"
+					name="q"
+					value={ p.Search }
+					placeholder="Lorem ipsum search…"
+					class="bx-input"
+					style="max-width: 280px;"
+					data-copy-slot="entities.search.placeholder"
+				/>
+			</form>
+
+			@EntitiesGrid(p)
+		</section>
+
+		<div id="modal-host"></div>
+	}
+}
+
+templ EntitiesGrid(p EntitiesListProps) {
+	<table id="entities-grid" class="bx-table">
+		<thead>
+			<tr>
+				<th>Name</th>
+				<th>Tags</th>
+				<th>Collider</th>
+				<th></th>
+			</tr>
+		</thead>
+		<tbody>
+			if len(p.Items) == 0 {
+				<tr><td colspan="4" class="bx-muted" data-copy-slot="entities.empty">
+					Lorem ipsum dolor sit amet. No entity types match the current filter.
+				</td></tr>
+			}
+			for _, et := range p.Items {
+				<tr>
+					<td>
+						<a
+							href={ templ.URL(fmt.Sprintf("/design/entities/%d", et.ID)) }
+							hx-get={ fmt.Sprintf("/design/entities/%d", et.ID) }
+							hx-target="#modal-host"
+							hx-swap="innerHTML"
+						>{ et.Name }</a>
+					</td>
+					<td>
+						for _, t := range et.Tags {
+							<span class="bx-badge">{ t }</span>
+						}
+					</td>
+					<td class="bx-small bx-muted">
+						{ fmt.Sprintf("%d×%d @ (%d,%d)", et.ColliderW, et.ColliderH, et.ColliderAnchorX, et.ColliderAnchorY) }
+					</td>
+					<td>
+						<button
+							type="button"
+							class="bx-btn bx-btn--ghost bx-small"
+							hx-post={ fmt.Sprintf("/design/entities/%d/duplicate", et.ID) }
+							hx-target="#entities-grid"
+							hx-swap="outerHTML"
+							data-copy-slot="entities.duplicate"
+						>
+							Duplicate
+						</button>
+					</td>
+				</tr>
+			}
+		</tbody>
+	</table>
+}

@@ -1,84 +1,68 @@
-Tasks 45-62: asset pipeline + Asset Manager UI + pixel editor + waveform
+Tasks 63-72: entity types + components + edge sockets + tile groups
 
-Designers can now upload sprite/tile/audio assets, edit metadata via the
-generic form renderer, and the publish pipeline applies drafts atomically.
+Designers can now compose entity types from a catalog of components,
+declare project-wide edge-socket types for the Mapmaker's WFC, and build
+N×M tile groups for multi-tile brushes.
 
-  Schema (45-49):
-    - assets (single canonical table; kind discriminator + metadata_json)
-    - asset_animations (named tags within a sheet)
-    - palettes (with default retro palette seeded)
-    - palette_variants (recipes, source_to_dest_json)
-    - asset_variants (baked outputs; status pending/baked/failed)
+  Schema (63, 64, 68, 71):
+    - entity_types (collider_w/h, anchor_x/y, default_collision_mask, tags)
+    - entity_components ((entity_type_id, component_kind) PK)
+    - edge_socket_types + tile_edge_assignments
+    - tile_groups (1..16 width/height, layout_json as 2D []int64)
 
-  Upload + parsers (50-55):
-    - Upload endpoint: multipart, sniff-based content-type validation,
-      content-addressed paths via sha256, idempotent dedup
-    - Importer registry with auto-detect + explicit-override dropdown
-    - 5 parsers: raw PNG manual-grid, generic strip (h/v/rows/cols),
-      Aseprite JSON sidecar (hash + array variants), TexturePacker JSON
-      (with filename-pattern animation inference), free-tex-packer JSON
-    - 32 unit + integration tests across the parser surface
+  Component-kind registry (65):
+    - internal/entities/components: Definition (Kind, Storage, Descriptor,
+      Validate, Default, Decode); Registry; Default() seeds Position,
+      Velocity, Sprite, Collider
+    - Each component declares Descriptor() so the same generic form
+      renderer that drives assets also drives component config UIs
+    - 11 unit tests covering registry + each built-in component
 
-  Image normalization + audio (56-57):
-    - 32x32 cell validation with structured warnings (non-square,
-      non-canonical, mixed sizes, empty sheet)
-    - WAV duration extraction in pure Go (RIFF chunk walker, no deps)
-    - OGG/MP3 detected via magic bytes; duration deferred (placeholder
-      metadata until later refinement)
+  EntityType service + Artifact[T] handler (66):
+    - Repo[EntityType] for CRUD; Components/SetComponents for the
+      composition table (typed validation, full-replace semantics)
+    - EntityTypeDraft + Handler implement publish-pipeline contract
+      identical to Asset; structured diffs land in publish_diffs
+    - 7 integration tests, including round-trip through the publish pipe
 
-  Bake job (58):
-    - Per-pixel color remap via NRGBA pixel pass
-    - Output keyed by sha256(source_path || sorted recipe entries) so
-      identical (source, recipe) inputs always land at the same path ->
-      idempotent across re-runs (Reused=true in result)
-    - Multiple recipes per asset bake in parallel via sync.WaitGroup
-    - Baked variants written to bytes.NewReader (seekable) so AWS SDK v2
-      stops complaining about MinIO PutObject without TLS+trailing-checksum
+  Entity Manager UI (67):
+    - views/entities.templ: list + search + duplicate
+    - views/entity_detail.templ: top-level form via the generic renderer +
+      one Form per attached component + "Add component" picker (filters
+      out already-attached kinds)
+    - 11 HTTP routes: list/grid/new/create/detail/delete/draft/duplicate
+      and per-component add/save/delete
+    - data-bx-collider-overlay canvas paints the AABB on top of the sprite
+      and live-updates as the form's collider inputs change
+      (web/src/entity-manager/collider-overlay.ts, 2 tests)
+    - 5 server-side handler tests covering list, create, detail, component
+      lifecycle, draft validation
 
-  Asset as Artifact[T] (59):
-    - First concrete user of the publishing/artifact framework
-    - AssetDraft (name, tags) implements configurable.Configurable so the
-      generic form renderer drives the editor UI
-    - Handler.Publish reads previous values, applies update inside the
-      pipeline tx, computes structured diff for the publish_diffs row
-    - Wire-up: cmd/boxland registers the handler in publishRegistry
+  Edge sockets (69, 70):
+    - SocketRepo + CRUD on the entities service
+    - SetTileEdges/TileEdges for the per-entity-type assignment
+    - /design/sockets list + create + delete page
+    - 5 unit tests including ON DELETE SET NULL cascade verification
+    - 1 HTTP handler test
 
-  Asset Manager UI (60):
-    - assets.templ: list page with grid + tag/kind filter + search
-      (HTMX-driven; #assets-grid swaps in place on every input)
-    - asset_upload.templ: drag-drop modal with kind override
-    - asset_detail.templ: per-asset modal with the generic form renderer
-      driving the AssetDraft editor + delete button
-    - 7 server handlers (list, grid, upload-modal, upload, detail, delete,
-      draft) wired under /design/assets/*
-    - 5 integration tests covering the full HTML response shapes
-    - data-bx-action="open-upload" wired in boot.js so the toolbar button
-      fetches the modal via HTMX
-    - Asset card + drop zone + detail-pane CSS in pixel.css
+  Tile groups (72):
+    - Service: CreateTileGroup (zero-init layout), ListTileGroups,
+      UpdateTileGroupLayout (dimension-validated), DeleteTileGroup
+    - /design/tile-groups list + create + per-group click-to-paint editor
+    - boot.js cell-paint handler: assigns the active entity-type id to a
+      clicked cell and re-serializes the grid into a hidden form input
+    - 4 unit tests (zero-init, dimension bounds, layout dimension
+      validation, delete + not-found)
 
-  Canvas2D pixel editor (61):
-    - PixelBuffer (ImageData wrapper, get/set/blit/toPNGBlob)
-    - PixelEditor binds tools to the shared CommandBus so undo/redo +
-      hotkey rebinding work uniformly
-    - Tools: pencil (B), eraser (E), color picker (I), undo (Mod+Z),
-      redo (Mod+Shift+Z)
-    - Stroke commit captures every changed pixel as one undo entry
-    - POST /design/assets/{id}/replace creates a NEW asset (immutable
-      content-addressed path; original kept) and triggers re-bake of any
-      palette variants the new asset already has
-    - 11 TS tests; deliberately uses a small jsdom shim for ImageData
+  Test-helper extraction:
+    - new internal/persistence/testdb package with TruncateOrder + Reset()
+    - assets, entities, designer test files now defer to testdb.Reset
+      instead of maintaining three parallel copies of the wipe list
+    - Adding a new table to TruncateOrder updates every package's tests
+      with one edit (next iteration is much cheaper)
 
-  Audio waveform (62):
-    - mountWaveform decodes via Web Audio API (handles WAV/OGG/MP3 in any
-      modern browser), downsamples to per-bin peak amplitudes, paints
-      chunky pixel bars in the brand accent color
-    - Falls back to a hairline placeholder on fetch/decode failure so the
-      UI never renders an empty box
-    - Waveform + native <audio controls loop preload=metadata> in
-      asset_detail.templ; 4 TS tests cover happy/fail/decode-fail paths
+Top nav now exposes Assets / Entities / Sockets / Tile groups / Mapmaker /
+Sandbox / Settings; the four wired surfaces all render after signup.
 
-Test totals: 13 Go packages, 116 TS tests across 15 suites, all green.
-
-Justfile: test-go now passes -p 1 so test packages run sequentially. The
-integration tests share a single dev Postgres; parallel package execution
-clobbered each other's data. Within-package parallelism is unaffected.
+Test totals: 17 Go packages (+entities, +entities/components, +testdb),
+118 TS tests across 16 suites, all green under -p 1.

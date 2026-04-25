@@ -65,7 +65,44 @@
     }
   });
 
-  // 5. Telemetry breadcrumb.
+  // 5. Tile-group editor: click to assign the active entity-type id to a
+  //    cell. Each .bx-tilegroup-grid is paired with a hidden input
+  //    [data-bx-layout-input] that the form serializes.
+  document.body.addEventListener("click", (e) => {
+    const cell = e.target instanceof HTMLElement
+      ? e.target.closest(".bx-tilegroup-cell")
+      : null;
+    if (!cell) return;
+    e.preventDefault();
+    const grid = cell.closest("[data-bx-tilegroup-grid]");
+    if (!grid) return;
+    const activeInput = grid.parentElement?.querySelector("[data-bx-active-entity]");
+    const layoutInput = grid.parentElement?.querySelector("[data-bx-layout-input]");
+    if (!(activeInput instanceof HTMLInputElement) ||
+        !(layoutInput instanceof HTMLInputElement)) return;
+
+    const id = activeInput.value || "0";
+    cell.setAttribute("data-id", id);
+    cell.textContent = id === "0" ? "" : id;
+
+    // Re-serialize the entire grid into the hidden form input.
+    const cells = grid.querySelectorAll(".bx-tilegroup-cell");
+    const rows = {};
+    for (const c of cells) {
+      const r = Number(c.getAttribute("data-r") || "0");
+      const col = Number(c.getAttribute("data-c") || "0");
+      const v = Number(c.getAttribute("data-id") || "0");
+      if (!rows[r]) rows[r] = [];
+      rows[r][col] = v;
+    }
+    const out = [];
+    for (const k of Object.keys(rows).sort((a, b) => Number(a) - Number(b))) {
+      out.push(rows[k]);
+    }
+    layoutInput.value = JSON.stringify(out);
+  });
+
+  // 6. Telemetry breadcrumb.
   console.info(
     "[boxland] boot.js loaded; surface=%s",
     document.body.dataset.surface || "unknown"

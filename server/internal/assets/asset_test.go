@@ -11,6 +11,7 @@ import (
 
 	"boxland/server/internal/assets"
 	authdesigner "boxland/server/internal/auth/designer"
+	"boxland/server/internal/persistence/testdb"
 )
 
 func openTestPool(t *testing.T) *pgxpool.Pool {
@@ -32,32 +33,11 @@ func openTestPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// resetDB wipes asset-related tables AND the foreign-key parent (designers)
-// since the test creates fresh designers. Cleanup runs both before and after
-// so tests are isolated regardless of run order. Order is FK-correct.
+// resetDB wipes every project table via the shared testdb helper, then
+// pre-creates a designer so the FK constraint on assets.created_by passes.
 func resetDB(t *testing.T, pool *pgxpool.Pool) int64 {
 	t.Helper()
-	wipe := func() {
-		ctx := context.Background()
-		for _, q := range []string{
-			`DELETE FROM asset_variants`,
-			`DELETE FROM palette_variants`,
-			`DELETE FROM asset_animations`,
-			`DELETE FROM assets`,
-			`DELETE FROM designer_ws_tickets`,
-			`DELETE FROM designer_sessions`,
-			`DELETE FROM publish_diffs`,
-			`DELETE FROM drafts`,
-			`DELETE FROM designers`,
-		} {
-			if _, err := pool.Exec(ctx, q); err != nil {
-				t.Logf("resetDB %s: %v", q, err)
-			}
-		}
-	}
-	wipe()
-	t.Cleanup(wipe)
-	// Pre-create a designer so the FK constraint on assets.created_by passes.
+	testdb.Reset(t, pool)
 	auth := authdesigner.New(pool)
 	d, err := auth.CreateDesigner(context.Background(), "asset-test@x.com", "p", authdesigner.RoleEditor)
 	if err != nil {

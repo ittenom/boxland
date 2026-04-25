@@ -650,6 +650,51 @@ p, li {
 }
 
 
+/* -- Edge-socket swatch + entity panels --------------------------------- */
+.bx-color-swatch {
+    display: inline-block;
+    width: 12px; height: 12px;
+    border: var(--bx-px) solid var(--bx-bg-1);
+    margin-right: var(--bx-s1);
+    vertical-align: middle;
+}
+
+.bx-component-editor + .bx-component-editor { margin-top: var(--bx-s2); }
+.bx-collider-overlay {
+    width: 100%;
+    max-width: 192px;
+    height: auto;
+    image-rendering: pixelated;
+    background: var(--bx-bg-1);
+}
+
+.bx-tilegroup-grid {
+    display: grid;
+    gap: var(--bx-px);
+    background: var(--bx-line);
+    padding: var(--bx-px);
+    width: max-content;
+}
+.bx-tilegroup-cell {
+    width: 32px; height: 32px;
+    background: var(--bx-bg-1);
+    border: var(--bx-px) solid var(--bx-line);
+    color: var(--bx-fg-2);
+    font-size: 10px;
+    font-family: var(--bx-font-tiny);
+    cursor: cell;
+    padding: 0;
+    line-height: 28px;
+    text-align: center;
+}
+.bx-tilegroup-cell:hover { border-color: var(--bx-line-hi); }
+.bx-tilegroup-cell[data-id="0"] { color: var(--bx-fg-3); }
+.bx-tilegroup-cell:not([data-id="0"]) {
+    background: var(--bx-bg-3);
+    color: var(--bx-fg-1);
+}
+
+
 /* -- Pixel scrollbar (Webkit; Firefox falls back to native — accepted) -- */
 .bx-scroll::-webkit-scrollbar              { width: var(--bx-s2); height: var(--bx-s2); }
 .bx-scroll::-webkit-scrollbar-track        { background: var(--bx-bg-1); border: var(--bx-px) solid var(--bx-line); }

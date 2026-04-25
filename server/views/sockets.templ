@@ -1,0 +1,89 @@
+package views
+
+import (
+	"fmt"
+
+	"boxland/server/internal/entities"
+)
+
+// SocketsListProps drives /design/sockets.
+type SocketsListProps struct {
+	Items []entities.EdgeSocketType
+}
+
+templ SocketsList(p SocketsListProps) {
+	@Layout(LayoutProps{
+		Title:   "Edge sockets",
+		Surface: "edge-sockets",
+	}) {
+		<section class="bx-stack" style="max-width: 720px;">
+			<header class="bx-row bx-row--apart">
+				<h1 data-copy-slot="sockets.title">Edge sockets</h1>
+			</header>
+			<p class="bx-muted" data-copy-slot="sockets.lede">
+				Lorem ipsum dolor sit amet. Edge sockets are project-wide tags that
+				tell the procedural Mapmaker which tiles can sit next to each other.
+				Assign sockets to a tile-kind entity in its detail editor.
+			</p>
+
+			<section class="bx-panel">
+				<h2 class="bx-panel__title" data-copy-slot="sockets.new">New socket</h2>
+				<form
+					hx-post="/design/sockets"
+					hx-target="#sockets-grid"
+					hx-swap="outerHTML"
+					class="bx-row"
+				>
+					<input class="bx-input" name="name" placeholder="e.g. field" required maxlength="64"/>
+					<input class="bx-input" name="color" type="color" value="#ffd34a"/>
+					<button type="submit" class="bx-btn bx-btn--primary" data-copy-slot="sockets.new.submit">Add</button>
+				</form>
+			</section>
+
+			@SocketsGrid(p)
+		</section>
+	}
+}
+
+templ SocketsGrid(p SocketsListProps) {
+	<table id="sockets-grid" class="bx-table">
+		<thead>
+			<tr><th>Name</th><th>Color</th><th></th></tr>
+		</thead>
+		<tbody>
+			if len(p.Items) == 0 {
+				<tr><td colspan="3" class="bx-muted" data-copy-slot="sockets.empty">
+					Lorem ipsum dolor sit amet. No sockets yet.
+				</td></tr>
+			}
+			for _, s := range p.Items {
+				<tr>
+					<td>{ s.Name }</td>
+					<td>
+						<span class="bx-color-swatch" style={ fmt.Sprintf("background:%s;", colorHex(s.Color)) }></span>
+						<code class="bx-small bx-muted">{ colorHex(s.Color) }</code>
+					</td>
+					<td>
+						<button
+							type="button"
+							class="bx-btn bx-btn--ghost bx-small bx-btn--danger"
+							hx-delete={ fmt.Sprintf("/design/sockets/%d", s.ID) }
+							hx-target="#sockets-grid"
+							hx-swap="outerHTML"
+							hx-confirm="Delete this socket? Tile assignments referencing it become null."
+							data-copy-slot="sockets.delete"
+						>Delete</button>
+					</td>
+				</tr>
+			}
+		</tbody>
+	</table>
+}
+
+// colorHex turns a 0xRRGGBBAA int64 into a "#rrggbb" CSS color.
+func colorHex(rgba int64) string {
+	r := (rgba >> 24) & 0xff
+	g := (rgba >> 16) & 0xff
+	b := (rgba >> 8) & 0xff
+	return fmt.Sprintf("#%02x%02x%02x", r, g, b)
+}

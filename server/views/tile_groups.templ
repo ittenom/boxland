@@ -1,0 +1,177 @@
+package views
+
+import (
+	"encoding/json"
+	"fmt"
+
+	"boxland/server/internal/entities"
+)
+
+// TileGroupsListProps drives /design/tile-groups.
+type TileGroupsListProps struct {
+	Items []entities.TileGroup
+}
+
+templ TileGroupsList(p TileGroupsListProps) {
+	@Layout(LayoutProps{
+		Title:   "Tile groups",
+		Surface: "tile-groups",
+	}) {
+		<section class="bx-stack" style="max-width: 720px;">
+			<header class="bx-row bx-row--apart">
+				<h1 data-copy-slot="tilegroups.title">Tile groups</h1>
+			</header>
+			<p class="bx-muted" data-copy-slot="tilegroups.lede">
+				Lorem ipsum dolor sit amet. A tile group is an N×M template that
+				the Mapmaker treats as a single brush stroke; the runtime spawns
+				it as N×M individual tiles.
+			</p>
+
+			<section class="bx-panel">
+				<h2 class="bx-panel__title" data-copy-slot="tilegroups.new">New tile group</h2>
+				<form
+					hx-post="/design/tile-groups"
+					hx-target="#tile-groups-grid"
+					hx-swap="outerHTML"
+					class="bx-row"
+				>
+					<input class="bx-input" name="name" placeholder="e.g. doorway" required maxlength="64"/>
+					<input class="bx-input" name="width"  type="number" min="1" max="16" value="3" style="width:80px;" aria-label="width"/>
+					<input class="bx-input" name="height" type="number" min="1" max="16" value="2" style="width:80px;" aria-label="height"/>
+					<button type="submit" class="bx-btn bx-btn--primary" data-copy-slot="tilegroups.new.submit">Create</button>
+				</form>
+			</section>
+
+			@TileGroupsGrid(p)
+		</section>
+
+		<div id="modal-host"></div>
+	}
+}
+
+templ TileGroupsGrid(p TileGroupsListProps) {
+	<table id="tile-groups-grid" class="bx-table">
+		<thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
+		<tbody>
+			if len(p.Items) == 0 {
+				<tr><td colspan="3" class="bx-muted" data-copy-slot="tilegroups.empty">
+					Lorem ipsum dolor sit amet. No tile groups yet.
+				</td></tr>
+			}
+			for _, g := range p.Items {
+				<tr>
+					<td>
+						<a
+							href={ templ.URL(fmt.Sprintf("/design/tile-groups/%d", g.ID)) }
+							hx-get={ fmt.Sprintf("/design/tile-groups/%d", g.ID) }
+							hx-target="#modal-host" hx-swap="innerHTML"
+						>{ g.Name }</a>
+					</td>
+					<td class="bx-small bx-muted">{ fmt.Sprintf("%d × %d", g.Width, g.Height) }</td>
+					<td>
+						<button
+							type="button"
+							class="bx-btn bx-btn--ghost bx-small bx-btn--danger"
+							hx-delete={ fmt.Sprintf("/design/tile-groups/%d", g.ID) }
+							hx-target="#tile-groups-grid" hx-swap="outerHTML"
+							hx-confirm="Delete this tile group?"
+						>Delete</button>
+					</td>
+				</tr>
+			}
+		</tbody>
+	</table>
+}
+
+// TileGroupDetailProps drives the per-group editor modal.
+type TileGroupDetailProps struct {
+	Group  entities.TileGroup
+	Layout entities.Layout
+}
+
+templ TileGroupDetail(p TileGroupDetailProps) {
+	<div class="bx-modal-backdrop" data-bx-dismissible role="dialog" aria-modal="true">
+		<div class="bx-modal" style="width: min(560px, 95vw);">
+			<header class="bx-modal__header">
+				<h2 data-copy-slot="tilegroups.detail.title">{ p.Group.Name }</h2>
+				<button type="button" class="bx-btn bx-btn--ghost"
+				        hx-on:click="this.closest('.bx-modal-backdrop').remove()" aria-label="Close">Esc</button>
+			</header>
+			<div class="bx-modal__body bx-stack">
+				<form
+					id="tile-group-paint-form"
+					hx-post={ fmt.Sprintf("/design/tile-groups/%d/layout", p.Group.ID) }
+					hx-target="#tile-group-paint-status" hx-swap="innerHTML"
+					class="bx-stack"
+				>
+					<div class="bx-row">
+						<label class="bx-label" for="active-entity-id" data-copy-slot="tilegroups.detail.active">
+							Active entity-type id (paste)
+						</label>
+						<input id="active-entity-id" type="number" min="0" value="0" class="bx-input" style="max-width:120px"
+						       data-bx-active-entity placeholder="0 = clear"/>
+					</div>
+
+					<div
+						class="bx-tilegroup-grid"
+						data-bx-tilegroup-grid
+						style={ fmt.Sprintf("grid-template-columns: repeat(%d, 32px);", p.Group.Width) }
+					>
+						for r := 0; r < int(p.Group.Height); r++ {
+							for c := 0; c < int(p.Group.Width); c++ {
+								<button
+									type="button"
+									class="bx-tilegroup-cell"
+									data-r={ fmt.Sprintf("%d", r) }
+									data-c={ fmt.Sprintf("%d", c) }
+									data-id={ fmt.Sprintf("%d", layoutAt(p.Layout, r, c)) }
+									title={ fmt.Sprintf("(%d, %d)", r, c) }
+								>{ cellLabel(p.Layout, r, c) }</button>
+							}
+						}
+					</div>
+					<input type="hidden" name="layout" data-bx-layout-input value={ marshalLayout(p.Layout) }/>
+					<div class="bx-row bx-row--end">
+						<button type="submit" class="bx-btn bx-btn--primary" data-copy-slot="tilegroups.detail.save">Save layout</button>
+					</div>
+				</form>
+				<div id="tile-group-paint-status" aria-live="polite"></div>
+			</div>
+		</div>
+	</div>
+}
+
+// layoutAt returns the int-id at (r, c), or 0 if missing.
+func layoutAt(l entities.Layout, r, c int) int64 {
+	if r < 0 || r >= len(l) {
+		return 0
+	}
+	row := l[r]
+	if c < 0 || c >= len(row) {
+		return 0
+	}
+	return row[c]
+}
+
+// cellLabel returns "" for empty cells, the id otherwise.
+func cellLabel(l entities.Layout, r, c int) string {
+	v := layoutAt(l, r, c)
+	if v == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d", v)
+}
+
+// marshalLayout serializes the layout into JSON for the hidden form input.
+// Errors fall back to "[]"; the server-side validator will reject the
+// resulting empty layout cleanly.
+func marshalLayout(l entities.Layout) string {
+	if l == nil {
+		return "[]"
+	}
+	b, err := json.Marshal(l)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}

@@ -15,6 +15,7 @@ import (
 
 	authdesigner "boxland/server/internal/auth/designer"
 	designerhandlers "boxland/server/internal/designer"
+	"boxland/server/internal/persistence/testdb"
 )
 
 func openTestPool(t *testing.T) *pgxpool.Pool {
@@ -36,32 +37,11 @@ func openTestPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// resetDB wipes designer-realm rows AND every table that has a FK pointing
-// at designers (e.g. assets.created_by). Order matters: delete dependents
-// before parents. Errors are surfaced loudly so a future leak doesn't
-// silently corrupt subsequent tests.
+// resetDB delegates to the shared testdb helper. Designer rows themselves
+// are wiped there; tests create their own designers afterwards.
 func resetDB(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
-	wipe := func() {
-		ctx := context.Background()
-		for _, q := range []string{
-			`DELETE FROM asset_variants`,
-			`DELETE FROM palette_variants`,
-			`DELETE FROM asset_animations`,
-			`DELETE FROM assets`,
-			`DELETE FROM designer_ws_tickets`,
-			`DELETE FROM designer_sessions`,
-			`DELETE FROM publish_diffs`,
-			`DELETE FROM drafts`,
-			`DELETE FROM designers`,
-		} {
-			if _, err := pool.Exec(ctx, q); err != nil {
-				t.Logf("resetDB %s: %v", q, err)
-			}
-		}
-	}
-	wipe()
-	t.Cleanup(wipe)
+	testdb.Reset(t, pool)
 }
 
 // buildHandler wires the same middleware stack the production binary uses,

@@ -26,6 +26,8 @@ import (
 	authdesigner "boxland/server/internal/auth/designer"
 	"boxland/server/internal/config"
 	designerhandlers "boxland/server/internal/designer"
+	"boxland/server/internal/entities"
+	"boxland/server/internal/entities/components"
 	"boxland/server/internal/httpserver"
 	"boxland/server/internal/logging"
 	"boxland/server/internal/persistence"
@@ -136,8 +138,12 @@ func runServe() error {
 	importerRegistry := assets.DefaultRegistry()
 	bakeJob := assets.NewBakeJob(pgPool, objStore, assetSvc)
 
+	componentRegistry := components.Default()
+	entitySvc := entities.New(pgPool, componentRegistry)
+
 	publishRegistry := artifact.NewRegistry()
 	publishRegistry.Register(assets.NewHandler(assetSvc))
+	publishRegistry.Register(entities.NewHandler(entitySvc))
 	publishPipeline := artifact.NewPipeline(pgPool, publishRegistry)
 
 	csrfMW := csrf.Middleware(csrf.Config{
@@ -148,6 +154,8 @@ func runServe() error {
 	designerDeps := designerhandlers.Deps{
 		Auth:            authSvc,
 		Assets:          assetSvc,
+		Entities:        entitySvc,
+		Components:      componentRegistry,
 		Importers:       importerRegistry,
 		BakeJob:         bakeJob,
 		PublishPipeline: publishPipeline,
