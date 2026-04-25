@@ -1332,7 +1332,8 @@ type previewRequest struct {
 	Height     int32  `json:"height,omitempty"`
 	MaxReseeds int    `json:"max_reseeds,omitempty"`
 	Anchors    []struct {
-		X, Y         int32 `json:"x"`
+		X            int32 `json:"x"`
+		Y            int32 `json:"y"`
 		EntityTypeID int64 `json:"entity_type_id"`
 	} `json:"anchors,omitempty"`
 }

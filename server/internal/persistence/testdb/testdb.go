@@ -22,6 +22,7 @@ var TruncateOrder = []string{
 	// Procedural-map / authored-map dependents land here when their
 	// migrations exist. Keep the order: children -> parents.
 	"map_state",
+	"map_spectator_invites",
 	"map_anchor_regions",
 	"map_lighting_cells",
 	"map_tiles",

@@ -45,6 +45,7 @@ vendor/
 
 # Probe / scratch scripts
 _*.ps1
+_*.txt
 server/migrate.out
 server/migrate.err
 server/server.log

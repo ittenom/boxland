@@ -165,10 +165,12 @@ func runServe() error {
 	wsAuth := &ws.LiveAuthBackend{Player: playerAuthSvc, Designer: authSvc}
 	wsDispatcher := ws.NewDispatcher()
 	ws.RegisterDefaultVerbs(wsDispatcher)
-	ws.RegisterAuthoringVerbs(wsDispatcher, ws.AuthoringDeps{
+	authoringDeps := ws.AuthoringDeps{
 		MapsService: mapsSvc,
 		Instances:   instanceMgr,
-	})
+	}
+	ws.RegisterAuthoringVerbs(wsDispatcher, authoringDeps)
+	ws.RegisterSpectatorVerb(wsDispatcher, authoringDeps)
 	wsGateway := ws.NewGateway(wsAuth, wsDispatcher, ws.Options{})
 	defer wsGateway.CloseAll("server shutdown")
 

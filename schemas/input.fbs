@@ -94,7 +94,19 @@ enum SpectateMode:uint8 {
     FollowPlayer  = 1,
 }
 
+// Spectate is a JoinMap-without-an-entity. The connection becomes a
+// read-only AOI subscriber under the Spectator broadcaster policy
+// (PLAN.md §4l, §4m). Authorization rules:
+//   * spectator_policy = "public"  -> any authenticated realm
+//   * spectator_policy = "private" -> designer realm only
+//   * spectator_policy = "invite"  -> designer realm OR a row exists in
+//     map_spectator_invites for (map_id, player_id)
+// `instance_hint` follows the JoinMap convention: empty -> default
+// "live:{map}:0"; "sandbox:{designer}:{map}" routes to a designer-only
+// sandbox instance (which still rejects player-realm spectators).
 table SpectatePayload {
+    map_id:uint32;
+    instance_hint:string;
     mode:SpectateMode;
     target_player_id:uint64 = 0;    // for FollowPlayer
 }

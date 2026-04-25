@@ -7,6 +7,8 @@ import (
 	"sync"
 
 	"github.com/coder/websocket"
+
+	"boxland/server/internal/sim/aoi"
 )
 
 // Policy governs how the broadcaster computes the chunk + field set for
@@ -69,8 +71,20 @@ func (b *Broadcaster) SetPolicy(id ConnID, p BroadcastPolicy) {
 	b.policies[id] = p
 }
 
-// PolicyFor returns the policy currently assigned to a connection (or
-// the realm default if none was set).
+// PolicyFor returns the policy currently assigned to a connection. Order
+// of precedence:
+//
+//  1. Explicit override set via SetPolicy (rarely used; tests + ad-hoc).
+//  2. The connection's AOI Subscription.Policy (set by JoinMap or
+//     Spectate at the moment of subscription).
+//  3. The realm default — Designer realm gets BroadcastDesigner, anything
+//     else gets BroadcastPlayer.
+//
+// Keeping the "real" choice on the Subscription means the spectate
+// handler doesn't need to reach into broadcaster state to flag the
+// connection — setting `subscription.Policy = aoi.PolicySpectator` is
+// enough for the broadcaster to apply the spectator field set on the
+// next tick.
 func (b *Broadcaster) PolicyFor(conn *Connection) BroadcastPolicy {
 	b.mu.RLock()
 	if p, ok := b.policies[conn.ID()]; ok {
@@ -78,6 +92,16 @@ func (b *Broadcaster) PolicyFor(conn *Connection) BroadcastPolicy {
 		return p
 	}
 	b.mu.RUnlock()
+	if conn.Subscription != nil {
+		switch conn.Subscription.Policy {
+		case aoi.PolicySpectator:
+			return BroadcastSpectator
+		case aoi.PolicyDesigner:
+			return BroadcastDesigner
+		case aoi.PolicyPlayer:
+			return BroadcastPlayer
+		}
+	}
 	if conn.Realm() == RealmDesigner {
 		return BroadcastDesigner
 	}

@@ -51,6 +51,21 @@ type Subscription struct {
 	// the map; the broadcaster treats absent as "version 0", forcing a
 	// full chunk send the first time it enters AOI.
 	Acked map[spatial.ChunkID]uint64
+
+	// FollowTarget is the player_id this subscription tracks every
+	// tick. Set by the Spectate verb when Mode == FollowPlayer; the
+	// per-tick re-centre happens upstream of the broadcaster (the
+	// runtime looks up the target's chunk and updates FocusChunk).
+	// Zero means "no follow"; that includes both player-realm
+	// subscribers (their Subscription is centred on their own entity
+	// via a different code path) and FreeCam spectators.
+	FollowTarget uint64
+
+	// FreeCam disables the FollowTarget recentre even if FollowTarget
+	// is set. Mostly informational so the runtime doesn't need to
+	// special-case "FollowTarget == 0 vs FreeCam == true". Spectate
+	// hands both fields off explicitly.
+	FreeCam bool
 }
 
 // NewSubscription returns a fresh subscription with an empty ack map.
