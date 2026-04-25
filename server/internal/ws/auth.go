@@ -30,7 +30,12 @@ type LiveAuthBackend struct {
 }
 
 // VerifyPlayer parses + validates the JWT and returns the player id.
+// Returns an error (rather than panicking) when the player service isn't
+// wired -- relevant in tests that only exercise designer-realm paths.
 func (l *LiveAuthBackend) VerifyPlayer(token string) (SubjectID, error) {
+	if l == nil || l.Player == nil {
+		return 0, errors.New("auth: player realm not configured")
+	}
 	claims, err := l.Player.ParseAccessToken(token)
 	if err != nil {
 		return 0, err
@@ -39,7 +44,12 @@ func (l *LiveAuthBackend) VerifyPlayer(token string) (SubjectID, error) {
 }
 
 // RedeemDesignerTicket consumes the ticket and returns the designer id.
+// Returns an error (rather than panicking) when the designer service
+// isn't wired.
 func (l *LiveAuthBackend) RedeemDesignerTicket(ctx context.Context, raw string, ip net.IP) (SubjectID, error) {
+	if l == nil || l.Designer == nil {
+		return 0, errors.New("auth: designer realm not configured")
+	}
 	d, err := l.Designer.RedeemWSTicket(ctx, raw, ip)
 	if err != nil {
 		return 0, err

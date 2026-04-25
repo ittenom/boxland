@@ -1,0 +1,108 @@
+package views
+
+import (
+	"fmt"
+
+	"boxland/server/internal/maps"
+)
+
+// MapsListProps drives /design/maps.
+type MapsListProps struct {
+	Items  []maps.Map
+	Search string
+}
+
+templ MapsList(p MapsListProps) {
+	@Layout(LayoutProps{
+		Title:   "Maps",
+		Surface: "maps",
+	}) {
+		<section class="bx-stack">
+			<header class="bx-row bx-row--apart">
+				<h1 data-copy-slot="maps.title">Maps</h1>
+				<button
+					type="button"
+					class="bx-btn bx-btn--primary"
+					hx-get="/design/maps/new"
+					hx-target="#modal-host"
+					hx-swap="innerHTML"
+					data-copy-slot="maps.new"
+				>New map</button>
+			</header>
+
+			<form
+				class="bx-row"
+				hx-get="/design/maps/grid"
+				hx-target="#maps-grid"
+				hx-swap="outerHTML"
+				hx-trigger="input from:input changed delay:200ms"
+			>
+				<input
+					type="search"
+					name="q"
+					value={ p.Search }
+					placeholder="Lorem ipsum search…"
+					class="bx-input"
+					style="max-width: 280px;"
+					data-copy-slot="maps.search.placeholder"
+				/>
+			</form>
+
+			@MapsGrid(p)
+		</section>
+
+		<div id="modal-host"></div>
+	}
+}
+
+templ MapsGrid(p MapsListProps) {
+	<table id="maps-grid" class="bx-table">
+		<thead>
+			<tr><th>Name</th><th>Size</th><th>Mode</th><th>Public</th><th></th></tr>
+		</thead>
+		<tbody>
+			if len(p.Items) == 0 {
+				<tr><td colspan="5" class="bx-muted" data-copy-slot="maps.empty">
+					Lorem ipsum dolor sit amet. No maps yet — create one.
+				</td></tr>
+			}
+			for _, m := range p.Items {
+				<tr>
+					<td>
+						<a href={ templ.URL(fmt.Sprintf("/design/maps/%d", m.ID)) }>
+							{ m.Name }
+						</a>
+					</td>
+					<td class="bx-small bx-muted">{ fmt.Sprintf("%d × %d", m.Width, m.Height) }</td>
+					<td>
+						<span class={ "bx-badge bx-badge--" + mapBadge(m.Mode) }>{ m.Mode }</span>
+					</td>
+					<td>
+						if m.Public {
+							<span class="bx-badge bx-badge--success">public</span>
+						} else {
+							<span class="bx-badge">private</span>
+						}
+					</td>
+					<td>
+						<button
+							type="button"
+							class="bx-btn bx-btn--ghost bx-small bx-btn--danger"
+							hx-delete={ fmt.Sprintf("/design/maps/%d", m.ID) }
+							hx-target="#maps-grid"
+							hx-swap="outerHTML"
+							hx-confirm="Delete this map? Layers, tiles and lighting cells go with it."
+						>Delete</button>
+					</td>
+				</tr>
+			}
+		</tbody>
+	</table>
+}
+
+func mapBadge(mode string) string {
+	if mode == "procedural" {
+		return "info"
+	}
+	return "accent"
+}

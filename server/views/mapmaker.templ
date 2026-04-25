@@ -1,0 +1,145 @@
+package views
+
+import (
+	"fmt"
+
+	"boxland/server/internal/maps"
+)
+
+// MapmakerProps drives the per-map editor page (/design/maps/{id}).
+type MapmakerProps struct {
+	Map    maps.Map
+	Layers []maps.Layer
+	// EntityTypePalette is the palette shown in the toolbar. v1 just lists
+	// every tile-kind entity-type the project has so designers can paint
+	// with anything; later iterations filter / favorite.
+	PaletteEntityTypes []PaletteEntry
+}
+
+// PaletteEntry is one tile selectable from the toolbar.
+type PaletteEntry struct {
+	ID   int64
+	Name string
+}
+
+templ MapmakerPage(p MapmakerProps) {
+	@Layout(LayoutProps{
+		Title:     "Mapmaker — " + p.Map.Name,
+		Surface:   "mapmaker",
+		BodyClass: "bx-mapmaker-body",
+	}) {
+		<section class="bx-mapmaker">
+			<header class="bx-row bx-row--apart">
+				<div class="bx-row">
+					<a href="/design/maps" class="bx-btn bx-btn--ghost bx-small" data-copy-slot="mapmaker.back">
+						← Maps
+					</a>
+					<h1 style="margin: 0; font-size: 18px;">{ p.Map.Name }</h1>
+					<span class="bx-small bx-muted">
+						{ fmt.Sprintf("%d × %d  ·  %s", p.Map.Width, p.Map.Height, p.Map.Mode) }
+					</span>
+				</div>
+				<div class="bx-row">
+					<button type="button" class="bx-btn bx-btn--ghost" data-bx-action="mapmaker-zoom-out" data-copy-slot="mapmaker.zoomout">−</button>
+					<button type="button" class="bx-btn bx-btn--ghost" data-bx-action="mapmaker-zoom-in" data-copy-slot="mapmaker.zoomin">+</button>
+				</div>
+			</header>
+
+			<div class="bx-mapmaker__layout">
+				<aside class="bx-mapmaker__sidebar bx-stack-tight">
+					@MapmakerToolbar(p)
+				</aside>
+
+				<main class="bx-mapmaker__canvas-wrap">
+					<canvas
+						id="mapmaker-canvas"
+						class="bx-mapmaker__canvas"
+						data-bx-mapmaker-canvas
+						data-map-id={ fmt.Sprintf("%d", p.Map.ID) }
+						data-map-w={ fmt.Sprintf("%d", p.Map.Width) }
+						data-map-h={ fmt.Sprintf("%d", p.Map.Height) }
+					></canvas>
+					<div class="bx-mapmaker__statusbar bx-small bx-muted">
+						<span data-bx-mapmaker-status="cursor">(–, –)</span>
+						·
+						<span data-bx-mapmaker-status="tool">brush</span>
+						·
+						<span data-bx-mapmaker-status="layer">base</span>
+					</div>
+				</main>
+
+				<aside class="bx-mapmaker__inspector bx-stack-tight" id="mapmaker-inspector">
+					<h2 class="bx-panel__title" data-copy-slot="mapmaker.inspector.title">Inspector</h2>
+					<p class="bx-muted bx-small" data-copy-slot="mapmaker.inspector.empty">
+						Click a tile to edit its per-cell overrides.
+					</p>
+				</aside>
+			</div>
+		</section>
+
+		<div id="modal-host"></div>
+	}
+}
+
+// MapmakerToolbar is the left-hand sidebar: tools, layers, palette.
+templ MapmakerToolbar(p MapmakerProps) {
+	<section class="bx-panel" data-bx-toolbar>
+		<h3 class="bx-panel__title" data-copy-slot="mapmaker.tools.title">Tools</h3>
+		<div class="bx-mapmaker__tools">
+			@toolButton("brush", "B", "Brush")
+			@toolButton("rect", "R", "Rect")
+			@toolButton("fill", "F", "Fill")
+			@toolButton("eyedrop", "I", "Eyedrop")
+			@toolButton("eraser", "E", "Eraser")
+		</div>
+	</section>
+
+	<section class="bx-panel" data-bx-layers>
+		<h3 class="bx-panel__title" data-copy-slot="mapmaker.layers.title">Layers</h3>
+		<ul class="bx-list bx-mapmaker__layers" role="listbox" aria-label="Layers">
+			for i, l := range p.Layers {
+				<li
+					data-bx-layer-id={ fmt.Sprintf("%d", l.ID) }
+					data-bx-layer-kind={ l.Kind }
+					if i == 0 { aria-selected="true" } else { aria-selected="false" }
+				>
+					<span>{ l.Name }</span>
+					<span class="bx-badge bx-small">{ l.Kind }</span>
+				</li>
+			}
+		</ul>
+	</section>
+
+	<section class="bx-panel" data-bx-palette>
+		<h3 class="bx-panel__title" data-copy-slot="mapmaker.palette.title">Tile palette</h3>
+		if len(p.PaletteEntityTypes) == 0 {
+			<p class="bx-small bx-muted" data-copy-slot="mapmaker.palette.empty">
+				Lorem ipsum: no tile-kind entity types yet. Create one in
+				the Entity Manager and it appears here.
+			</p>
+		}
+		<ol class="bx-mapmaker__palette" role="listbox" aria-label="Tile palette">
+			for i, e := range p.PaletteEntityTypes {
+				<li
+					data-bx-entity-type-id={ fmt.Sprintf("%d", e.ID) }
+					if i == 0 { aria-selected="true" } else { aria-selected="false" }
+					title={ e.Name }
+				>
+					<span>{ e.Name }</span>
+				</li>
+			}
+		</ol>
+	</section>
+}
+
+templ toolButton(id, hotkey, label string) {
+	<button
+		type="button"
+		class="bx-btn bx-btn--ghost"
+		data-bx-tool={ id }
+		title={ label + " (" + hotkey + ")" }
+	>
+		{ label }
+		<kbd class="bx-small bx-muted" style="margin-left: 6px;">{ hotkey }</kbd>
+	</button>
+}

@@ -24,14 +24,18 @@ import (
 	"boxland/server/internal/assets"
 	"boxland/server/internal/auth/csrf"
 	authdesigner "boxland/server/internal/auth/designer"
+	authplayer "boxland/server/internal/auth/player"
 	"boxland/server/internal/config"
 	designerhandlers "boxland/server/internal/designer"
 	"boxland/server/internal/entities"
 	"boxland/server/internal/entities/components"
 	"boxland/server/internal/httpserver"
 	"boxland/server/internal/logging"
+	mapsservice "boxland/server/internal/maps"
 	"boxland/server/internal/persistence"
 	"boxland/server/internal/publishing/artifact"
+	"boxland/server/internal/sim/runtime"
+	"boxland/server/internal/ws"
 )
 
 const Version = "0.0.0-dev"
@@ -134,17 +138,39 @@ func runServe() error {
 	slog.Info("object store connected", "bucket", cfg.S3Bucket)
 
 	authSvc := authdesigner.New(pgPool)
+	playerAuthSvc := authplayer.New(pgPool, []byte(cfg.JWTSigningSecret))
 	assetSvc := assets.New(pgPool)
 	importerRegistry := assets.DefaultRegistry()
 	bakeJob := assets.NewBakeJob(pgPool, objStore, assetSvc)
 
 	componentRegistry := components.Default()
 	entitySvc := entities.New(pgPool, componentRegistry)
+	mapsSvc := mapsservice.New(pgPool)
 
 	publishRegistry := artifact.NewRegistry()
 	publishRegistry.Register(assets.NewHandler(assetSvc))
 	publishRegistry.Register(entities.NewHandler(entitySvc))
+	publishRegistry.Register(mapsservice.NewHandler(mapsSvc))
 	publishPipeline := artifact.NewPipeline(pgPool, publishRegistry)
+
+	// Live game runtime: per-(map, instance) MapInstances live here. Any
+	// JoinMap / DesignerCommand reaching the WS gateway gets routed
+	// through this manager.
+	instanceMgr := runtime.NewInstanceManager(pgPool, redisCli.Client, mapsSvc)
+
+	// WS gateway: realm-tagged Auth handshake -> ClientMessage dispatch.
+	// Both the default verb set (Heartbeat/Move/Interact stubs) and the
+	// authoring verbs (PlaceTiles/EraseTiles/PlaceLighting + JoinMap
+	// realbinding) register onto the same dispatcher.
+	wsAuth := &ws.LiveAuthBackend{Player: playerAuthSvc, Designer: authSvc}
+	wsDispatcher := ws.NewDispatcher()
+	ws.RegisterDefaultVerbs(wsDispatcher)
+	ws.RegisterAuthoringVerbs(wsDispatcher, ws.AuthoringDeps{
+		MapsService: mapsSvc,
+		Instances:   instanceMgr,
+	})
+	wsGateway := ws.NewGateway(wsAuth, wsDispatcher, ws.Options{})
+	defer wsGateway.CloseAll("server shutdown")
 
 	csrfMW := csrf.Middleware(csrf.Config{
 		Secure:   cfg.Env == "prod",
@@ -156,6 +182,7 @@ func runServe() error {
 		Assets:          assetSvc,
 		Entities:        entitySvc,
 		Components:      componentRegistry,
+		Maps:            mapsSvc,
 		Importers:       importerRegistry,
 		BakeJob:         bakeJob,
 		PublishPipeline: publishPipeline,
@@ -174,6 +201,7 @@ func runServe() error {
 		},
 		httpserver.Mounts{
 			Designer: designerMount,
+			WS:       wsGateway.HTTPHandler(),
 		},
 	)
 

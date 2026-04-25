@@ -695,6 +695,95 @@ p, li {
 }
 
 
+/* -- Mapmaker --------------------------------------------------------- */
+.bx-mapmaker-body { overflow: hidden; }
+.bx-mapmaker {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 8 * var(--bx-px));
+    gap: var(--bx-s2);
+    padding: var(--bx-s2);
+}
+.bx-mapmaker__layout {
+    display: grid;
+    grid-template-columns: 240px 1fr 320px;
+    gap: var(--bx-s2);
+    flex: 1;
+    overflow: hidden;
+}
+.bx-mapmaker__sidebar,
+.bx-mapmaker__inspector {
+    overflow-y: auto;
+    background: var(--bx-bg-1);
+    padding: var(--bx-s2);
+    border: var(--bx-px) solid var(--bx-line);
+}
+.bx-mapmaker__canvas-wrap {
+    position: relative;
+    background: var(--bx-bg-1);
+    border: var(--bx-px) solid var(--bx-line);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+.bx-mapmaker__canvas {
+    flex: 1;
+    width: 100%;
+    height: 100%;
+    image-rendering: pixelated;
+    background:
+        linear-gradient(45deg, #1a1733 25%, transparent 25%),
+        linear-gradient(-45deg, #1a1733 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #1a1733 75%),
+        linear-gradient(-45deg, transparent 75%, #1a1733 75%);
+    background-size: 16px 16px;
+    background-position: 0 0, 0 8px, 8px -8px, -8px 0px;
+}
+.bx-mapmaker__statusbar {
+    padding: var(--bx-s1) var(--bx-s2);
+    background: var(--bx-bg-2);
+    border-top: var(--bx-px) solid var(--bx-line);
+    display: flex; gap: var(--bx-s2);
+}
+.bx-mapmaker__tools {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--bx-px);
+}
+.bx-mapmaker__tools .bx-btn[aria-pressed="true"] {
+    background: var(--bx-accent);
+    color: var(--bx-accent-fg);
+    border-color: var(--bx-accent-fg);
+}
+.bx-mapmaker__layers li {
+    display: flex; justify-content: space-between; align-items: center;
+    cursor: pointer;
+}
+.bx-mapmaker__palette {
+    list-style: none;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--bx-px);
+    max-height: 280px;
+    overflow-y: auto;
+    padding: 0;
+}
+.bx-mapmaker__palette li {
+    padding: var(--bx-s1) var(--bx-s2);
+    background: var(--bx-bg-2);
+    border: var(--bx-px) solid var(--bx-line);
+    font-size: 12px;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.bx-mapmaker__palette li[aria-selected="true"] {
+    background: var(--bx-bg-3);
+    border-color: var(--bx-accent);
+}
+
+
 /* -- Pixel scrollbar (Webkit; Firefox falls back to native — accepted) -- */
 .bx-scroll::-webkit-scrollbar              { width: var(--bx-s2); height: var(--bx-s2); }
 .bx-scroll::-webkit-scrollbar-track        { background: var(--bx-bg-1); border: var(--bx-px) solid var(--bx-line); }

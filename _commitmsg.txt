@@ -1,102 +1,106 @@
-Tasks 88-97: player auth, OAuth, WebSocket gateway, broadcaster
+Tasks 98-108: maps + WS-driven Mapmaker authoring
 
-The full WS surface is up: realm-tagged Auth handshake, single
-ClientMessage dispatcher, per-connection rate limiter, broadcaster with
-three subscriber policies. Player auth + JWT + email verification + OAuth
-linking land alongside.
+Map authoring now flows through the SAME WS gateway players use, per
+PLAN.md §4j unified-broadcaster: a designer painting tiles in Mapmaker
+emits DesignerCommand::PlaceTiles -> dispatcher writes through
+maps.Service -> MarkChunksDirty bumps the spatial.Grid chunk version ->
+the next broadcaster tick pushes a Diff to every subscriber on the
+map's chunks (designers + players, one pipeline).
 
-  Player auth + email verification (88-89):
-    - migration 0016_players: players (citext email, password_hash NULL
-      allowed), player_oauth_links, player_sessions, player_email_
-      verifications. Deferred constraint trigger enforces "every player
-      has either a password or at least one OAuth link" so single-tx
-      OAuth signups (player + link in same statement) pass.
-    - internal/auth/player: argon2id password hashing (reuses the
-      designer package's helpers), email verification with one-shot
-      sha256-hashed tokens (24h TTL), refresh sessions (30d), JWT
-      access tokens (HS256, 15min, claims include realm="player").
-      VerifyEmail is transactional + double-consume safe. 11 tests.
+  Schema (98-101):
+    - 0017 maps         : authored + procedural; reset_rules_json,
+                          spectator_policy, instancing_mode, persistence_mode
+    - 0018 map_layers   : per-map ordered layers; 'tile' | 'lighting'
+    - 0019 map_tiles    : (map_id,layer_id,x,y) PK + (map_id,x,y) index
+                          for cross-layer chunk loads
+    - 0020 map_lighting_cells: 0xRRGGBBAA + intensity 0..255
 
-  OAuth (90):
-    - Provider interface (Name, AuthCodeURL, Exchange) + Registry
-    - GoogleProvider as the working reference using golang.org/x/oauth2
-      with PKCE S256 challenges; pulls userinfo from Google's OIDC
-      endpoint to get sub + email + email_verified
-    - LinkOrCreatePlayer: 3-way path -- existing link returns linked
-      player; existing email links to that player; otherwise creates
-      a new OAuth-only account in one transaction
-    - State + PKCE helpers + cookie wrappers for the round-trip
-    - 9 tests including registry duplication panic, PKCE length
-      conformance to RFC 7636, link-or-create flow paths
+  maps.Service + Artifact[T] (102):
+    - Map struct + Repo[Map] for CRUD; Create() inserts default layers
+      (base + decoration + lighting) in the same tx
+    - PlaceTiles / EraseTiles / PlaceLightingCells: batch upserts
+      and deletes; transactional
+    - ChunkTiles: cross-layer query for the chunked loader
+    - MapDraft + Handler implement the publish-pipeline contract
+      identical to Asset / EntityType
+    - 10 tests covering create / list / overwrite / erase / lighting +
+      publish handler roundtrip + enum validation
 
-  WebSocket gateway + dispatcher + rate limiter (91-93):
-    - github.com/coder/websocket for the upgrade
-    - Connection holds (id, realm, subject, clientKind, version,
-      Subscription, closed atomic bool)
-    - performAuthHandshake: reads first FB frame, decodes Auth, dispatches
-      to AuthBackend (player JWT verify or designer ticket redeem) based
-      on Realm, mutates conn.realm/subject/etc on success
-    - Dispatcher: HandlePlayer + HandleDesigner registration; designer-
-      only verbs check connection.Realm() never the token
-    - RateLimiter: token bucket (50/s sustained, 100 burst), 5-strike
-      escalation closes the connection with PolicyViolation
-    - Default verbs registered: JoinMap, LeaveMap, Move, Interact,
-      Heartbeat, AckTick, Spectate (player); DesignerCommand (designer)
-    - 5 integration tests over real WS: player auth + heartbeat
-      dispatched; bad token -> PolicyViolation close; designer-only
-      verb on player realm -> realm-violation close; same verb on
-      designer realm -> handler invoked with correct conn.Realm();
-      3 concurrent connections all register
+  Chunked map loader (103):
+    - maps.Service.LoadChunk reads tiles in (x0,y0)..(x1,y1), looks up
+      EntityTypeMeta, spawns one entity per tile with Tile + Static +
+      Sprite + Collider components in the live ECS
+    - lookup cache so a chunk full of identical tiles only hits the
+      entities surface once
+    - tile overrides (anim, mask) win over the type's defaults
+    - 3 tests covering batch materialization, override propagation,
+      out-of-range filtering
 
-  Broadcaster (94):
-    - Three policies: Player (bounded AOI, minimal fields), Designer
-      (unbounded, inspector fields), Spectator (bounded, minimal,
-      no own-entity)
-    - DiffEncoder is the per-conn blob builder; tests can inject a stub
-    - Tick walks every connection, skips conns without a Subscription
-      (haven't joined a map yet), writes the encoded blob with a 5s
-      write timeout, closes on write failure
-    - SetPolicy / Forget for designer spectator overrides
-    - 3 broadcaster tests: realm defaults are correct, Tick delivers
-      the encoded blob to subscribed conns over real WS, un-subscribed
-      conns are skipped
+  WS-driven authoring (the unified-broadcaster commitment):
+    - schemas/input.fbs: new DesignerOpcode 200..202
+      (PlaceTiles / EraseTiles / PlaceLighting) with payload tables
+      TilePlacement, PlaceTilesPayload, EraseTilePoint, EraseTilesPayload,
+      LightingCellPayload, PlaceLightingPayload
+    - regen flatc; new Go + TS bindings
+    - ws.RegisterAuthoringVerbs(d, deps) replaces both the stub
+      DesignerCommand handler AND the stub JoinMap handler
+    - dispatchDesignerCommand decodes the inner opcode and routes to
+      handlePlaceTiles / handleEraseTiles / handlePlaceLighting; each
+      persists via maps.Service then calls MapInstance.MarkChunksDirty
+      which uses spatial.Grid.BumpVersion (new) to mark the chunk
+      dirty without touching the moving-entity grid
+    - handleJoinMapReal: looks up the map, gets-or-creates the
+      MapInstance, builds an aoi.Subscription on the conn pointed at
+      the map centre with realm-default radius
+    - sim/runtime package: MapInstance owns (World, Scheduler, Grid,
+      WAL, Persister, MapsService, loadedChunks); InstanceManager is
+      the per-process registry keyed by instance_id with a build
+      barrier so concurrent JoinMaps don't double-construct
+    - integration test: designer ticket -> Auth handshake ->
+      PlaceTiles envelope -> 4 rows persisted in Postgres + chunk
+      version advanced. Full WS authoring path verified end-to-end.
 
-  Verb wiring + reconnect + htmx-ext-ws (95-97):
-    - Move + Interact handlers exist + log; world integration deferred
-      to the runtime-glue task that wires per-instance world goroutines
-    - Reconnect path: AckTickPayload handler exists; the AOI
-      subscription's Reset() method (already shipped in task #80)
-      forces a full re-deliver on next Broadcast; gap-threshold check
-      land alongside world wiring
-    - htmx-ext-ws: vendored at /static/vendor/htmx-ext-ws.min.js
-      already; gateway accepts both binary (FlatBuffers, game traffic)
-      and text (htmx swaps) WS frames -- no server-side change needed
-      for designer surfaces to use it once the JS is wired
+  Mapmaker UI shell (104-107 partial):
+    - views/maps.templ: list page + delete + new-map modal that
+      collects width, height, mode (authored | procedural)
+    - views/mapmaker.templ: per-map editor page with sidebar
+      (tools / layers / palette), Pixi-ready canvas with data-*
+      attributes, statusbar, inspector pane
+    - 9 HTTP routes: list, grid, new-modal, create, detail, delete
+      (painting goes over WS, so no place-tile HTTP route)
+    - Toolbar tools (brush / rect / fill / eyedrop / eraser) marked
+      with hotkeys B / R / F / I / E for the future TS command-bus
+      to bind against
+    - Pixel-CSS additions: bx-mapmaker layout (240/1fr/320 grid),
+      checkered canvas background, tool-button selected state
 
-  Test totals: 25 Go packages, all green. Cumulative: ~150+ Go tests,
-  118 TS tests.
+  Lighting layer (108): the persistence path lands in maps.Service.
+    PlaceLightingCells; the WS opcode (PlaceLighting) handles batched
+    lighting paints. The Mapmaker UI surface for it is the same
+    sidebar + canvas; the TS module (next push) treats lighting as a
+    layer-mode that swaps the active tool palette for color+intensity.
 
-  Decisions worth flagging:
-    * The defer-constraint trigger on players is the cleanest way to
-      assert "needs password OR oauth link" since CHECK constraints
-      can't span tables. INITIALLY DEFERRED so the OAuth signup tx
-      (insert player + insert link) commits cleanly.
-    * Player JWT TTL is 15 min on purpose -- the WS connection
-      reauths via the long-lived refresh token if needed. Short
-      access tokens limit blast radius if one is leaked.
-    * GoogleProvider returns nil when its config is empty so the
-      gateway can decide whether to register based on a single check
-      ("did NewGoogleProvider yield a value?"). Adding Discord/Apple
-      follows the same pattern.
-    * The dispatcher's "additive" model (HandlePlayer is reachable on
-      both realms; HandleDesigner is designer-only) keeps from
-      registering most verbs twice while preserving the strict realm
-      boundary on the few designer-only opcodes.
-    * The rate limiter is intentionally generous (50/s sustained); it's
-      anti-bug rather than DDoS protection. Real DDoS lives at the
-      Cloudflare layer in front of Railway.
-    * Reconnect handling is built around AckTick + AOI.Reset rather
-      than a separate "snapshot resend" message. The next tick after
-      Reset() rolls every visible chunk back into DirtyChunks, so the
-      reconnect path falls naturally out of the per-tick broadcaster
-      loop without bespoke code.
+Test totals: 26 Go packages, all green under -p 1.
+
+Decisions worth flagging:
+  * spatial.Grid gained BumpVersion(c) -- the right primitive for tile-
+    layer mutations that don't move any moving-entity. Without it the
+    grid would never see lighting / tile edits and AOI broadcast would
+    skip them.
+  * runtime.InstanceManager uses a per-key build barrier (channel) so
+    two simultaneous JoinMaps for the same instance only pay the
+    Recover() cost once.
+  * Authoring opcodes (200..) ride the existing DesignerCommand verb so
+    the gateway's realm-violation check covers them without bespoke
+    per-opcode auth. Player-realm conns sending DesignerCommand still
+    get a PolicyViolation close.
+  * canonicalInstanceID() is "live:{map_id}:0" until per-user / per-
+    party routing lands. Sandbox uses "sandbox:{designer_id}:{map_id}"
+    in a separate id space, also routed through this same path.
+  * The Mapmaker create-modal uses a custom small form rather than the
+    generic MapDraft.Descriptor() form because the create path needs
+    width + height which aren't editable post-create (hence not in
+    Descriptor). All other map-edit surfaces use the generic renderer.
+  * WS authoring tests guard the realm boundary: a player-realm
+    handshake with a fake JWT closes with PolicyViolation BEFORE the
+    DesignerCommand check ever runs (auth-handshake-time enforcement).

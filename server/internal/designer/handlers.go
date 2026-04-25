@@ -21,6 +21,7 @@ import (
 	"boxland/server/internal/configurable"
 	"boxland/server/internal/entities"
 	"boxland/server/internal/entities/components"
+	mapsservice "boxland/server/internal/maps"
 	"boxland/server/internal/persistence"
 	"boxland/server/internal/publishing/artifact"
 	"boxland/server/views"
@@ -38,6 +39,7 @@ type Deps struct {
 	Assets          *assets.Service
 	Entities        *entities.Service
 	Components      *components.Registry
+	Maps            *mapsservice.Service
 	Importers       *assets.Registry
 	BakeJob         *assets.BakeJob
 	PublishPipeline *artifact.Pipeline
@@ -96,6 +98,16 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /design/tile-groups/{id}",           auth(getTileGroupDetail(d)))
 	mux.Handle("DELETE /design/tile-groups/{id}",        auth(deleteTileGroup(d)))
 	mux.Handle("POST /design/tile-groups/{id}/layout",   auth(postTileGroupLayout(d)))
+
+	// Mapmaker (PLAN.md §5e). Painting is over WS (DesignerCommand
+	// PlaceTiles/EraseTiles/PlaceLighting); these HTTP routes only
+	// handle list + create + detail + delete.
+	mux.Handle("GET /design/maps",          auth(getMapsList(d)))
+	mux.Handle("GET /design/maps/grid",     auth(getMapsGrid(d)))
+	mux.Handle("GET /design/maps/new",      auth(getMapNewModal(d)))
+	mux.Handle("POST /design/maps",         auth(postMapCreate(d)))
+	mux.Handle("GET /design/maps/{id}",     auth(getMapmakerPage(d)))
+	mux.Handle("DELETE /design/maps/{id}",  auth(deleteMap(d)))
 
 	return mux
 }
@@ -1153,6 +1165,178 @@ func postTileGroupLayout(d Deps) http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(`<div class="bx-toast bx-toast--success">Layout saved.</div>`))
+	}
+}
+
+// ---- Mapmaker ----
+
+func getMapsList(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		search := strings.TrimSpace(r.URL.Query().Get("q"))
+		items, err := d.Maps.List(r.Context(), search)
+		if err != nil {
+			slog.Error("maps list", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		renderHTML(w, r, views.MapsList(views.MapsListProps{Items: items, Search: search}))
+	}
+}
+
+func getMapsGrid(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		search := strings.TrimSpace(r.URL.Query().Get("q"))
+		items, err := d.Maps.List(r.Context(), search)
+		if err != nil {
+			slog.Error("maps grid", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		renderHTML(w, r, views.MapsGrid(views.MapsListProps{Items: items, Search: search}))
+	}
+}
+
+// getMapNewModal renders the create-new-map dialog. Reuses the generic
+// form renderer + MapDraft.Descriptor() so adding a future field on
+// MapDraft updates this modal automatically.
+func getMapNewModal(_ Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Custom small-form HTML rather than the full Form partial because
+		// the create-new path needs width + height which aren't in
+		// MapDraft.Descriptor() (those are immutable post-create).
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`
+<div class="bx-modal-backdrop" data-bx-dismissible role="dialog" aria-modal="true">
+  <div class="bx-modal">
+    <header class="bx-modal__header">
+      <h2 data-copy-slot="maps.new.title">New map</h2>
+      <button type="button" class="bx-btn bx-btn--ghost"
+              hx-on:click="this.closest('.bx-modal-backdrop').remove()"
+              aria-label="Close">Esc</button>
+    </header>
+    <div class="bx-modal__body">
+      <form hx-post="/design/maps" hx-target="#maps-grid" hx-swap="outerHTML"
+            hx-on:htmx:after-request="this.closest('.bx-modal-backdrop')?.remove()"
+            class="bx-stack">
+        <div class="bx-field">
+          <label for="m-name" class="bx-label">Name</label>
+          <input id="m-name" name="name" class="bx-input" required maxlength="128" autofocus>
+        </div>
+        <div class="bx-row">
+          <div class="bx-field" style="flex: 1;">
+            <label for="m-width" class="bx-label">Width (tiles)</label>
+            <input id="m-width" name="width" type="number" class="bx-input" min="1" value="64">
+          </div>
+          <div class="bx-field" style="flex: 1;">
+            <label for="m-height" class="bx-label">Height (tiles)</label>
+            <input id="m-height" name="height" type="number" class="bx-input" min="1" value="48">
+          </div>
+        </div>
+        <div class="bx-field">
+          <label for="m-mode" class="bx-label">Mode</label>
+          <select id="m-mode" name="mode" class="bx-select">
+            <option value="authored">Authored</option>
+            <option value="procedural">Procedural (WFC)</option>
+          </select>
+        </div>
+        <div class="bx-row bx-row--end">
+          <button type="submit" class="bx-btn bx-btn--primary">Create</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+`))
+	}
+}
+
+func postMapCreate(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		dr := CurrentDesigner(r.Context())
+		if dr == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		_, err := d.Maps.Create(r.Context(), mapsservice.CreateInput{
+			Name:      r.FormValue("name"),
+			Width:     int32(parseIntOr(r.FormValue("width"), 64)),
+			Height:    int32(parseIntOr(r.FormValue("height"), 48)),
+			Mode:      strings.TrimSpace(r.FormValue("mode")),
+			CreatedBy: dr.ID,
+		})
+		if err != nil {
+			if errors.Is(err, mapsservice.ErrNameInUse) {
+				http.Error(w, err.Error(), http.StatusConflict)
+				return
+			}
+			slog.Error("map create", "err", err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		items, _ := d.Maps.List(r.Context(), "")
+		renderHTML(w, r, views.MapsGrid(views.MapsListProps{Items: items}))
+	}
+}
+
+func getMapmakerPage(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := pathID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		m, err := d.Maps.FindByID(r.Context(), id)
+		if err != nil {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		layers, err := d.Maps.Layers(r.Context(), id)
+		if err != nil {
+			slog.Error("map layers", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		// Build the tile-palette: every tile-kind entity-type (entity-type
+		// IDs that have a tile_edge_assignments row, or that are tagged
+		// "tile"; v1 just lists everything tagged "tile" to keep it simple
+		// and falls back to all entity types).
+		var palette []views.PaletteEntry
+		ets, err := d.Entities.List(r.Context(), entities.ListOpts{Limit: 100})
+		if err == nil {
+			for _, et := range ets {
+				palette = append(palette, views.PaletteEntry{ID: et.ID, Name: et.Name})
+			}
+		}
+		renderHTML(w, r, views.MapmakerPage(views.MapmakerProps{
+			Map:                *m,
+			Layers:             layers,
+			PaletteEntityTypes: palette,
+		}))
+	}
+}
+
+func deleteMap(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := pathID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := d.Maps.Delete(r.Context(), id); err != nil {
+			if errors.Is(err, mapsservice.ErrMapNotFound) {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			slog.Error("map delete", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		items, _ := d.Maps.List(r.Context(), "")
+		renderHTML(w, r, views.MapsGrid(views.MapsListProps{Items: items}))
 	}
 }
 

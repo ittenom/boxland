@@ -164,6 +164,40 @@ func (s *Service) List(ctx context.Context, opts ListOpts) ([]EntityType, error)
 	return s.Repo.List(ctx, listOpts)
 }
 
+// EntityTypeMeta is the minimal subset of EntityType the chunked map
+// loader needs (PLAN.md §4f). Returning a small struct avoids exposing
+// the full row to callers that only need collider + sprite metadata.
+type EntityTypeMeta struct {
+	ID                   int64
+	SpriteAssetID        *int64
+	DefaultAnimationID   *int64
+	ColliderW            int32
+	ColliderH            int32
+	ColliderAnchorX      int32
+	ColliderAnchorY      int32
+	DefaultCollisionMask int64
+}
+
+// EntityTypeMeta returns the loader-shaped subset for `id`.
+// Implements the EntityTypeLookup interface defined in
+// internal/maps/loader.go.
+func (s *Service) EntityTypeMeta(ctx context.Context, id int64) (*EntityTypeMeta, error) {
+	got, err := s.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return &EntityTypeMeta{
+		ID:                   got.ID,
+		SpriteAssetID:        got.SpriteAssetID,
+		DefaultAnimationID:   got.DefaultAnimationID,
+		ColliderW:            got.ColliderW,
+		ColliderH:            got.ColliderH,
+		ColliderAnchorX:      got.ColliderAnchorX,
+		ColliderAnchorY:      got.ColliderAnchorY,
+		DefaultCollisionMask: got.DefaultCollisionMask,
+	}, nil
+}
+
 // Delete removes one entity type. Components cascade via FK.
 func (s *Service) Delete(ctx context.Context, id int64) error {
 	if err := s.Repo.Delete(ctx, id); err != nil {

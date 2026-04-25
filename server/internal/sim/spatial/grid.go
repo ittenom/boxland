@@ -156,6 +156,15 @@ func (g *Grid) Version(c ChunkID) uint64 {
 	return g.version[c]
 }
 
+// BumpVersion increments the chunk's version without touching its entity
+// set. Used by authoring opcodes (Mapmaker tile placement, lighting
+// edits) to mark a chunk dirty so the next broadcaster tick picks up
+// the change. Tile entities are Static and never enter the grid via
+// Add(), so without this the grid wouldn't know they changed.
+func (g *Grid) BumpVersion(c ChunkID) {
+	g.version[c]++
+}
+
 // HomeOf returns the chunk an entity currently lives in, or false if the
 // entity isn't in the grid.
 func (g *Grid) HomeOf(e ecs.EntityID) (ChunkID, bool) {

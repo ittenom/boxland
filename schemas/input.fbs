@@ -101,6 +101,13 @@ table SpectatePayload {
 
 // Designer-only opcodes. Gateway rejects unless connection.realm == Designer
 // AND the designer's role permits the opcode. `None` (0) is a sentinel.
+//
+// 1xx range: sandbox runtime control (PLAN.md §4j).
+// 2xx range: Mapmaker tile + lighting authoring (PLAN.md §4f, §5e).
+// All authoring opcodes flow through this same DesignerCommand path so
+// the WS broadcaster pushes the resulting Diff to every connection
+// subscribed to the map's chunk -- designers and players see the same
+// per-tick update via one pipeline (PLAN.md §4j unified-broadcaster).
 enum DesignerOpcode:uint16 {
     None               = 0,
     SpawnAny           = 1,
@@ -111,11 +118,56 @@ enum DesignerOpcode:uint16 {
     FreezeTick         = 6,
     StepTick           = 7,
     Godmode            = 8,
+
+    PlaceTiles         = 200,  // payload: PlaceTilesPayload
+    EraseTiles         = 201,  // payload: EraseTilesPayload
+    PlaceLighting      = 202,  // payload: PlaceLightingPayload
 }
 
 table DesignerCommandPayload {
     opcode:DesignerOpcode;
-    data:[ubyte];                   // opcode-specific FlatBuffer
+    data:[ubyte];                   // opcode-specific FlatBuffer (tables below)
+}
+
+// One tile placement. Mirrors the maps.Tile shape; the optional override
+// fields use sentinel values so designers can omit them per stroke.
+table TilePlacement {
+    layer_id:uint32;
+    x:int32;
+    y:int32;
+    entity_type_id:uint64;
+    anim_override:int16 = -1;              // -1 sentinel = inherit
+    collision_shape_override:int16 = -1;   // -1 sentinel = inherit
+    collision_mask_override:int64 = -1;    // -1 sentinel = inherit
+}
+
+table PlaceTilesPayload {
+    map_id:uint32;
+    tiles:[TilePlacement];
+}
+
+table EraseTilePoint {
+    layer_id:uint32;
+    x:int32;
+    y:int32;
+}
+
+table EraseTilesPayload {
+    map_id:uint32;
+    points:[EraseTilePoint];
+}
+
+table LightingCellPayload {
+    layer_id:uint32;
+    x:int32;
+    y:int32;
+    color:uint32;       // 0xRRGGBBAA
+    intensity:uint8;    // 0..255; 0 = clear (treated as erase)
+}
+
+table PlaceLightingPayload {
+    map_id:uint32;
+    cells:[LightingCellPayload];
 }
 
 table HeartbeatPayload {

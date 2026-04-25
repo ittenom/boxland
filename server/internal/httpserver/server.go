@@ -29,6 +29,7 @@ type Health struct {
 // be nil; the corresponding routes simply won't exist.
 type Mounts struct {
 	Designer http.Handler // /design/* and (later) /auth/designer/*
+	WS       http.Handler // /ws (single endpoint; realm decided by Auth handshake)
 }
 
 // New builds the http.Handler tree. Add routes here as packages come online.
@@ -38,6 +39,11 @@ func New(h Health, m Mounts) http.Handler {
 	mux.Handle("GET /static/", staticHandler())
 	if m.Designer != nil {
 		mux.Handle("/design/", m.Designer)
+	}
+	if m.WS != nil {
+		// One canonical WS endpoint; realm is decided by the FlatBuffers
+		// Auth handshake (PLAN.md §1 "WS auth realms").
+		mux.Handle("GET /ws", m.WS)
 	}
 	return mux
 }
