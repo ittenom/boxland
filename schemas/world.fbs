@@ -101,8 +101,21 @@ table MapState {
     lighting:[LightingCell];
 }
 
+// One chunk's post-diff version vector. The client updates its acked
+// vector to match these after applying the Diff. Chunk id is the
+// row-major (cy * stride + cx) handle the server uses internally;
+// stride is map-fixed so the client can recover (cx, cy) when needed.
+// See PLAN.md §4h AOI section.
+table ChunkVersion {
+    chunk_id:uint64;
+    version:uint64;
+}
+
 // Per-tick diff broadcast to subscribers. Only chunks whose version vector
-// advanced are included; see PLAN.md §4h AOI section.
+// advanced are included; see PLAN.md §4h AOI section. `chunks` lists
+// every chunk this diff touched along with its post-apply version, so
+// the client mailbox can update its acked vector and detect gaps when
+// reconnecting.
 table Diff {
     protocol_version:ProtocolVersion (required);
     map_id:uint32;
@@ -113,6 +126,7 @@ table Diff {
     tile_changes:[Tile];
     lighting_changes:[LightingCell];
     audio:[AudioEvent];
+    chunks:[ChunkVersion];
 }
 
 // ---- WAL ----
