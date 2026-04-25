@@ -1,0 +1,154 @@
+package views
+
+import (
+	"fmt"
+
+	"boxland/server/internal/maps"
+)
+
+// SandboxIndexProps drives /design/sandbox -- the picker page where a
+// designer chooses a map to sandbox-test. PLAN.md §131.
+type SandboxIndexProps struct {
+	Items []maps.Map
+}
+
+templ SandboxIndex(p SandboxIndexProps) {
+	@Layout(LayoutProps{
+		Title:   "Sandbox",
+		Surface: "sandbox-picker",
+	}) {
+		<section class="bx-stack">
+			<header class="bx-row bx-row--apart">
+				<h1 data-copy-slot="sandbox.title">Sandbox</h1>
+				<p class="bx-muted bx-small" data-copy-slot="sandbox.lede">
+					Lorem ipsum: pick a map to sandbox-test against draft data.
+				</p>
+			</header>
+			<ul class="bx-cards">
+				if len(p.Items) == 0 {
+					<li class="bx-muted bx-card" data-copy-slot="sandbox.empty">
+						No maps yet. Create one in the Mapmaker first.
+					</li>
+				}
+				for _, m := range p.Items {
+					<li class="bx-card">
+						<a href={ templ.URL(fmt.Sprintf("/design/sandbox/launch/%d", m.ID)) } class="bx-card__title">
+							{ m.Name }
+						</a>
+						<p class="bx-card__meta bx-small bx-muted">
+							{ fmt.Sprintf("%d × %d • %s", m.Width, m.Height, m.Mode) }
+						</p>
+					</li>
+				}
+			</ul>
+		</section>
+	}
+}
+
+// SandboxGameProps drives the actual sandbox game view at
+// /design/sandbox/{map_id}. Reuses the same client bundle as the
+// player game view, just with the sandbox flag flipped + a designer
+// WS ticket instead of a player JWT.
+type SandboxGameProps struct {
+	DesignerName string
+	Map          maps.Map
+	WSURL        string
+	WSTicket     string
+	InstanceID   string // "sandbox:<designer_id>:<map_id>"
+}
+
+templ SandboxGamePage(p SandboxGameProps) {
+	@Layout(LayoutProps{
+		Title:     "Sandbox: " + p.Map.Name,
+		Surface:   "sandbox-game",
+		BodyClass: "bx-game-body bx-sandbox-body",
+	}) {
+		<main class="bx-game-shell" id="bx-game-host"
+			data-bx-map-id={ formatInt64(p.Map.ID) }
+			data-bx-map-name={ p.Map.Name }
+			data-bx-map-width={ fmt.Sprintf("%d", p.Map.Width) }
+			data-bx-map-height={ fmt.Sprintf("%d", p.Map.Height) }
+			data-bx-ws-url={ p.WSURL }
+			data-bx-access-token={ p.WSTicket }
+			data-bx-realm="designer"
+			data-bx-sandbox="1"
+			data-bx-instance-id={ p.InstanceID }
+		>
+			<noscript>
+				<p class="bx-toast bx-toast--error">This page needs JavaScript.</p>
+			</noscript>
+		</main>
+
+		// Designer HUD overlay (PLAN.md §131). The runtime ops
+		// (Freeze/Step/Spawn/...) target the sandbox instance via
+		// DesignerCommand opcodes. Cmd-K opens the shared palette
+		// (the game/loop's CommandBus) filtered to designer.*
+		// commands. The Inspector + Spawn palette stubs are wired
+		// to the bus and surface the same descriptor-driven form
+		// rendering used elsewhere; full per-component editor lands
+		// when the runtime exposes a "selected entity" hook to the
+		// HUD.
+		<aside class="bx-sandbox-hud" id="bx-sandbox-hud" aria-label="Sandbox HUD">
+			<header class="bx-row bx-row--apart" style="gap: var(--bx-s2);">
+				<span class="bx-badge bx-badge--info" data-copy-slot="sandbox.hud.title">Sandbox</span>
+				<span class="bx-small bx-mono" data-bx-instance-display>{ p.InstanceID }</span>
+				<span class="bx-small bx-muted" data-bx-state-badge>connecting</span>
+				<span class="bx-small bx-muted" data-bx-tick></span>
+			</header>
+
+			<section class="bx-sandbox-hud__row">
+				<button type="button" class="bx-btn bx-btn--ghost bx-small" data-bx-sandbox-op="freeze"
+					title="Freeze the simulation"
+					data-copy-slot="sandbox.hud.freeze">Freeze</button>
+				<button type="button" class="bx-btn bx-btn--ghost bx-small" data-bx-sandbox-op="step"
+					title="Advance one tick (frozen only)"
+					data-copy-slot="sandbox.hud.step">Step</button>
+				<button type="button" class="bx-btn bx-btn--ghost bx-small" data-bx-sandbox-op="godmode"
+					title="Toggle damage / interaction immunity"
+					data-copy-slot="sandbox.hud.godmode">Godmode</button>
+				<button type="button" class="bx-btn bx-btn--ghost bx-small" data-bx-sandbox-op="spawn"
+					title="Open the spawn palette"
+					data-copy-slot="sandbox.hud.spawn">Spawn…</button>
+			</section>
+
+			<details>
+				<summary class="bx-small bx-muted" data-copy-slot="sandbox.hud.inspector">
+					Inspector (selected entity)
+				</summary>
+				<div class="bx-stack-tight" data-bx-inspector>
+					<p class="bx-small bx-muted" data-copy-slot="sandbox.hud.inspector.empty">
+						Click an entity in the canvas to inspect it.
+					</p>
+				</div>
+			</details>
+
+			<footer class="bx-small bx-muted" data-copy-slot="sandbox.hud.cmdk">
+				Cmd/Ctrl-K opens the designer command palette.
+			</footer>
+		</aside>
+
+		<script type="module" src="/static/web/sandbox.js" defer></script>
+	}
+}
+
+// formatInt64 keeps the templ scope simple; the same helper lives in
+// other view files (intStr) under different names.
+func formatInt64(n int64) string {
+	if n == 0 {
+		return "0"
+	}
+	out := ""
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	for n > 0 {
+		d := byte(n % 10)
+		out = string(rune('0'+d)) + out
+		n /= 10
+	}
+	if neg {
+		out = "-" + out
+	}
+	return out
+}

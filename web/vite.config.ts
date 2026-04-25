@@ -52,6 +52,7 @@ export default defineConfig({
         boot:     resolve(here, "src/boot.ts"),
         game:     resolve(here, "src/game/entry-game.ts"),
         settings: resolve(here, "src/settings/entry-settings.ts"),
+        sandbox:  resolve(here, "src/sandbox/entry-sandbox.ts"),
       },
       // Stable filenames so the Templ pages can <script src="/static/web/<entry>.js"/>
       // without templating in build hashes. Long-cache headers come from

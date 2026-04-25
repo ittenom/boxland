@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/a-h/templ"
@@ -119,6 +120,11 @@ func New(d Deps) http.Handler {
 	// post commits the publish + fires the post-commit hooks.
 	mux.Handle("GET /design/publish/preview",  auth(getPublishPreview(d)))
 	mux.Handle("POST /design/publish",         auth(postPublish(d)))
+
+	// Sandbox (PLAN.md §131). Map picker + game-view shell pre-
+	// configured with a sandbox: instance id + designer WS ticket.
+	mux.Handle("GET /design/sandbox",                 auth(getSandboxIndex(d)))
+	mux.Handle("GET /design/sandbox/launch/{id}",     auth(getSandboxLaunch(d)))
 
 	// Settings (PLAN.md §5g + §6h). Page is rendered server-side via
 	// Templ; the client uses the GET/PUT JSON endpoints to sync. The
@@ -291,6 +297,67 @@ func getShellHome(d Deps) http.HandlerFunc {
 		dr := CurrentDesigner(r.Context())
 		renderHTML(w, r, views.ShellHome(views.ShellProps{Designer: dr}))
 	}
+}
+
+// getSandboxIndex renders the sandbox map picker. PLAN.md §131.
+func getSandboxIndex(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		items, err := d.Maps.List(r.Context(), "")
+		if err != nil {
+			http.Error(w, "list maps: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		renderHTML(w, r, views.SandboxIndex(views.SandboxIndexProps{Items: items}))
+	}
+}
+
+// getSandboxLaunch builds the sandbox: instance id + mints a designer
+// WS ticket, then renders the game view configured for the sandbox.
+//
+// The instance id format is "sandbox:<designer_id>:<map_id>". The
+// AOI subscription manager refuses player-realm subscribers to that
+// id space, so the sandbox stays designer-private (PLAN.md §1, §129).
+func getSandboxLaunch(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		dr := CurrentDesigner(r.Context())
+		idStr := r.PathValue("id")
+		mapID, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || mapID <= 0 {
+			http.NotFound(w, r)
+			return
+		}
+		m, err := d.Maps.FindByID(r.Context(), mapID)
+		if err != nil {
+			if errors.Is(err, mapsservice.ErrMapNotFound) {
+				http.NotFound(w, r)
+				return
+			}
+			http.Error(w, "find map: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		ip := clientIP(r)
+		ticket, err := d.Auth.MintWSTicket(r.Context(), dr.ID, ip)
+		if err != nil {
+			http.Error(w, "mint ticket: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		instanceID := fmt.Sprintf("sandbox:%d:%d", dr.ID, m.ID)
+		renderHTML(w, r, views.SandboxGamePage(views.SandboxGameProps{
+			DesignerName: dr.Email,
+			Map:          *m,
+			WSURL:        resolveSandboxWSURL(r),
+			WSTicket:     ticket,
+			InstanceID:   instanceID,
+		}))
+	}
+}
+
+func resolveSandboxWSURL(r *http.Request) string {
+	scheme := "ws"
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "wss"
+	}
+	return scheme + "://" + r.Host + "/ws"
 }
 
 // getSettingsPage renders the Settings page. Client TS module hydrates

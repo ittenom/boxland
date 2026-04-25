@@ -885,3 +885,25 @@ body[data-bx-spectator="1"] .bx-game-hud {
 body[data-bx-spectator="1"] [data-bx-camera-mode][data-bx-camera-mode="free-cam"] {
     color: var(--bx-accent);
 }
+
+
+/* -- Sandbox HUD (PLAN.md §131) ---------------------------------------- */
+.bx-sandbox-body { background: var(--bx-bg); }
+.bx-sandbox-hud {
+    position: fixed;
+    top:   var(--bx-s3);
+    right: var(--bx-s3);
+    width: 280px;
+    background: rgba(20, 16, 40, 0.92);
+    border: var(--bx-px) solid var(--bx-accent);
+    padding: var(--bx-s3);
+    z-index: 20;
+    pointer-events: auto;
+    color: var(--bx-fg-2);
+    font-family: var(--bx-font);
+}
+.bx-sandbox-hud > * + * { margin-top: var(--bx-s2); }
+.bx-sandbox-hud__row {
+    display: flex; flex-wrap: wrap; gap: var(--bx-s1);
+}
+.bx-sandbox-hud details > summary { cursor: pointer; }
