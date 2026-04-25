@@ -1,0 +1,145 @@
+package views
+
+import "fmt"
+
+// PublishPreviewProps drives the diff preview modal. PLAN.md §134:
+// "Build the Push-to-Live diff preview modal in the shell, consuming
+// publish_diffs.summary_line".
+type PublishPreviewProps struct {
+	Items []PublishOutcome
+}
+
+// PublishOutcome mirrors the publishing/artifact PublishOutcome but
+// uses string Kind/Op + a view-friendly Changes list so the Templ
+// renders without importing service types.
+type PublishOutcome struct {
+	Kind        string
+	ArtifactID  int64
+	Op          string
+	SummaryLine string
+	Changes     []DiffChange
+}
+
+type DiffChange struct {
+	Path string
+	Op   string
+}
+
+templ PublishPreviewModal(p PublishPreviewProps) {
+	<div class="bx-modal-backdrop" data-bx-dismissible role="dialog" aria-labelledby="publish-preview-title">
+		<div class="bx-modal" style="max-width: 720px;">
+			<header class="bx-row bx-row--apart">
+				<h2 id="publish-preview-title" data-copy-slot="publish.preview.title">Push to Live</h2>
+				<button type="button" class="bx-btn bx-btn--ghost bx-small" onclick="this.closest('.bx-modal-backdrop').remove()" data-copy-slot="publish.preview.cancel">
+					Cancel
+				</button>
+			</header>
+			if len(p.Items) == 0 {
+				<p class="bx-muted" data-copy-slot="publish.preview.empty">
+					Lorem ipsum: nothing to publish — every draft has already been pushed.
+				</p>
+			} else {
+				<p class="bx-muted bx-small" data-copy-slot="publish.preview.lede">
+					{ fmt.Sprintf("%d artifact(s) will be published", len(p.Items)) }
+				</p>
+				<table class="bx-table">
+					<thead>
+						<tr><th>Kind</th><th>ID</th><th>Op</th><th>Summary</th><th>Fields</th></tr>
+					</thead>
+					<tbody>
+						for _, it := range p.Items {
+							<tr>
+								<td><span class={ "bx-badge bx-badge--" + publishOpBadge(it.Op) }>{ it.Kind }</span></td>
+								<td class="bx-mono bx-small">{ fmt.Sprintf("%d", it.ArtifactID) }</td>
+								<td class="bx-small">{ it.Op }</td>
+								<td>{ it.SummaryLine }</td>
+								<td class="bx-small bx-muted">{ fmt.Sprintf("%d", len(it.Changes)) }</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+				if hasAnyChanges(p.Items) {
+					<details class="bx-stack-tight" style="margin-top: var(--bx-s3);">
+						<summary class="bx-small bx-muted" data-copy-slot="publish.preview.details">
+							Show per-field changes
+						</summary>
+						<ul class="bx-stack-tight bx-small">
+							for _, it := range p.Items {
+								for _, c := range it.Changes {
+									<li class="bx-mono">
+										<span class="bx-muted">{ it.Kind }/{ fmt.Sprintf("%d", it.ArtifactID) } · </span>
+										<span>{ c.Path }</span>
+										<span class={ "bx-badge bx-badge--" + publishOpBadge(c.Op) }>{ c.Op }</span>
+									</li>
+								}
+							}
+						</ul>
+					</details>
+				}
+			}
+
+			<footer class="bx-row bx-row--apart" style="margin-top: var(--bx-s4);">
+				<span class="bx-small bx-muted" data-bx-publish-status></span>
+				<form
+					hx-post="/design/publish"
+					hx-target="#publish-status"
+					hx-swap="innerHTML"
+				>
+					<button type="submit" class="bx-btn bx-btn--primary"
+						if len(p.Items) == 0 { disabled }
+						data-copy-slot="publish.preview.confirm">
+						{ confirmLabel(p.Items) }
+					</button>
+				</form>
+			</footer>
+		</div>
+	</div>
+}
+
+// PublishResultProps drives the toast that replaces #publish-status
+// after a successful Push-to-Live.
+type PublishResultProps struct {
+	Count       int
+	ChangesetID int64
+}
+
+templ PublishResultToast(p PublishResultProps) {
+	<div class="bx-toast bx-toast--ok" role="status">
+		if p.Count == 0 {
+			<span data-copy-slot="publish.result.empty">No drafts to publish.</span>
+		} else {
+			<span data-copy-slot="publish.result.ok">
+				{ fmt.Sprintf("Published %d artifact(s); changeset %d.", p.Count, p.ChangesetID) }
+			</span>
+		}
+	</div>
+}
+
+func publishOpBadge(op string) string {
+	switch op {
+	case "created", "added":
+		return "ok"
+	case "deleted", "removed":
+		return "warn"
+	case "updated":
+		return "info"
+	default:
+		return "neutral"
+	}
+}
+
+func hasAnyChanges(items []PublishOutcome) bool {
+	for _, it := range items {
+		if len(it.Changes) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func confirmLabel(items []PublishOutcome) string {
+	if len(items) == 0 {
+		return "Nothing to publish"
+	}
+	return fmt.Sprintf("Push %d to Live", len(items))
+}

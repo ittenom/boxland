@@ -114,6 +114,12 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /design/maps/{id}/materialize", auth(postMapMaterialize(d)))
 	mux.Handle("DELETE /design/maps/{id}",           auth(deleteMap(d)))
 
+	// Push-to-Live (PLAN.md §132 + §134). The preview returns the
+	// diffs that WOULD land if the user confirmed the push; the
+	// post commits the publish + fires the post-commit hooks.
+	mux.Handle("GET /design/publish/preview",  auth(getPublishPreview(d)))
+	mux.Handle("POST /design/publish",         auth(postPublish(d)))
+
 	// Settings (PLAN.md §5g + §6h). Page is rendered server-side via
 	// Templ; the client uses the GET/PUT JSON endpoints to sync. The
 	// resolver pulls (designer, designer_id) from the auth context.
@@ -1735,4 +1741,76 @@ func clientIP(r *http.Request) net.IP {
 		}
 	}
 	return peer
+}
+
+// ---- Push-to-Live -----------------------------------------------------
+
+// getPublishPreview renders the diff preview modal. PLAN.md §134:
+// summary lines come from publish_diffs.summary_line; structured
+// diffs (per-field changes) come from configurable.StructuredDiff.
+// The modal is HTMX-loaded into #modal-host from the shell.
+func getPublishPreview(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if d.PublishPipeline == nil {
+			http.Error(w, "publish pipeline not configured", http.StatusServiceUnavailable)
+			return
+		}
+		outcomes, err := d.PublishPipeline.Preview(r.Context())
+		if err != nil {
+			slog.Error("publish preview", "err", err)
+			http.Error(w, "preview failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		items := make([]views.PublishOutcome, 0, len(outcomes))
+		for _, o := range outcomes {
+			items = append(items, views.PublishOutcome{
+				Kind:        string(o.Kind),
+				ArtifactID:  o.ArtifactID,
+				Op:          string(o.Op),
+				SummaryLine: o.SummaryLine,
+				Changes:     diffChangesToView(o.Diff),
+			})
+		}
+		renderHTML(w, r, views.PublishPreviewModal(views.PublishPreviewProps{
+			Items: items,
+		}))
+	}
+}
+
+// postPublish runs the pipeline + redirects back to the referrer (the
+// design surface the user pushed from). HTMX swaps a small toast
+// element into #publish-status on completion.
+func postPublish(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if d.PublishPipeline == nil {
+			http.Error(w, "publish pipeline not configured", http.StatusServiceUnavailable)
+			return
+		}
+		dr := CurrentDesigner(r.Context())
+		outcomes, err := d.PublishPipeline.Run(r.Context(), dr.ID)
+		if err != nil {
+			slog.Error("publish run", "designer", dr.ID, "err", err)
+			http.Error(w, "publish failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		renderHTML(w, r, views.PublishResultToast(views.PublishResultProps{
+			Count:       len(outcomes),
+			ChangesetID: changesetIDFromOutcomes(outcomes),
+		}))
+	}
+}
+
+func changesetIDFromOutcomes(out []artifact.PublishOutcome) int64 {
+	if len(out) == 0 {
+		return 0
+	}
+	return out[0].ChangesetID
+}
+
+func diffChangesToView(d configurable.StructuredDiff) []views.DiffChange {
+	out := make([]views.DiffChange, 0, len(d.Changes))
+	for _, c := range d.Changes {
+		out = append(out, views.DiffChange{Path: c.Path, Op: c.Op})
+	}
+	return out
 }

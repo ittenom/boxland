@@ -56,8 +56,16 @@ templ TopNav() {
 			<li><a href="/design/sandbox" data-copy-slot="nav.sandbox">Sandbox</a></li>
 			<li><a href="/design/settings" data-copy-slot="nav.settings">Settings</a></li>
 		</ol>
-		<button type="button" class="bx-btn bx-btn--push" data-copy-slot="nav.push">
+		<button type="button" class="bx-btn bx-btn--push"
+			hx-get="/design/publish/preview"
+			hx-target="#publish-modal-host"
+			hx-swap="innerHTML"
+			data-copy-slot="nav.push">
 			Push to Live
 		</button>
+		<span id="publish-status"></span>
+		// Dedicated modal host for the Push-to-Live preview so it
+		// doesn't collide with per-page #modal-host hosts.
+		<div id="publish-modal-host"></div>
 	</nav>
 }

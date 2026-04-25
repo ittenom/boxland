@@ -151,12 +151,69 @@ type PublishOutcome struct {
 	ChangesetID  int64
 	Op           Op
 	SummaryLine  string
+	// Diff is the per-field structured delta. Populated for both
+	// Run (post-commit) and Preview (rolled-back). The diff modal
+	// (PLAN.md §134) renders SummaryLine + Diff.Changes.
+	Diff         configurable.StructuredDiff
 }
 
 // ErrUnknownKind is returned when a draft references a kind no handler is
 // registered for. A sentinel because callers commonly want to skip-and-warn
 // rather than abort the whole publish.
 var ErrUnknownKind = errors.New("artifact: no handler registered for kind")
+
+// Preview computes the same per-artifact outcomes Run would produce
+// without committing -- runs each handler inside a transaction that
+// is always rolled back. PLAN.md §134: the diff preview modal calls
+// this before the user confirms a Push-to-Live.
+//
+// SummaryLine + Diff.Changes are populated; ChangesetID is 0
+// (no changeset is allocated since nothing commits).
+func (p *Pipeline) Preview(ctx context.Context) ([]PublishOutcome, error) {
+	drafts, err := p.loadDrafts(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load drafts: %w", err)
+	}
+	if len(drafts) == 0 {
+		return nil, nil
+	}
+
+	for _, d := range drafts {
+		h, ok := p.registry.HandlerFor(d.ArtifactKind)
+		if !ok {
+			return nil, fmt.Errorf("draft %s/%d: %w (%q)",
+				d.ArtifactKind, d.ArtifactID, ErrUnknownKind, d.ArtifactKind)
+		}
+		if err := h.Validate(ctx, d); err != nil {
+			return nil, fmt.Errorf("validate %s/%d: %w", d.ArtifactKind, d.ArtifactID, err)
+		}
+	}
+
+	tx, err := p.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	// ALWAYS roll back; this is a preview.
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	outcomes := make([]PublishOutcome, 0, len(drafts))
+	for _, d := range drafts {
+		h, _ := p.registry.HandlerFor(d.ArtifactKind)
+		res, err := h.Publish(ctx, tx, d)
+		if err != nil {
+			return nil, fmt.Errorf("preview %s/%d: %w", d.ArtifactKind, d.ArtifactID, err)
+		}
+		outcomes = append(outcomes, PublishOutcome{
+			Kind:        d.ArtifactKind,
+			ArtifactID:  d.ArtifactID,
+			ChangesetID: 0,
+			Op:          res.Op,
+			SummaryLine: res.Diff.SummaryLine,
+			Diff:        res.Diff,
+		})
+	}
+	return outcomes, nil
+}
 
 // Run executes the publish pipeline. Either every draft is published and
 // removed atomically, or none are. publishedBy is the designer id that
@@ -216,6 +273,7 @@ func (p *Pipeline) Run(ctx context.Context, publishedBy int64) ([]PublishOutcome
 			ChangesetID: changesetID,
 			Op:          res.Op,
 			SummaryLine: res.Diff.SummaryLine,
+			Diff:        res.Diff,
 		})
 	}
 
