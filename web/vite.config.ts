@@ -25,6 +25,7 @@ export default defineConfig({
       "@sandbox": resolve(here, "src/sandbox"),
       "@game": resolve(here, "src/game"),
       "@settings": resolve(here, "src/settings"),
+      "@audio": resolve(here, "src/audio"),
       "@proto": resolve(here, "src/net/proto/boxland/proto"),
       "@shared": resolve(here, "../shared"),
     },

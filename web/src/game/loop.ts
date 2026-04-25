@@ -30,6 +30,7 @@ import {
 	type CachedEntity,
 } from "@net";
 import { CommandBus } from "@command-bus";
+import type { SoundEngine, PositionalSound } from "@audio";
 
 import type { GameBootConfig, LocalState } from "./types";
 import {
@@ -92,6 +93,9 @@ export interface GameLoopOptions {
 	mailbox?: Mailbox;
 	netClient?: NetClient;
 	scheduler?: LoopScheduler;
+	/** Optional Web Audio engine. The loop drains audio events from
+	 *  the mailbox each frame and forwards them. Omit for tests. */
+	audio?: SoundEngine;
 }
 
 /**
@@ -109,6 +113,7 @@ export class GameLoop {
 	private readonly hud: HudLike | undefined;
 	private readonly scheduler: LoopScheduler;
 	private readonly config: GameBootConfig;
+	private readonly audio: SoundEngine | undefined;
 
 	private state: LocalState = freshLocalState();
 	private rafHandle: unknown = null;
@@ -128,6 +133,7 @@ export class GameLoop {
 		this.scheduler = opts.scheduler ?? defaultScheduler;
 		this.bus = opts.bus ?? new CommandBus();
 		this.mailbox = opts.mailbox ?? new Mailbox();
+		this.audio = opts.audio;
 
 		this.intent = installMovementBindings(this.bus);
 
@@ -250,6 +256,22 @@ export class GameLoop {
 			hostX: this.state.hostX,
 			hostY: this.state.hostY,
 		});
+
+		// Drain queued AudioEvents into the Web Audio engine. Empty
+		// when no events fired this tick; cheap enough to call every frame.
+		if (this.audio) {
+			const audio = this.mailbox.drainAudio();
+			if (audio.length > 0) {
+				const events: PositionalSound[] = audio.map((a) => ({
+					soundId: a.soundId,
+					hasPosition: a.hasPosition,
+					x: a.x, y: a.y,
+					volume: a.volume,
+					pitch: a.pitch,
+				}));
+				this.audio.playMany(events);
+			}
+		}
 	}
 
 	private onDiff(applied: AppliedDiff): void {

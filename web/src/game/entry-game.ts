@@ -10,6 +10,8 @@
 
 import { BoxlandApp } from "@render";
 import { attachInput } from "@input";
+import { SoundEngine, type SoundCatalog, type AudioCameraReader } from "@audio";
+import { applyAudio, loadLocal } from "@settings";
 
 import { GameLoop, type RendererLike, type HudLike } from "./loop";
 import { PlaceholderCatalog } from "./catalog";
@@ -92,14 +94,44 @@ export async function bootGame(host: HTMLElement = document.getElementById("bx-g
 		worldViewH: 320,
 		catalog: new PlaceholderCatalog(),
 	});
+	// Lazy SoundEngine -- the AudioContext only constructs on the
+	// first user gesture (Chrome autoplay rule). Hand the loop the
+	// engine; it drains AudioEvents from the Mailbox each frame.
+	const soundCatalog: SoundCatalog = {
+		// v1 has no audio assets baked yet; the engine no-ops missing URLs.
+		// Real catalog wiring lands alongside the asset-pipeline integration.
+		urlFor: () => undefined,
+	};
+	// Forward-reference the camera via a holder; the loop fills it in
+	// after we construct it below.
+	let cachedLoop: GameLoop | null = null;
+	const audioCam: AudioCameraReader = {
+		cx: () => cachedLoop?.snapshot().hostX ?? 0,
+		cy: () => cachedLoop?.snapshot().hostY ?? 0,
+	};
+	const audio = new SoundEngine({
+		catalog: soundCatalog,
+		camera: audioCam,
+	});
+	// Hydrate volume buses from local settings (server fetch races).
+	const localSettings = loadLocal("player");
+	applyAudio(localSettings, audio);
+
 	const loop = new GameLoop({
 		config,
 		renderer: adaptRenderer(app),
 		hud: buildHud(),
+		audio,
 	});
+	cachedLoop = loop;
+	// First user gesture (a click) unblocks the AudioContext.
+	host.addEventListener("pointerdown", () => audio.resume(), { once: true });
 	// Expose the bus globally so the Settings page can list the
 	// rebindable commands. Read-only access; the loop owns it.
 	(globalThis as unknown as { boxlandBus?: typeof loop.bus }).boxlandBus = loop.bus;
+	// Expose the audio engine so the Settings page can drive its gain
+	// buses live as the user drags the volume sliders.
+	(globalThis as unknown as { boxlandAudio?: SoundEngine }).boxlandAudio = audio;
 	loop.start();
 
 	// Wire the keyboard + mouse + gamepad pumps onto the loop's bus.

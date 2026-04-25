@@ -39,6 +39,8 @@
       "@game/*":       ["game/*"],
       "@settings":     ["settings/index.ts"],
       "@settings/*":   ["settings/*"],
+      "@audio":        ["audio/index.ts"],
+      "@audio/*":      ["audio/*"],
       "@proto/*":      ["net/proto/boxland/proto/*"],
       "@shared/*":     ["../../shared/*"]
     }

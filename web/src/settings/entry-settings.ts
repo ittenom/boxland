@@ -9,7 +9,7 @@ import { CommandBus } from "@command-bus";
 
 import { coerceSettings, FONT_OPTIONS, type Settings } from "./types";
 import { loadLocal, saveLocal, loadRemote, makeRemoteSaver } from "./store";
-import { applyFont, applySpectator } from "./apply";
+import { applyFont, applySpectator, applyAudio, type VolumeApplier } from "./apply";
 import { renderRebinderRows } from "./rebinder";
 
 /** Mount the Settings UI. Returns a dispose() for tests; production
@@ -61,6 +61,11 @@ export function bootSettings(root: HTMLElement = document.getElementById("bx-set
 	}
 
 	// ---- Audio sliders ----
+	// If a sound engine is exposed by the active page (game/sandbox),
+	// apply the slider value to its gain buses so the user hears the
+	// change immediately. Settings pages outside a game session just
+	// store the value -- it'll apply next time a game boots.
+	const volume = (globalThis as unknown as { boxlandAudio?: VolumeApplier }).boxlandAudio;
 	const sliders = root.querySelectorAll("[data-bx-audio-slider]");
 	sliders.forEach((el) => {
 		const slider = el as HTMLInputElement;
@@ -71,6 +76,7 @@ export function bootSettings(root: HTMLElement = document.getElementById("bx-set
 			const v = Math.max(0, Math.min(100, Number(slider.value)));
 			state.audio[key] = v;
 			if (out) out.textContent = String(v);
+			if (volume) applyAudio(state, volume);
 			persist();
 		});
 	});
