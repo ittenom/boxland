@@ -15,6 +15,15 @@ func TestDefault_RegistersBuiltins(t *testing.T) {
 		components.KindVelocity,
 		components.KindSprite,
 		components.KindCollider,
+		// Automation-driven components (PLAN.md §128).
+		components.KindHealth,
+		components.KindInventory,
+		components.KindAIBehavior,
+		components.KindSpawner,
+		components.KindResource,
+		components.KindTrigger,
+		components.KindAudioEmitter,
+		components.KindLightSource,
 	} {
 		if !r.Has(k) {
 			t.Errorf("expected %q to be registered", k)

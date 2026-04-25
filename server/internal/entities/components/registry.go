@@ -125,6 +125,15 @@ func Default() *Registry {
 	r.Register(colliderDef)
 	r.Register(tileDef)
 	r.Register(staticDef)
+	// Automation-driven components (PLAN.md §128).
+	r.Register(healthDef)
+	r.Register(inventoryDef)
+	r.Register(aiBehaviorDef)
+	r.Register(spawnerDef)
+	r.Register(resourceDef)
+	r.Register(triggerDef)
+	r.Register(audioEmitterDef)
+	r.Register(lightSourceDef)
 	return r
 }
 

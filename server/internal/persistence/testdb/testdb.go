@@ -26,6 +26,7 @@ var TruncateOrder = []string{
 	"map_anchor_regions",
 	"map_lighting_cells",
 	"user_settings",
+	"entity_automations",
 	"map_tiles",
 	"map_layers",
 	"maps",
