@@ -60,6 +60,11 @@ function adaptRenderer(app: BoxlandApp): RendererLike {
 					variant_id: e.variantId,
 					tint: e.tint,
 					layer: 0,
+					// Forward EntityState's nameplate + hp_pct through so the
+					// NameplateLayer can render them. Empty / 255 sentinels
+					// hide the overlays (PLAN.md §6h, world.fbs).
+					nameplate: e.nameplate,
+					hpPct: e.hpPct,
 				};
 			});
 			void app.update(renderables, { cx: hostX, cy: hostY });

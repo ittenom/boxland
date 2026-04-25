@@ -15,6 +15,7 @@ import { Container, Sprite } from "pixi.js";
 
 import { DebugOverlay } from "./debug";
 import { LightingLayer, type LightingCell } from "./lighting";
+import { NameplateLayer } from "./nameplates";
 import { TextureCache } from "./textures";
 import type { AssetCatalog, Camera, EntityId, Renderable } from "./types";
 import { computeLayout, worldToScreen, type ViewportLayout } from "./viewport";
@@ -29,6 +30,7 @@ export interface SceneOptions {
 export class Scene {
 	readonly root = new Container();
 	readonly lighting: LightingLayer;
+	readonly nameplates: NameplateLayer;
 	readonly debug: DebugOverlay;
 	private readonly entityRoot = new Container();
 	private readonly textures: TextureCache;
@@ -41,14 +43,20 @@ export class Scene {
 			worldViewW: opts.worldViewW,
 			worldViewH: opts.worldViewH,
 		});
+		this.nameplates = new NameplateLayer({
+			worldViewW: opts.worldViewW,
+			worldViewH: opts.worldViewH,
+		});
 		this.debug = new DebugOverlay({
 			worldViewW: opts.worldViewW,
 			worldViewH: opts.worldViewH,
 		});
-		// Entities, then lighting (multiply blend), then the debug overlay
-		// always on top so collision boxes stay visible through lighting.
+		// Entities, then lighting (multiply blend), then nameplates +
+		// debug overlay always on top so name/HP/collision boxes stay
+		// visible through lighting.
 		this.root.addChild(this.entityRoot);
 		this.root.addChild(this.lighting.root);
+		this.root.addChild(this.nameplates.root);
 		this.root.addChild(this.debug.root);
 		this.layout = computeLayout({
 			canvasW: opts.worldViewW,
@@ -90,6 +98,10 @@ export class Scene {
 		}
 		// Sort entities by layer so painter's algorithm respects render order.
 		this.entityRoot.children.sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
+		// Nameplates + HP bars track the same Renderable list so they
+		// position with the (post-prediction) sprite + tear down when
+		// an entity drops out of AOI in the same pass.
+		this.nameplates.update(renderables, camera);
 	}
 
 	private async upsert(r: Renderable, camera: Camera): Promise<void> {

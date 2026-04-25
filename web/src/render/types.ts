@@ -47,6 +47,14 @@ export interface Renderable {
 
 	/** Optional bag for debug overlays (collision boxes etc). */
 	debug?: { aabb?: { w: number; h: number } };
+
+	/** Optional nameplate text rendered above the sprite. Empty/undefined
+	 *  hides the nameplate entirely (PLAN.md §6h "nameplates"). */
+	nameplate?: string;
+
+	/** HP percent in [0..100], or 255 for "no HP bar" (matches the
+	 *  EntityState.hp_pct sentinel). PLAN.md §1 EntityState shape. */
+	hpPct?: number;
 }
 
 /**
