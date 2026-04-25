@@ -1,68 +1,109 @@
-Tasks 63-72: entity types + components + edge sockets + tile groups
+Tasks 73-87: ECS sim core + persistence layer
 
-Designers can now compose entity types from a catalog of components,
-declare project-wide edge-socket types for the Mapmaker's WFC, and build
-N×M tile groups for multi-tile brushes.
+The runtime ECS is in place end-to-end: sparse-set storage, deterministic
+system scheduler, swept-AABB collision (cross-runtime gated), AOI version
+vectors, A* pathfinding, plus the Postgres + Redis Streams persistence
+flow with full recovery.
 
-  Schema (63, 64, 68, 71):
-    - entity_types (collider_w/h, anchor_x/y, default_collision_mask, tags)
-    - entity_components ((entity_type_id, component_kind) PK)
-    - edge_socket_types + tile_edge_assignments
-    - tile_groups (1..16 width/height, layout_json as 2D []int64)
+  ECS core (73-75):
+    - EntityID with packed 24-bit index + 8-bit generation; sentinel 0
+      reserved as invalid; generations skip 0 on uint8 wraparound
+    - World: spawn/despawn/alive/count with O(1) recycle list
+    - ComponentStore[T]: dense + owners + sparse arrays; O(1) Set/Get/
+      Remove via swap-with-last; Each() loop is safe to mutate the
+      current entity (re-checks owners[i] each step)
+    - Stores bundle with Position/Velocity/Sprite/Collider; Despawn
+      auto-cleans every store
+    - Microbenchmark gate: 10k entities Position+Velocity tick — measured
+      35-36 µs median per tick (28x headroom under the 1ms budget). Gates
+      both BenchmarkTick_10kEntities and TestPerf_10kEntitiesTickUnder1ms.
+      Just bench wired with a single-quoted '-bench=.' so PowerShell
+      stops globbing the pattern.
 
-  Component-kind registry (65):
-    - internal/entities/components: Definition (Kind, Storage, Descriptor,
-      Validate, Default, Decode); Registry; Default() seeds Position,
-      Velocity, Sprite, Collider
-    - Each component declares Descriptor() so the same generic form
-      renderer that drives assets also drives component config UIs
-    - 11 unit tests covering registry + each built-in component
+  System scheduler (76):
+    - Stage enum: Input(10) -> AI(20) -> Movement(30) -> Collision(40)
+      -> Trigger(50) -> Audio(60) -> Broadcast(70)
+    - Insertion sort keeps registration order stable within a stage
+    - Step propagates the first system error and SKIPS the rest so a
+      failure surfaces immediately; tick counter only advances on success
+    - 6 unit tests: order, stable-within-stage, tick counter, error
+      propagation, duplicate-name panic, context cancellation
 
-  EntityType service + Artifact[T] handler (66):
-    - Repo[EntityType] for CRUD; Components/SetComponents for the
-      composition table (typed validation, full-replace semantics)
-    - EntityTypeDraft + Handler implement publish-pipeline contract
-      identical to Asset; structured diffs land in publish_diffs
-    - 7 integration tests, including round-trip through the publish pipe
+  Spatial index (77):
+    - Uniform grid with 16-tile chunks (16 * 32 = 512 px per chunk)
+    - ChunkID packs (cx, cy) into a uint64; floor-div for negative coords
+    - Add/Move/Remove are O(1); QueryChunk + QueryRange exposed
+    - Per-chunk Version() bumps on every mutation -- consumed by AOI
+    - 8 unit tests covering chunk math, range queries, version bumps,
+      and stats reporting
 
-  Entity Manager UI (67):
-    - views/entities.templ: list + search + duplicate
-    - views/entity_detail.templ: top-level form via the generic renderer +
-      one Form per attached component + "Add component" picker (filters
-      out already-attached kinds)
-    - 11 HTTP routes: list/grid/new/create/detail/delete/draft/duplicate
-      and per-component add/save/delete
-    - data-bx-collider-overlay canvas paints the AABB on top of the sprite
-      and live-updates as the form's collider inputs change
-      (web/src/entity-manager/collider-overlay.ts, 2 tests)
-    - 5 server-side handler tests covering list, create, detail, component
-      lifecycle, draft validation
+  Server-side swept-AABB collision (78):
+    - LITERAL Go port of schemas/collision.md and web/src/collision/move.ts
+    - All math int32 fixed-point sub-pixels (1 px = 256 sub-units)
+    - corpus_test.go runs every entry in /shared/test-vectors/collision.json
+      against the Go implementation -- ALL 32 vectors produce byte-
+      identical resolved deltas to the TS implementation. The
+      cross-runtime invariant from PLAN.md §1a now holds end-to-end on
+      both runtimes.
 
-  Edge sockets (69, 70):
-    - SocketRepo + CRUD on the entities service
-    - SetTileEdges/TileEdges for the per-entity-type assignment
-    - /design/sockets list + create + delete page
-    - 5 unit tests including ON DELETE SET NULL cascade verification
-    - 1 HTTP handler test
+  Tile + Static + Movement system (79):
+    - Tile component (layer_id, gx, gy)
+    - Static tag component (zero fields; presence-only)
+    - Movement system in internal/sim/systems/movement.go iterates
+      Velocity dense slice, skips entities owning Static, respects
+      MaxSpeed component-wise. 4 tests including the static-skip behavior
 
-  Tile groups (72):
-    - Service: CreateTileGroup (zero-init layout), ListTileGroups,
-      UpdateTileGroupLayout (dimension-validated), DeleteTileGroup
-    - /design/tile-groups list + create + per-group click-to-paint editor
-    - boot.js cell-paint handler: assigns the active entity-type id to a
-      clicked cell and re-serializes the grid into a hidden form input
-    - 4 unit tests (zero-init, dimension bounds, layout dimension
-      validation, delete + not-found)
+  AOI subscriptions (80):
+    - Per-subscriber Acked map: chunk_id -> last-acked Version
+    - VisibleChunks computes the (2r+1)^2 window around FocusChunk
+    - DirtyChunks compares grid Version against the Acked vector,
+      returning only chunks whose state has actually advanced
+    - SetFocus / Reset / ForgetChunk / AckAll for the WS gateway's
+      reconnect + per-chunk-backpressure paths
+    - 8 unit tests covering radius math, dirty filtering, ack flow,
+      reset + forget, focus changes
 
-  Test-helper extraction:
-    - new internal/persistence/testdb package with TruncateOrder + Reset()
-    - assets, entities, designer test files now defer to testdb.Reset
-      instead of maintaining three parallel copies of the wipe list
-    - Adding a new table to TruncateOrder updates every package's tests
-      with one edit (next iteration is much cheaper)
+  A* pathfinding (81):
+    - 4-connected grid search with a min-heap open set
+    - Manhattan heuristic (admissible for 4-connected grids)
+    - Walkability check honors the entity's collision-layer mask -- a
+      tile is walkable iff its mask doesn't intersect the entity's mask
+      OR all its edge bits are clear
+    - Search budget cap returns ErrSearchExhausted instead of running
+      unbounded; 4096-node default
+    - 7 unit tests including layer-mask filtering, no-path detection,
+      gap threading, budget exhaustion, path-starts-at-start invariant
 
-Top nav now exposes Assets / Entities / Sockets / Tile groups / Mapmaker /
-Sandbox / Settings; the four wired surfaces all render after signup.
+  Persistence layer (82-87):
+    - migration 0015_map_state with PRIMARY KEY (map_id, instance_id)
+    - persist.EncodeMapState / DecodeMapState wrap the FlatBuffers
+      MapState codec; one schema serves Postgres warm-state blobs AND
+      Redis WAL checkpoints (PLAN.md §1)
+    - persist.ApplyMapState reconstitutes entities + tiles into a
+      fresh world for the recovery boot path
+    - persist.Mutation + EncodeMutation/DecodeMutation for individual
+      WAL entries
+    - WAL: per-instance stream wal:map:{map}:{instance} with
+      Append/Range/Trim and a flushFailing backpressure flag; XADD uses
+      MAXLEN ~ 100000 as the safety bound
+    - Persister.Flush: serialize world -> upsert map_state in tx ->
+      XTRIM MINID. On Postgres failure marks WAL as failing so future
+      Appends honor backpressure (refuse near MAXLEN)
+    - Recover: load snapshot blob, ApplyMapState, replay WAL entries
+      with .Tick > last_flushed_tick via the supplied applier
 
-Test totals: 17 Go packages (+entities, +entities/components, +testdb),
-118 TS tests across 16 suites, all green under -p 1.
+  Test totals: 23 Go packages, 118 TS tests, all green under -p 1.
+
+  Decisions worth flagging:
+    * The Go MapState encoder splits world entities into two FB vectors:
+      tile entities (Tile component owners) go into MapState.Tiles; free
+      entities go into MapState.Entities. ApplyMapState reverses this.
+      Tile-and-free distinction matches the unified-entity model in
+      PLAN.md §1 (tiles ARE entities) but persists efficiently because
+      tiles need fewer per-row bytes.
+    * Persister.Flush trims AFTER Postgres commit; the brief overlap on
+      crash means recovery may replay already-snapshotted mutations.
+      PLAN.md §4k explicitly accepts this (mutations are idempotent at
+      the replay layer).
+    * Pathfinding "walkable" rule treats ANY edge bit as blocking. A
+      future one-way-edge extension (PLAN.md §11 #6) would refine this.

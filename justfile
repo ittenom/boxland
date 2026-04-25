@@ -63,10 +63,17 @@ build:
     @echo "[stub] just build: not yet implemented (see PLAN.md task #141)"
     @exit 1
 
-# Run ECS microbenchmarks (CI-gated against regressions)
+# Run ECS microbenchmarks. The hard 1ms regression gate lives in the test
+# suite (TestPerf_10kEntitiesTickUnder1ms); this recipe is for ad-hoc
+# profiling with full stats.
+#
+# Note the package path uses 'boxland/server/internal/sim/...' rather than
+# './internal/...' because PowerShell on Windows tries to glob-expand './'
+# arguments in the calling shell before they reach `go test`. The fully-
+# qualified module path bypasses that.
+[working-directory: 'server']
 bench:
-    @echo "[stub] just bench: not yet implemented (see PLAN.md task #75)"
-    @exit 1
+    go test -benchmem -run nomatch '-bench=.' boxland/server/internal/sim/...
 
 # Regenerate sqlc-typed hot-path queries from server/queries/.
 [working-directory: 'server']

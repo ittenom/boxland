@@ -123,13 +123,21 @@ func TestValidateAll_PropagatesValidationError(t *testing.T) {
 	}
 }
 
-func TestDescriptor_ReturnsNonEmptyForEveryBuiltin(t *testing.T) {
+func TestDescriptor_ReturnsNonEmptyForEveryConfigurableBuiltin(t *testing.T) {
 	r := components.Default()
+	// Tag-only components (e.g. Static) legitimately have no fields. Skip
+	// them; for everything else, verify the descriptor is populated.
+	tagOnly := map[components.Kind]bool{
+		components.KindStatic: true,
+	}
 	for _, k := range r.Kinds() {
+		if tagOnly[k] {
+			continue
+		}
 		def, _ := r.Get(k)
 		fields := def.Descriptor()
 		if len(fields) == 0 {
-			t.Errorf("component %q has empty descriptor", k)
+			t.Errorf("component %q has empty descriptor (and is not in the tag-only allowlist)", k)
 		}
 	}
 }

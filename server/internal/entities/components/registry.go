@@ -36,6 +36,8 @@ const (
 	KindVelocity Kind = "velocity"
 	KindSprite   Kind = "sprite"
 	KindCollider Kind = "collider"
+	KindTile     Kind = "tile"
+	KindStatic   Kind = "static"
 )
 
 // Storage signals how the ECS should physically store this component.
@@ -121,6 +123,8 @@ func Default() *Registry {
 	r.Register(velocityDef)
 	r.Register(spriteDef)
 	r.Register(colliderDef)
+	r.Register(tileDef)
+	r.Register(staticDef)
 	return r
 }
 
