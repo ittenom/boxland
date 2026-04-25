@@ -28,18 +28,19 @@ describe("MovementIntent", () => {
 });
 
 describe("buildMovementCommands", () => {
-	it("returns four commands keyed under game.move.*.press", () => {
+	it("returns four hold commands keyed under game.move.*", () => {
 		const m = new MovementIntent();
 		const cmds = buildMovementCommands(m);
 		expect(cmds.map((c) => c.id)).toEqual([
-			"game.move.up.press",
-			"game.move.down.press",
-			"game.move.left.press",
-			"game.move.right.press",
+			"game.move.up",
+			"game.move.down",
+			"game.move.left",
+			"game.move.right",
 		]);
-		// All four are non-undoable hold-presses.
+		// All four are non-undoable holds with paired release.
 		for (const c of cmds) {
 			expect(c.undo).toBeUndefined();
+			expect(c.release).toBeDefined();
 			expect(c.category).toBe("Game > Move");
 		}
 	});
@@ -50,6 +51,14 @@ describe("buildMovementCommands", () => {
 		up!.do();
 		expect(m.vector().vy).toBe(-1000);
 	});
+
+	it("release clears the intent setter", () => {
+		const m = new MovementIntent();
+		const [up] = buildMovementCommands(m);
+		up!.do();
+		up!.release!();
+		expect(m.vector().vy).toBe(0);
+	});
 });
 
 describe("installMovementBindings", () => {
@@ -57,12 +66,16 @@ describe("installMovementBindings", () => {
 		const bus = new CommandBus();
 		const intent = installMovementBindings(bus);
 		// Each direction has at least two combos (Arrow + WASD letter).
-		expect(bus.get("game.move.up.press")).toBeDefined();
-		expect(bus.get("game.move.left.press")).toBeDefined();
-		expect(bus.hotkeyFor("game.move.up.press")).toBeDefined();
+		expect(bus.get("game.move.up")).toBeDefined();
+		expect(bus.get("game.move.left")).toBeDefined();
+		expect(bus.hotkeyFor("game.move.up")).toBeDefined();
 		// Sanity: simulating an ArrowRight press sets right.
 		const ev = new KeyboardEvent("keydown", { key: "ArrowRight" });
 		void bus.handleKeyEvent(ev, false);
 		expect(intent.vector().vx).toBe(1000);
+		// And the matching keyup clears it.
+		const ev2 = new KeyboardEvent("keyup", { key: "ArrowRight" });
+		void bus.handleKeyRelease(ev2, false);
+		expect(intent.vector().vx).toBe(0);
 	});
 });

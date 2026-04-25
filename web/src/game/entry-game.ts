@@ -9,6 +9,7 @@
 // be unit-tested headlessly.
 
 import { BoxlandApp } from "@render";
+import { attachInput } from "@input";
 
 import { GameLoop, type RendererLike, type HudLike } from "./loop";
 import { PlaceholderCatalog } from "./catalog";
@@ -97,10 +98,39 @@ export async function bootGame(host: HTMLElement = document.getElementById("bx-g
 		hud: buildHud(),
 	});
 	loop.start();
-	// Pause input when the tab loses focus so the player doesn't run
-	// into a wall while reading something else.
-	window.addEventListener("blur", () => loop.intent.clear());
+
+	// Wire the keyboard + mouse + gamepad pumps onto the loop's bus.
+	// Movement commands are already registered via installMovementBindings
+	// (called from GameLoop's constructor); attachInput just connects
+	// the live event sources to the dispatcher.
+	const detachInput = attachInput(loop.bus, {
+		mouseHost: host,
+		// Hold-state tracking: each Move command's setter mutates the
+		// MovementIntent; we mirror its current direction set so the
+		// blur-safety pass can release whichever combos are still held.
+		heldCombos: () => heldMoveCombos(loop),
+		// Stick axes feed the same MovementIntent the keyboard does.
+		// MovementIntent normally only takes booleans; for stick input
+		// we override with the raw vector via setStickVector (added in
+		// task #117 alongside the input module).
+		onAxes: ({ vx, vy }) => loop.intent.setStickVector(vx, vy),
+	});
+	const off = (): void => detachInput();
+	window.addEventListener("pagehide", off, { once: true });
 	return loop;
+}
+
+/** Approximate which combos are currently held by reading the
+ *  MovementIntent. Used by the blur-safety hook so we release every
+ *  axis cleanly when the tab loses focus. */
+function heldMoveCombos(loop: GameLoop): string[] {
+	const out: string[] = [];
+	const v = loop.intent.vector();
+	if (v.vy < 0) out.push("ArrowUp");
+	if (v.vy > 0) out.push("ArrowDown");
+	if (v.vx < 0) out.push("ArrowLeft");
+	if (v.vx > 0) out.push("ArrowRight");
+	return out;
 }
 
 // Auto-run when the page surface matches. Other surfaces import nothing

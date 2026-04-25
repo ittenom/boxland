@@ -142,11 +142,45 @@ export class CommandBus {
 		return true;
 	}
 
+	/**
+	 * Try to handle a key-release event. Calls the matched command's
+	 * `release` callback (if any) without touching the undo stack.
+	 * Returns true iff a binding fired AND the command exposed a
+	 * release handler.
+	 *
+	 * Aliasing rules match handleKeyEvent so press + release both
+	 * resolve through the same combo regardless of Mod/Ctrl spelling.
+	 */
+	async handleKeyRelease(e: KeyboardEvent, isTextEditing: boolean): Promise<boolean> {
+		const combo = comboFromEvent(e);
+		if (!combo) return false;
+		const id = this.hotkeys.get(combo) ?? this.hotkeys.get(aliasOnNonMac(combo));
+		if (!id) return false;
+		const cmd = this.commands.get(id);
+		if (!cmd || !cmd.release) return false;
+		if (isTextEditing && !cmd.whileTyping) return false;
+		await cmd.release(undefined);
+		return true;
+	}
+
 	/** Try to handle a gamepad button-down. Returns true if a binding fired. */
 	async handleGamepadButton(button: number): Promise<boolean> {
 		const id = this.gamepads.get(button);
 		if (!id) return false;
 		await this.dispatch(id, undefined);
+		return true;
+	}
+
+	/**
+	 * Try to handle a gamepad button-release. Calls `release` if present.
+	 * Mirrors handleKeyRelease for the gamepad path.
+	 */
+	async handleGamepadButtonRelease(button: number): Promise<boolean> {
+		const id = this.gamepads.get(button);
+		if (!id) return false;
+		const cmd = this.commands.get(id);
+		if (!cmd || !cmd.release) return false;
+		await cmd.release(undefined);
 		return true;
 	}
 

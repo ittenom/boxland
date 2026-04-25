@@ -12,6 +12,5 @@ export {
 	saveBindings,
 } from "./persistence";
 export type { BindingsSnapshot } from "./persistence";
-export { attachGamepad, attachKeyboard } from "./listeners";
 export { CommandPalette, fuzzyMatch } from "./palette";
 export type { PaletteOptions } from "./palette";

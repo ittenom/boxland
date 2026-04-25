@@ -46,6 +46,14 @@ export interface Command<TArg = void> {
 
 	/** Reverse a previous do(arg). Omit on non-undoable commands. */
 	undo?(arg: TArg): void | Promise<void>;
+
+	/**
+	 * Optional release callback for hold-style hotkeys. The keyboard
+	 * pump fires `release` on keyup against the same combo that fired
+	 * `do` on keydown. Hold-to-move, hold-to-aim, hold-to-charge all
+	 * use this. Most commands omit it.
+	 */
+	release?(arg: TArg): void | Promise<void>;
 }
 
 /**
