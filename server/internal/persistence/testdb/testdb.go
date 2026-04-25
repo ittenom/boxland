@@ -25,6 +25,7 @@ var TruncateOrder = []string{
 	"map_spectator_invites",
 	"map_anchor_regions",
 	"map_lighting_cells",
+	"user_settings",
 	"map_tiles",
 	"map_layers",
 	"maps",

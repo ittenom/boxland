@@ -13,6 +13,7 @@ import (
 
 	"boxland/server/internal/auth/player"
 	"boxland/server/internal/maps"
+	"boxland/server/internal/settings"
 	"boxland/server/views"
 )
 
@@ -22,6 +23,7 @@ import (
 type Deps struct {
 	Auth          *player.Service
 	Maps          *maps.Service
+	Settings      *settings.Service
 	SecureCookies bool   // true in prod; false in dev so http://localhost works
 	WSURL         string // absolute ws://... or wss://... URL the client opens
 	ServerName    string // displayed under the top nav; "Default server" until multi-tenant
@@ -43,6 +45,21 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /play/maps",          auth(getMaps(d)))
 	mux.Handle("GET /play/game/{id}",     auth(getGame(d)))
 	mux.Handle("POST /play/ws-ticket",    auth(postWSTicket(d)))
+	mux.Handle("GET /play/settings",      auth(getSettingsPage(d)))
+	if d.Settings != nil {
+		settingsHandlers := &settings.HTTPHandlers{
+			Service: d.Settings,
+			Resolver: func(r *http.Request) (settings.Realm, int64, bool) {
+				p := PlayerFromContext(r.Context())
+				if p == nil {
+					return "", 0, false
+				}
+				return settings.RealmPlayer, p.ID, true
+			},
+		}
+		mux.Handle("GET /play/settings/me", auth(settingsHandlers.Get))
+		mux.Handle("PUT /play/settings/me", auth(settingsHandlers.Put))
+	}
 
 	return mux
 }
@@ -176,6 +193,19 @@ func getGame(d Deps) http.HandlerFunc {
 			Map:         *m,
 			WSURL:       resolveWSURL(d.WSURL, r),
 			AccessToken: jwt,
+		}))
+	}
+}
+
+// getSettingsPage renders the player Settings page. Same Templ as the
+// designer surface; the client TS hydrates it via /play/settings/me.
+func getSettingsPage(_ Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		render(w, r, views.SettingsPage(views.SettingsProps{
+			Realm:      "player",
+			LoadURL:    "/play/settings/me",
+			SaveURL:    "/play/settings/me",
+			HideTopNav: true,
 		}))
 	}
 }

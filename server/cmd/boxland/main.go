@@ -35,6 +35,7 @@ import (
 	"boxland/server/internal/persistence"
 	"boxland/server/internal/playerweb"
 	"boxland/server/internal/publishing/artifact"
+	"boxland/server/internal/settings"
 	"boxland/server/internal/sim/runtime"
 	"boxland/server/internal/ws"
 )
@@ -147,6 +148,7 @@ func runServe() error {
 	componentRegistry := components.Default()
 	entitySvc := entities.New(pgPool, componentRegistry)
 	mapsSvc := mapsservice.New(pgPool)
+	settingsSvc := settings.New(pgPool)
 
 	publishRegistry := artifact.NewRegistry()
 	publishRegistry.Register(assets.NewHandler(assetSvc))
@@ -190,6 +192,7 @@ func runServe() error {
 		BakeJob:         bakeJob,
 		PublishPipeline: publishPipeline,
 		ObjectStore:     objStore,
+		Settings:        settingsSvc,
 	}
 	loadSessionMW := designerhandlers.LoadSession(designerDeps)
 	// Order matters: CSRF must run on every request to mint the cookie;
@@ -200,6 +203,7 @@ func runServe() error {
 	playerWebDeps := playerweb.Deps{
 		Auth:          playerAuthSvc,
 		Maps:          mapsSvc,
+		Settings:      settingsSvc,
 		SecureCookies: cfg.Env == "prod",
 		// WSURL left empty -> handlers derive ws://host/ws from the
 		// request. Production deployments behind a reverse proxy can

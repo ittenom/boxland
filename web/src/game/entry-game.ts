@@ -97,6 +97,9 @@ export async function bootGame(host: HTMLElement = document.getElementById("bx-g
 		renderer: adaptRenderer(app),
 		hud: buildHud(),
 	});
+	// Expose the bus globally so the Settings page can list the
+	// rebindable commands. Read-only access; the loop owns it.
+	(globalThis as unknown as { boxlandBus?: typeof loop.bus }).boxlandBus = loop.bus;
 	loop.start();
 
 	// Wire the keyboard + mouse + gamepad pumps onto the loop's bus.

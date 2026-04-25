@@ -37,6 +37,8 @@
       "@sandbox/*":    ["sandbox/*"],
       "@game":         ["game/index.ts"],
       "@game/*":       ["game/*"],
+      "@settings":     ["settings/index.ts"],
+      "@settings/*":   ["settings/*"],
       "@proto/*":      ["net/proto/boxland/proto/*"],
       "@shared/*":     ["../../shared/*"]
     }

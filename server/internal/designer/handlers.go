@@ -25,6 +25,7 @@ import (
 	"boxland/server/internal/maps/wfc"
 	"boxland/server/internal/persistence"
 	"boxland/server/internal/publishing/artifact"
+	"boxland/server/internal/settings"
 	"boxland/server/views"
 )
 
@@ -45,6 +46,7 @@ type Deps struct {
 	BakeJob         *assets.BakeJob
 	PublishPipeline *artifact.Pipeline
 	ObjectStore     *persistence.ObjectStore
+	Settings        *settings.Service
 }
 
 // New returns an http.Handler with the designer routes mounted under
@@ -111,6 +113,25 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /design/maps/{id}/preview",     auth(postMapPreview(d)))
 	mux.Handle("POST /design/maps/{id}/materialize", auth(postMapMaterialize(d)))
 	mux.Handle("DELETE /design/maps/{id}",           auth(deleteMap(d)))
+
+	// Settings (PLAN.md §5g + §6h). Page is rendered server-side via
+	// Templ; the client uses the GET/PUT JSON endpoints to sync. The
+	// resolver pulls (designer, designer_id) from the auth context.
+	mux.Handle("GET /design/settings", auth(getSettingsPage(d)))
+	if d.Settings != nil {
+		settingsHandlers := &settings.HTTPHandlers{
+			Service: d.Settings,
+			Resolver: func(r *http.Request) (settings.Realm, int64, bool) {
+				ds := CurrentDesigner(r.Context())
+				if ds == nil {
+					return "", 0, false
+				}
+				return settings.RealmDesigner, ds.ID, true
+			},
+		}
+		mux.Handle("GET /design/settings/me",  auth(settingsHandlers.Get))
+		mux.Handle("PUT /design/settings/me",  auth(settingsHandlers.Put))
+	}
 
 	return mux
 }
@@ -263,6 +284,20 @@ func getShellHome(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		dr := CurrentDesigner(r.Context())
 		renderHTML(w, r, views.ShellHome(views.ShellProps{Designer: dr}))
+	}
+}
+
+// getSettingsPage renders the Settings page. Client TS module hydrates
+// it from /design/settings/me + drives the live preview, rebinder, etc.
+func getSettingsPage(d Deps) http.HandlerFunc {
+	_ = d
+	return func(w http.ResponseWriter, r *http.Request) {
+		renderHTML(w, r, views.SettingsPage(views.SettingsProps{
+			Realm:      "designer",
+			LoadURL:    "/design/settings/me",
+			SaveURL:    "/design/settings/me",
+			HideTopNav: false,
+		}))
 	}
 }
 

@@ -851,3 +851,25 @@ p, li {
     align-items: center;
     gap: var(--bx-s2);
 }
+
+
+/* -- Settings page (PLAN.md §5g) ---------------------------------------- */
+.bx-settings {
+    max-width: 720px;
+    margin: var(--bx-s4) auto;
+    padding: 0 var(--bx-s3);
+}
+.bx-settings-body { background: var(--bx-bg-1); }
+
+.bx-settings-font {
+    flex: 1;
+}
+.bx-settings-font[aria-current="true"] {
+    border-color: var(--bx-accent);
+    background: var(--bx-bg-3);
+}
+
+.bx-slider {
+    flex: 1;
+    accent-color: var(--bx-accent);
+}
