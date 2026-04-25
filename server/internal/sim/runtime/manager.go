@@ -100,3 +100,19 @@ func (mgr *InstanceManager) All() []*MapInstance {
 	}
 	return out
 }
+
+// BroadcastHotSwap enqueues the given HotSwap on every live instance.
+// The publish pipeline's post-commit hook calls this with one entry
+// per affected entity type. PLAN.md §132 + §133.
+func (mgr *InstanceManager) BroadcastHotSwap(hs HotSwap) int {
+	mgr.mu.Lock()
+	insts := make([]*MapInstance, 0, len(mgr.instances))
+	for _, mi := range mgr.instances {
+		insts = append(insts, mi)
+	}
+	mgr.mu.Unlock()
+	for _, mi := range insts {
+		mi.QueueHotSwap(hs)
+	}
+	return len(insts)
+}

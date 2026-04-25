@@ -212,7 +212,17 @@ func isCloseError(err error) bool {
 }
 
 func isRealmViolation(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "requires designer realm")
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	// Match the canonical realm-error strings from spectate.go,
+	// authoring.go (sandbox JoinMap), sandbox_ops.go (designer opcodes),
+	// and dispatcher.go (designer-only verb on player realm).
+	return strings.Contains(s, "requires designer realm") ||
+		strings.Contains(s, "sandbox") ||
+		strings.Contains(s, "spectate: ") ||
+		strings.Contains(s, "designer_command: opcode requires")
 }
 
 // clientIP returns the most likely client IP. Trusts X-Forwarded-For only

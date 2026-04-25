@@ -161,6 +161,19 @@ func runServe() error {
 	// through this manager.
 	instanceMgr := runtime.NewInstanceManager(pgPool, redisCli.Client, mapsSvc)
 
+	// Wire the publish pipeline's post-commit hook to broadcast a
+	// LivePublish (HotSwap) to every running map. Each affected
+	// entity-type outcome enqueues one HotSwap entry; the scheduler
+	// drains them between ticks (PLAN.md §132 + §133).
+	publishPipeline.OnPostCommit(func(_ context.Context, outcomes []artifact.PublishOutcome) error {
+		for _, o := range outcomes {
+			if o.Kind == "entity_type" {
+				instanceMgr.BroadcastHotSwap(runtime.HotSwap{EntityTypeID: o.ArtifactID})
+			}
+		}
+		return nil
+	})
+
 	// WS gateway: realm-tagged Auth handshake -> ClientMessage dispatch.
 	// Both the default verb set (Heartbeat/Move/Interact stubs) and the
 	// authoring verbs (PlaceTiles/EraseTiles/PlaceLighting + JoinMap

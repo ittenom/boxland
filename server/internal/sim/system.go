@@ -49,6 +49,7 @@ type Scheduler struct {
 	world   *ecs.World
 	entries []SystemEntry
 	tick    uint64
+	frozen  bool
 }
 
 // NewScheduler returns a Scheduler bound to a world.
@@ -88,7 +89,26 @@ func (s *Scheduler) Systems() []SystemEntry {
 // Step runs every registered system once, in canonical order. Returns the
 // first error any system reports; remaining systems are skipped so a
 // failure surfaces immediately rather than compounding.
+//
+// When the scheduler is frozen (Sandbox FreezeTick designer-opcode),
+// Step is a no-op AND the tick counter does NOT advance. This keeps
+// the WAL + AOI version vectors stable while a designer pokes around;
+// StepTick advances exactly one tick regardless of freeze state for
+// frame-by-frame inspection.
 func (s *Scheduler) Step(ctx context.Context) error {
+	if s.frozen {
+		return nil
+	}
+	return s.runOneTick(ctx)
+}
+
+// StepOnce runs exactly one tick even when frozen. Used by the
+// StepTick designer opcode for frame-by-frame debugging.
+func (s *Scheduler) StepOnce(ctx context.Context) error {
+	return s.runOneTick(ctx)
+}
+
+func (s *Scheduler) runOneTick(ctx context.Context) error {
 	for _, e := range s.entries {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -100,6 +120,15 @@ func (s *Scheduler) Step(ctx context.Context) error {
 	s.tick++
 	return nil
 }
+
+// Freeze pauses the scheduler. Idempotent.
+func (s *Scheduler) Freeze() { s.frozen = true }
+
+// Unfreeze resumes the scheduler. Idempotent.
+func (s *Scheduler) Unfreeze() { s.frozen = false }
+
+// IsFrozen reports the current freeze state.
+func (s *Scheduler) IsFrozen() bool { return s.frozen }
 
 // sortEntries is an insertion sort so the order within a stage matches
 // registration order (stable sort property). With single-digit system

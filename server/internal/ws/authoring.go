@@ -5,12 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"boxland/server/internal/maps"
 	"boxland/server/internal/proto"
 	"boxland/server/internal/sim/runtime"
 	"boxland/server/internal/sim/spatial"
 )
+
+// ErrJoinSandboxRealm is returned when a player-realm connection tries
+// to JoinMap a sandbox: instance. PLAN.md §4j + §129: AOI subscription
+// manager refuses player-realm subscribers to sandbox ids.
+var ErrJoinSandboxRealm = errors.New("join_map: sandbox instance requires designer realm")
 
 // AuthoringDeps bundles what the designer authoring verbs need. One
 // per-process instance shared across handlers.
@@ -64,20 +70,21 @@ func dispatchDesignerCommand(deps AuthoringDeps) VerbHandler {
 		case proto.DesignerOpcodePlaceLighting:
 			return handlePlaceLighting(ctx, conn, deps, data)
 
-		// Sandbox runtime opcodes (spawn-any, freeze-tick, ...) land in
-		// task #130; until then they're explicitly unhandled rather
-		// than silently swallowed.
+		// Sandbox runtime opcodes (PLAN.md §130). Each enforces the
+		// "sandbox:* instance only" invariant via requireSandbox().
+		// On live: instances they return ErrSandboxOnly which the
+		// gateway treats as a realm violation + closes the conn.
+		case proto.DesignerOpcodeFreezeTick:
+			return handleSandboxFreeze(ctx, conn, deps, data)
+		case proto.DesignerOpcodeStepTick:
+			return handleSandboxStep(ctx, conn, deps, data)
 		case proto.DesignerOpcodeSpawnAny,
 			proto.DesignerOpcodeSetResource,
 			proto.DesignerOpcodeTakeControlEntity,
 			proto.DesignerOpcodeReleaseControl,
 			proto.DesignerOpcodeTeleport,
-			proto.DesignerOpcodeFreezeTick,
-			proto.DesignerOpcodeStepTick,
 			proto.DesignerOpcodeGodmode:
-			slog.Info("designer opcode reserved for sandbox wiring",
-				"conn", conn.ID(), "opcode", opcode, "ref", "PLAN.md task #130")
-			return nil
+			return handleSandboxStub(opcode)(ctx, conn, deps, data)
 		default:
 			return fmt.Errorf("designer_command: unknown opcode %d", opcode)
 		}
@@ -287,6 +294,15 @@ func handleJoinMapReal(deps AuthoringDeps) VerbHandler {
 		// uses it for designer Sandbox surfaces (PLAN.md §4j).
 		if hint := string(jp.InstanceHint()); hint != "" {
 			instanceID = hint
+		}
+
+		// Realm-isolation invariant (PLAN.md §129): a player-realm
+		// token cannot subscribe to a sandbox: instance, even if it
+		// supplies the correct id. The matching check lives in spectate.go
+		// for the Spectate verb; mirror it here so JoinMap is just as
+		// strict.
+		if strings.HasPrefix(instanceID, "sandbox:") && conn.Realm() != RealmDesigner {
+			return ErrJoinSandboxRealm
 		}
 
 		mi, err := deps.Instances.GetOrCreate(ctx, mapID, instanceID)

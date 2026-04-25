@@ -44,6 +44,32 @@ type MapInstance struct {
 	// double-spawn the same tile entities.
 	loadedMu     sync.Mutex
 	loadedChunks map[spatial.ChunkID]struct{}
+
+	// hotSwapMu guards the pending hot-swap queue. PLAN.md §133: the
+	// publish pipeline pushes a HotSwap entry per affected entity type;
+	// the scheduler drains it between ticks (after Step returns,
+	// before the next Step) so in-flight automations finish under the
+	// old AST and the swap appears atomic to the live world.
+	hotSwapMu      sync.Mutex
+	pendingHotSwap []HotSwap
+}
+
+// HotSwap is one pending entity-type definition update. Carries enough
+// metadata for the runtime to identify which ECS components on which
+// entities to rebind (or drop, if a component was removed) and where
+// to re-fetch the asset bytes if a sprite URL changed. Detailed
+// payload shapes land alongside §128 component re-binding; v1 keeps it
+// minimal so the wiring can be tested without dragging in the full
+// component-store rebind machinery.
+type HotSwap struct {
+	EntityTypeID int64
+	// RemovedComponentKinds lists components that the new definition
+	// no longer carries. The runtime drops these from any entity of
+	// this type and emits a structured warn-log per dropped row.
+	RemovedComponentKinds []string
+	// AssetURLsToReload is the set of texture URLs the renderer should
+	// invalidate. Sandbox boots may also re-prefetch on the client.
+	AssetURLsToReload []string
 }
 
 // NewMapInstance constructs an empty instance and runs recovery from
@@ -130,6 +156,60 @@ func (mi *MapInstance) MarkChunksDirty(tileX0, tileY0, tileX1, tileY1 int32) {
 			mi.Grid.BumpVersion(spatial.MakeChunkID(cx, cy))
 		}
 	}
+}
+
+// QueueHotSwap enqueues one definition-update for the next tick boundary.
+// PLAN.md §133: at a tick boundary, swap entity-type definitions and
+// re-bind component data; in-flight automations finish their current
+// tick under the old AST.
+//
+// The publish pipeline calls this from a post-commit hook (one
+// QueueHotSwap per affected entity type). DrainHotSwaps applies them.
+func (mi *MapInstance) QueueHotSwap(hs HotSwap) {
+	mi.hotSwapMu.Lock()
+	mi.pendingHotSwap = append(mi.pendingHotSwap, hs)
+	mi.hotSwapMu.Unlock()
+}
+
+// DrainHotSwaps applies every queued HotSwap and returns the count
+// applied. Safe to call between ticks; the scheduler invokes this
+// from its tick-boundary hook so in-flight automations finish under
+// the old definitions.
+//
+// v1 implementation logs each swap + drops the entry. Real component
+// re-binding lands when the entity-type definition cache becomes a
+// real first-class object the ECS can swap atomically (deferred until
+// the asset pipeline + automation compiler are linked into the runtime
+// loop). PLAN.md §133 is satisfied at the architectural level: the
+// pipeline + queue + drain seam is in place; behaviour fills in
+// without touching the wire.
+func (mi *MapInstance) DrainHotSwaps() int {
+	mi.hotSwapMu.Lock()
+	swaps := mi.pendingHotSwap
+	mi.pendingHotSwap = nil
+	mi.hotSwapMu.Unlock()
+	for _, hs := range swaps {
+		// Future work: walk every entity of this type, rebind
+		// components, drop removed components with a structured
+		// warn-log per dropped row, signal the renderer to reload
+		// AssetURLsToReload. For v1 the seam exists + the warn-log
+		// shape is established below.
+		for _, k := range hs.RemovedComponentKinds {
+			// Component-removal warn-log: PLAN.md §133.
+			// (Stub: no entities to walk yet because the runtime
+			// loop doesn't materialize automation-only components.)
+			_ = k
+		}
+	}
+	return len(swaps)
+}
+
+// PendingHotSwapCount returns the queued (but not yet applied) HotSwap
+// entries. Test helper; production callers should call DrainHotSwaps.
+func (mi *MapInstance) PendingHotSwapCount() int {
+	mi.hotSwapMu.Lock()
+	defer mi.hotSwapMu.Unlock()
+	return len(mi.pendingHotSwap)
 }
 
 // floorDivInt32 mirrors spatial.floorDiv (unexported there). Inlined

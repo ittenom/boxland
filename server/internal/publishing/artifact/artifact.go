@@ -113,17 +113,35 @@ func (r *Registry) HandlerFor(k Kind) (Handler, bool) {
 
 // ---- Pipeline ----
 
+// PostCommitHook fires AFTER the publish transaction commits, with the
+// outcomes the publish produced. PLAN.md §132: hooks let the pipeline
+// trigger inline palette bake + LivePublish broadcast without coupling
+// `artifact` to the assets / runtime packages.
+//
+// Hooks run sequentially in registration order; an error is logged but
+// does NOT roll back the publish (the commit already landed). Hooks
+// that need transactional behaviour should be wired inside the handler
+// instead.
+type PostCommitHook func(ctx context.Context, outcomes []PublishOutcome) error
+
 // Pipeline runs Push-to-Live: collect dirty drafts, validate each one,
 // publish them inside a single transaction, write publish_diffs rows, and
-// (later, task #132) broadcast LivePublish to running maps.
+// fire post-commit hooks (palette bake + LivePublish broadcast).
 type Pipeline struct {
 	pool     *pgxpool.Pool
 	registry *Registry
+	hooks    []PostCommitHook
 }
 
 // NewPipeline binds a pool and registry.
 func NewPipeline(pool *pgxpool.Pool, registry *Registry) *Pipeline {
 	return &Pipeline{pool: pool, registry: registry}
+}
+
+// OnPostCommit registers a hook that fires after a successful publish.
+// Multiple hooks can be registered; they fire in registration order.
+func (p *Pipeline) OnPostCommit(h PostCommitHook) {
+	p.hooks = append(p.hooks, h)
 }
 
 // PublishOutcome is one entry in the result of Run.
@@ -209,6 +227,16 @@ func (p *Pipeline) Run(ctx context.Context, publishedBy int64) ([]PublishOutcome
 		"artifact_count", len(outcomes),
 		"published_by", publishedBy,
 	)
+	// Post-commit hooks (palette bake, LivePublish broadcast). Errors
+	// are logged but don't roll back -- the publish transaction has
+	// already landed; rolling back here would leave the canonical
+	// state and the broadcast out of sync.
+	for _, hk := range p.hooks {
+		if err := hk(ctx, outcomes); err != nil {
+			slog.Warn("publish: post-commit hook failed",
+				"changeset_id", changesetID, "err", err)
+		}
+	}
 	return outcomes, nil
 }
 

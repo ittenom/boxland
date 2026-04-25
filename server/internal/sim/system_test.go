@@ -9,6 +9,55 @@ import (
 	"boxland/server/internal/sim/ecs"
 )
 
+func TestScheduler_FreezeStepsAreNoOps(t *testing.T) {
+	w := ecs.NewWorld()
+	sch := sim.NewScheduler(w)
+	runs := 0
+	sch.Register(sim.SystemEntry{Name: "x", Stage: sim.StageAI,
+		Run: func(_ context.Context, _ *ecs.World) error { runs++; return nil },
+	})
+	if err := sch.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if runs != 1 {
+		t.Fatalf("first step: got %d runs, want 1", runs)
+	}
+	if sch.Tick() != 1 {
+		t.Errorf("tick: got %d, want 1", sch.Tick())
+	}
+
+	sch.Freeze()
+	if !sch.IsFrozen() {
+		t.Fatal("IsFrozen should report true after Freeze")
+	}
+	for i := 0; i < 3; i++ {
+		_ = sch.Step(context.Background())
+	}
+	if runs != 1 {
+		t.Errorf("frozen Step ran the system: runs=%d", runs)
+	}
+	if sch.Tick() != 1 {
+		t.Errorf("frozen Step advanced tick: %d", sch.Tick())
+	}
+
+	// StepOnce overrides freeze for frame-by-frame inspection.
+	if err := sch.StepOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if runs != 2 || sch.Tick() != 2 {
+		t.Errorf("StepOnce: got runs=%d tick=%d, want 2/2", runs, sch.Tick())
+	}
+
+	sch.Unfreeze()
+	if sch.IsFrozen() {
+		t.Error("Unfreeze should clear frozen flag")
+	}
+	_ = sch.Step(context.Background())
+	if runs != 3 || sch.Tick() != 3 {
+		t.Errorf("post-unfreeze: got runs=%d tick=%d, want 3/3", runs, sch.Tick())
+	}
+}
+
 func TestScheduler_StepRunsSystemsInStageOrder(t *testing.T) {
 	w := ecs.NewWorld()
 	sch := sim.NewScheduler(w)
