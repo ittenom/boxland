@@ -93,8 +93,16 @@ func (p *Persister) Flush(ctx context.Context, in EncodeInputs) error {
 		}
 		p.lastFlushedID = newest
 	}
+	priorTick := p.lastFlushedTick
 	p.lastFlushedTick = in.Tick
 	p.wal.MarkFlushSucceeded()
+	slog.Info("wal flush",
+		"map_id", p.mapID,
+		"instance_id", p.instanceID,
+		"from_tick", priorTick,
+		"to_tick", in.Tick,
+		"mutations", len(ids),
+	)
 	return nil
 }
 

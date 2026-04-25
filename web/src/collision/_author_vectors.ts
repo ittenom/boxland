@@ -322,6 +322,143 @@ const scenarios: Scenario[] = [
 		mask: 1,
 		delta: [-50 * PX, -2 * PX],
 	},
+
+	// --- 33-44: expanded corpus for PLAN.md §136 ---
+	// Pathological corners + slides + opposite-edge sentinels. Each
+	// confirms one specific axis-separated swept-AABB rule from
+	// schemas/collision.md.
+
+	{
+		// Slide WESTWARD along a north wall (going left while
+		// touching a wall above). Covers the symmetric case to
+		// slide_along_east_wall_southward.
+		name: "slide_along_north_wall_westward",
+		tiles: [{ gx: 0, gy: -1, edge_collisions: EDGE_S, collision_layer_mask: 1 }],
+		aabb: [PX, 1 * PX, 6 * PX, 4 * PX],
+		mask: 1,
+		delta: [-30 * PX, -10 * PX], // x clear, y blocked north
+	},
+	{
+		// 1-subpixel east step against an exact-meet wall: must
+		// resolve to 0 (no blip across the boundary).
+		name: "wall_east_one_subpixel_into_exact_meet",
+		tiles: [{ gx: 1, gy: 0, edge_collisions: EDGE_W, collision_layer_mask: 1 }],
+		aabb: [4 * PX, 4 * PX, T - 0, 6 * PX], // right side at gx=1 left edge
+		mask: 1,
+		delta: [1, 0],
+	},
+	{
+		// Symmetric: 1-sub step west into an exact west wall.
+		name: "wall_west_one_subpixel_into_exact_meet",
+		tiles: [{ gx: 0, gy: 0, edge_collisions: EDGE_E, collision_layer_mask: 1 }],
+		aabb: [T, 4 * PX, T + 5 * PX, 6 * PX], // left side at gx=0 right edge
+		mask: 1,
+		delta: [-1, 0],
+	},
+	{
+		// Inner corner (NE outside): tile at (1,0) blocks E + tile
+		// at (0,-1) blocks N. Diagonal NE motion must zero on both
+		// axes (axis-separated swept means each axis hits its wall).
+		name: "inner_corner_ne_blocks_diagonal",
+		tiles: [
+			{ gx: 1, gy: 0, edge_collisions: EDGE_W, collision_layer_mask: 1 },
+			{ gx: 0, gy: -1, edge_collisions: EDGE_S, collision_layer_mask: 1 },
+		],
+		aabb: [PX, 4 * PX, 6 * PX, 7 * PX],
+		mask: 1,
+		delta: [50 * PX, -50 * PX],
+	},
+	{
+		// Outer corner (SW): no walls touching the entity in either
+		// direction; expected = full delta. Confirms swept doesn't
+		// over-detect when only diagonal cells exist.
+		name: "outer_corner_sw_no_block",
+		tiles: [
+			{ gx: -1, gy: 1, edge_collisions: EDGE_N | EDGE_E, collision_layer_mask: 1 },
+		],
+		aabb: [4 * PX, 4 * PX, 9 * PX, 7 * PX],
+		mask: 1,
+		delta: [-3 * PX, 3 * PX],
+	},
+	{
+		// Opposite-edge selectivity: tile blocks E only; an entity
+		// approaching from the EAST side should pass through (wrong
+		// edge bit on the contact face).
+		name: "opposite_edge_selectivity_passes",
+		tiles: [{ gx: 0, gy: 0, edge_collisions: EDGE_E, collision_layer_mask: 1 }],
+		// Entity to the east of the tile, walking west.
+		aabb: [T + 4 * PX, 1 * PX, T + 9 * PX, 4 * PX],
+		mask: 1,
+		delta: [-30 * PX, 0],
+	},
+	{
+		// Multi-tile blocking: a 3-wide corridor of west walls; the
+		// entity hits the closest one.
+		name: "wall_east_first_tile_in_row_wins",
+		tiles: [
+			{ gx: 1, gy: 0, edge_collisions: EDGE_W, collision_layer_mask: 1 },
+			{ gx: 2, gy: 0, edge_collisions: EDGE_W, collision_layer_mask: 1 },
+			{ gx: 3, gy: 0, edge_collisions: EDGE_W, collision_layer_mask: 1 },
+		],
+		aabb: [PX, 1 * PX, 4 * PX, 4 * PX],
+		mask: 1,
+		delta: [50 * PX, 0],
+	},
+	{
+		// Half-tile column (EDGE_W only on a vertical row of tiles)
+		// blocks E walks but a S walk along the column is unaffected.
+		name: "half_tile_column_does_not_block_southbound",
+		tiles: [
+			{ gx: 1, gy: 0, edge_collisions: EDGE_W, collision_layer_mask: 1 },
+			{ gx: 1, gy: 1, edge_collisions: EDGE_W, collision_layer_mask: 1 },
+			{ gx: 1, gy: 2, edge_collisions: EDGE_W, collision_layer_mask: 1 },
+		],
+		// Entity to the LEFT of the column.
+		aabb: [4 * PX, PX, T - PX, 4 * PX],
+		mask: 1,
+		delta: [0, 30 * PX],
+	},
+	{
+		// Pathological: entity exactly aligned to tile grid + 0
+		// motion + multi-tile floor-AABB. Expected: no resolution
+		// changes (zero-motion shortcut).
+		name: "zero_motion_grid_aligned",
+		tiles: [
+			{ gx: 0, gy: 0, edge_collisions: EDGE_N | EDGE_E | EDGE_S | EDGE_W, collision_layer_mask: 1 },
+		],
+		aabb: [T, T, T + 5 * PX, T + 5 * PX], // exactly outside
+		mask: 1,
+		delta: [0, 0],
+	},
+	{
+		// Mask-bit pathology: tile blocks layer 0x10 (entity has 0x0F).
+		// Entity passes through entirely.
+		name: "mask_high_bit_passes",
+		tiles: [{ gx: 1, gy: 0, edge_collisions: EDGE_W, collision_layer_mask: 0x10 }],
+		aabb: [PX, PX, 6 * PX, 4 * PX],
+		mask: 0x0f,
+		delta: [50 * PX, 0],
+	},
+	{
+		// Mask bit-0 only: tile mask = 0x01, entity mask = 0x01 ->
+		// blocks. Symmetric to mask_high_bit_passes.
+		name: "mask_low_bit_blocks",
+		tiles: [{ gx: 1, gy: 0, edge_collisions: EDGE_W, collision_layer_mask: 0x01 }],
+		aabb: [PX, PX, 6 * PX, 4 * PX],
+		mask: 0x01,
+		delta: [50 * PX, 0],
+	},
+	{
+		// Negative + diagonal into a NW corner: both axes block.
+		name: "inner_corner_nw_blocks_diagonal",
+		tiles: [
+			{ gx: -1, gy: 0,  edge_collisions: EDGE_E, collision_layer_mask: 1 },
+			{ gx: 0,  gy: -1, edge_collisions: EDGE_S, collision_layer_mask: 1 },
+		],
+		aabb: [4 * PX, 4 * PX, 8 * PX, 7 * PX],
+		mask: 1,
+		delta: [-50 * PX, -50 * PX],
+	},
 ];
 
 const out = {

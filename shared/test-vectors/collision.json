@@ -947,6 +947,402 @@
         -1024,
         -512
       ]
+    },
+    {
+      "name": "slide_along_north_wall_westward",
+      "world": {
+        "tiles": [
+          {
+            "gx": 0,
+            "gy": -1,
+            "edge_collisions": 4,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          256,
+          256,
+          1536,
+          1024
+        ],
+        "mask": 1
+      },
+      "delta": [
+        -7680,
+        -2560
+      ],
+      "expected_resolved_delta": [
+        -7680,
+        -2560
+      ]
+    },
+    {
+      "name": "wall_east_one_subpixel_into_exact_meet",
+      "world": {
+        "tiles": [
+          {
+            "gx": 1,
+            "gy": 0,
+            "edge_collisions": 8,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          1024,
+          1024,
+          8192,
+          1536
+        ],
+        "mask": 1
+      },
+      "delta": [
+        1,
+        0
+      ],
+      "expected_resolved_delta": [
+        0,
+        0
+      ]
+    },
+    {
+      "name": "wall_west_one_subpixel_into_exact_meet",
+      "world": {
+        "tiles": [
+          {
+            "gx": 0,
+            "gy": 0,
+            "edge_collisions": 2,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          8192,
+          1024,
+          9472,
+          1536
+        ],
+        "mask": 1
+      },
+      "delta": [
+        -1,
+        0
+      ],
+      "expected_resolved_delta": [
+        0,
+        0
+      ]
+    },
+    {
+      "name": "inner_corner_ne_blocks_diagonal",
+      "world": {
+        "tiles": [
+          {
+            "gx": 1,
+            "gy": 0,
+            "edge_collisions": 8,
+            "collision_layer_mask": 1
+          },
+          {
+            "gx": 0,
+            "gy": -1,
+            "edge_collisions": 4,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          256,
+          1024,
+          1536,
+          1792
+        ],
+        "mask": 1
+      },
+      "delta": [
+        12800,
+        -12800
+      ],
+      "expected_resolved_delta": [
+        6656,
+        -1024
+      ]
+    },
+    {
+      "name": "outer_corner_sw_no_block",
+      "world": {
+        "tiles": [
+          {
+            "gx": -1,
+            "gy": 1,
+            "edge_collisions": 3,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          1024,
+          1024,
+          2304,
+          1792
+        ],
+        "mask": 1
+      },
+      "delta": [
+        -768,
+        768
+      ],
+      "expected_resolved_delta": [
+        -768,
+        768
+      ]
+    },
+    {
+      "name": "opposite_edge_selectivity_passes",
+      "world": {
+        "tiles": [
+          {
+            "gx": 0,
+            "gy": 0,
+            "edge_collisions": 2,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          9216,
+          256,
+          10496,
+          1024
+        ],
+        "mask": 1
+      },
+      "delta": [
+        -7680,
+        0
+      ],
+      "expected_resolved_delta": [
+        -1024,
+        0
+      ]
+    },
+    {
+      "name": "wall_east_first_tile_in_row_wins",
+      "world": {
+        "tiles": [
+          {
+            "gx": 1,
+            "gy": 0,
+            "edge_collisions": 8,
+            "collision_layer_mask": 1
+          },
+          {
+            "gx": 2,
+            "gy": 0,
+            "edge_collisions": 8,
+            "collision_layer_mask": 1
+          },
+          {
+            "gx": 3,
+            "gy": 0,
+            "edge_collisions": 8,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          256,
+          256,
+          1024,
+          1024
+        ],
+        "mask": 1
+      },
+      "delta": [
+        12800,
+        0
+      ],
+      "expected_resolved_delta": [
+        7168,
+        0
+      ]
+    },
+    {
+      "name": "half_tile_column_does_not_block_southbound",
+      "world": {
+        "tiles": [
+          {
+            "gx": 1,
+            "gy": 0,
+            "edge_collisions": 8,
+            "collision_layer_mask": 1
+          },
+          {
+            "gx": 1,
+            "gy": 1,
+            "edge_collisions": 8,
+            "collision_layer_mask": 1
+          },
+          {
+            "gx": 1,
+            "gy": 2,
+            "edge_collisions": 8,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          1024,
+          256,
+          7936,
+          1024
+        ],
+        "mask": 1
+      },
+      "delta": [
+        0,
+        7680
+      ],
+      "expected_resolved_delta": [
+        0,
+        7680
+      ]
+    },
+    {
+      "name": "zero_motion_grid_aligned",
+      "world": {
+        "tiles": [
+          {
+            "gx": 0,
+            "gy": 0,
+            "edge_collisions": 15,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          8192,
+          8192,
+          9472,
+          9472
+        ],
+        "mask": 1
+      },
+      "delta": [
+        0,
+        0
+      ],
+      "expected_resolved_delta": [
+        0,
+        0
+      ]
+    },
+    {
+      "name": "mask_high_bit_passes",
+      "world": {
+        "tiles": [
+          {
+            "gx": 1,
+            "gy": 0,
+            "edge_collisions": 8,
+            "collision_layer_mask": 16
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          256,
+          256,
+          1536,
+          1024
+        ],
+        "mask": 15
+      },
+      "delta": [
+        12800,
+        0
+      ],
+      "expected_resolved_delta": [
+        12800,
+        0
+      ]
+    },
+    {
+      "name": "mask_low_bit_blocks",
+      "world": {
+        "tiles": [
+          {
+            "gx": 1,
+            "gy": 0,
+            "edge_collisions": 8,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          256,
+          256,
+          1536,
+          1024
+        ],
+        "mask": 1
+      },
+      "delta": [
+        12800,
+        0
+      ],
+      "expected_resolved_delta": [
+        6656,
+        0
+      ]
+    },
+    {
+      "name": "inner_corner_nw_blocks_diagonal",
+      "world": {
+        "tiles": [
+          {
+            "gx": -1,
+            "gy": 0,
+            "edge_collisions": 2,
+            "collision_layer_mask": 1
+          },
+          {
+            "gx": 0,
+            "gy": -1,
+            "edge_collisions": 4,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          1024,
+          1024,
+          2048,
+          1792
+        ],
+        "mask": 1
+      },
+      "delta": [
+        -12800,
+        -12800
+      ],
+      "expected_resolved_delta": [
+        -1024,
+        -1024
+      ]
     }
   ]
 }

@@ -261,10 +261,34 @@ func runServe() error {
 		}
 	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// PLAN.md §140 graceful shutdown sequence:
+	//   1. Stop accepting new HTTP connections (srv.Shutdown).
+	//   2. Drain every live WS by closing them with StatusGoingAway.
+	//   3. Per live MapInstance: flush in-memory state to Postgres +
+	//      trim the WAL stream up to the flushed tick.
+	//   4. Close pools.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
+	slog.Info("graceful shutdown: stopping HTTP listener")
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Warn("http shutdown", "err", err)
+	}
+	slog.Info("graceful shutdown: draining WS connections")
+	wsGateway.CloseAll("server shutdown")
+
+	// Flush every live MapInstance + trim its WAL. Failures are
+	// logged + skipped so one slow instance can't deadlock shutdown.
+	insts := instanceMgr.All()
+	slog.Info("graceful shutdown: flushing live instances", "count", len(insts))
+	for _, mi := range insts {
+		if mi.Persister == nil {
+			continue
+		}
+		if err := mi.Persister.Flush(shutdownCtx, mi.PersistFlushInputs()); err != nil {
+			slog.Warn("graceful shutdown: persister flush",
+				"map_id", mi.MapID, "instance_id", mi.InstanceID, "err", err)
+		}
 	}
 	slog.Info("boxland stopped")
 	return nil

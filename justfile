@@ -34,7 +34,7 @@ dev:
     npm run dev
 
 # Run Go + TS tests.
-test: test-go test-web
+test: test-go test-web realm-isolation
 
 [working-directory: 'server']
 test-go:
@@ -47,6 +47,15 @@ test-go:
 [working-directory: 'web']
 test-web:
     npm test
+
+# PLAN.md §135 + §137: realm-isolation invariant test always runs in CI.
+# Surfaces every cross-realm rejection scenario (player can't sandbox,
+# designer can't dispatch sandbox-only on live, designer-only verbs
+# refuse player realm). Failing means a regression in the WS gateway's
+# isRealmViolation matcher or in the per-handler realm gate.
+[working-directory: 'server']
+realm-isolation:
+    go test -count=1 -run 'TestRealmIsolation_|TestSpectate_(SandboxInstance|PrivateMap)_' ./internal/ws/...
 
 # Run the Go linter (golangci-lint must be on PATH or installed via 'go install').
 [working-directory: 'server']

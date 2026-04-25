@@ -65,7 +65,9 @@
 |---|---|
 | `WASD` / Arrow keys | Move (default; rebindable in Settings). |
 | `Mouse-click` | Move-to / interact (long-press = interact). |
+| Right-click | Interact-at (server-routed). |
 | Gamepad | Mapped via the shared rebinder; defaults match a generic XInput layout. |
+| `C` | (Spectator) Toggle follow / free-cam camera. |
 
 ## Focus rules
 

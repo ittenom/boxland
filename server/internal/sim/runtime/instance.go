@@ -158,6 +158,19 @@ func (mi *MapInstance) MarkChunksDirty(tileX0, tileY0, tileX1, tileY1 int32) {
 	}
 }
 
+// PersistFlushInputs builds the EncodeInputs the persister needs to
+// flush this instance's state to Postgres. Used by graceful-shutdown
+// (cmd/boxland/main.go) and could feed periodic flush from the
+// scheduler later.
+func (mi *MapInstance) PersistFlushInputs() persist.EncodeInputs {
+	return persist.EncodeInputs{
+		MapID:      mi.MapID,
+		InstanceID: mi.InstanceID,
+		Tick:       mi.Scheduler.Tick(),
+		Stores:     mi.World.Stores(),
+	}
+}
+
 // QueueHotSwap enqueues one definition-update for the next tick boundary.
 // PLAN.md §133: at a tick boundary, swap entity-type definitions and
 // re-bind component data; in-flight automations finish their current

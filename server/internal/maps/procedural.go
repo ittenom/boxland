@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 
 	"github.com/jackc/pgx/v5"
@@ -131,6 +132,11 @@ func (s *Service) MaterializeProcedural(ctx context.Context, in MaterializeProce
 		Seed:   in.Seed,
 	})
 	if err != nil {
+		// PLAN.md §139: WFC failures get a structured slog entry with
+		// seed + map id so the designer can reproduce the failure.
+		slog.Warn("wfc materialize failed",
+			"map_id", m.ID, "seed", in.Seed,
+			"width", m.Width, "height", m.Height, "err", err)
 		return nil, fmt.Errorf("wfc: %w", err)
 	}
 

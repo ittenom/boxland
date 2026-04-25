@@ -1,0 +1,53 @@
+{
+	"$comment": "Brand-voice copy stub. Templ pages reference these keys via data-copy-slot=. The Lorem Ipsum placeholders ship as-is until the writing team replaces them. Adding new keys: keep them dot-namespaced by surface; Templ files use the data-copy-slot attribute and a future runtime swap will map slots to localized strings without touching templates. PLAN.md §144.",
+
+	"nav": {
+		"assets":     "Assets",
+		"entities":   "Entities",
+		"sockets":    "Sockets",
+		"tilegroups": "Tile groups",
+		"mapmaker":   "Mapmaker",
+		"sandbox":    "Sandbox",
+		"settings":   "Settings",
+		"push":       "Push to Live"
+	},
+
+	"auth.login.title":           "Designer login",
+	"auth.signup.title":           "Create designer account",
+	"auth.email":                  "Email",
+	"auth.password":               "Password",
+	"auth.create-account":         "Create account",
+	"auth.have-account":           "Have an account?",
+	"auth.login.submit":           "Log in",
+	"auth.signup.submit":          "Sign up",
+
+	"play.auth.login.title":       "Sign in",
+	"play.auth.signup.title":      "Create account",
+	"play.auth.email":             "Email",
+	"play.auth.password":          "Password",
+	"play.auth.create-account":    "Create account",
+	"play.auth.have-account":      "Have an account?",
+	"play.auth.login.submit":      "Sign in",
+	"play.auth.signup.submit":     "Sign up",
+	"play.maps.title":             "Pick a map",
+	"play.nav.maps":               "Maps",
+	"play.nav.settings":           "Settings",
+	"play.nav.logout":             "Log out",
+
+	"settings.title":              "Settings",
+	"settings.font.title":         "Font",
+	"settings.audio.title":        "Audio",
+	"settings.spectator.title":    "Spectator",
+	"settings.controls.title":     "Controls",
+	"settings.reset":              "Reset to defaults",
+	"settings.spectator.freecam": "Free-cam by default (vs. follow target)",
+
+	"publish.preview.title":       "Push to Live",
+	"publish.preview.cancel":      "Cancel",
+	"publish.preview.confirm":     "Push to Live",
+	"publish.preview.details":     "Show per-field changes",
+	"publish.result.ok":           "Published.",
+	"publish.result.empty":        "No drafts to publish.",
+
+	"$lorem.ipsum-policy": "Until copy lands per-slot, surfaces fall back to placeholder Lorem Ipsum text. The brand voice is short, friendly, plain-prose; avoid imperative shouting (no all-caps); avoid em-dashes inside button labels."
+}
