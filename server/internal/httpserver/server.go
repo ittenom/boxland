@@ -37,6 +37,7 @@ type Mounts struct {
 func New(h Health, m Mounts) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthzHandler(h))
+	mux.HandleFunc("GET /{$}", landingHandler())
 	mux.Handle("GET /static/", staticHandler())
 	if m.Designer != nil {
 		mux.Handle("/design/", m.Designer)
@@ -50,6 +51,58 @@ func New(h Health, m Mounts) http.Handler {
 		mux.Handle("GET /ws", m.WS)
 	}
 	return mux
+}
+
+// landingHandler serves the root "/" page so a user who just ran
+// `just design` and navigated to http://localhost:8080/ lands on a
+// real welcome screen instead of a 404. Two big cards: Design + Play.
+//
+// Using an inline html/template keeps this self-contained -- no
+// extra Templ generation step, and the design-tools package's auth
+// middleware doesn't need to know about a public landing page.
+func landingHandler() http.HandlerFunc {
+	const body = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Boxland</title>
+<link rel="stylesheet" href="/static/css/pixel.css" />
+<style>
+.bx-launchpad { max-width: 480px; margin: 64px auto; padding: 0 24px; text-align: center; }
+.bx-launchpad__title { font-size: 36px; margin-bottom: 24px; }
+.bx-launchpad__subtitle { margin-bottom: 32px; opacity: 0.85; }
+.bx-launchpad__cards { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
+.bx-launchpad__card { display: block; padding: 24px; background: var(--bx-bg-2); border: 4px solid var(--bx-line); color: var(--bx-fg); text-decoration: none; transition: transform 60ms ease, border-color 60ms ease; }
+.bx-launchpad__card:hover { border-color: var(--bx-accent); transform: translateY(-2px); }
+.bx-launchpad__card-title { display: block; font-weight: 700; font-size: 18px; margin-bottom: 8px; }
+.bx-launchpad__card-meta { display: block; font-size: 12px; opacity: 0.75; }
+.bx-launchpad__health { margin-top: 32px; font-size: 12px; opacity: 0.6; }
+</style>
+</head>
+<body data-surface="landing">
+<main class="bx-launchpad">
+<h1 class="bx-launchpad__title bx-mono">Boxland</h1>
+<p class="bx-launchpad__subtitle">Welcome. Pick a side to start.</p>
+<nav class="bx-launchpad__cards">
+<a class="bx-launchpad__card" href="/design/login">
+<span class="bx-launchpad__card-title">Design</span>
+<span class="bx-launchpad__card-meta">Make assets, entities, maps, and worlds.</span>
+</a>
+<a class="bx-launchpad__card" href="/play/login">
+<span class="bx-launchpad__card-title">Play</span>
+<span class="bx-launchpad__card-meta">Drop into a public map.</span>
+</a>
+</nav>
+<p class="bx-launchpad__health"><a href="/healthz">Server health</a></p>
+</main>
+</body>
+</html>`
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write([]byte(body))
+	}
 }
 
 // staticHandler serves the embedded /static/ tree with long-cache headers.

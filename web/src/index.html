@@ -3,10 +3,102 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>Boxland — dev</title>
+    <title>Boxland — local</title>
+    <link rel="stylesheet" href="/static/css/pixel.css" />
+    <style>
+      .bx-launchpad {
+        max-width: 480px;
+        margin: var(--bx-s7, 64px) auto;
+        padding: 0 var(--bx-s4, 24px);
+        text-align: center;
+      }
+      .bx-launchpad__title {
+        font-size: 36px;
+        margin-bottom: var(--bx-s4, 24px);
+      }
+      .bx-launchpad__subtitle {
+        margin-bottom: var(--bx-s5, 32px);
+      }
+      .bx-launchpad__cards {
+        display: grid;
+        gap: var(--bx-s3, 16px);
+        grid-template-columns: 1fr 1fr;
+        margin-top: var(--bx-s5, 32px);
+      }
+      .bx-launchpad__card {
+        display: block;
+        padding: var(--bx-s4, 24px);
+        background: var(--bx-bg-2, #2a2050);
+        border: 4px solid var(--bx-line, #38306e);
+        color: var(--bx-fg, #efefef);
+        text-decoration: none;
+        transition: transform 60ms ease, border-color 60ms ease;
+      }
+      .bx-launchpad__card:hover {
+        border-color: var(--bx-accent, #ff64a8);
+        transform: translateY(-2px);
+      }
+      .bx-launchpad__card-title {
+        display: block;
+        font-weight: 700;
+        font-size: 18px;
+        margin-bottom: var(--bx-s2, 8px);
+      }
+      .bx-launchpad__card-meta {
+        display: block;
+        font-size: 12px;
+        opacity: 0.75;
+      }
+      .bx-launchpad__health {
+        margin-top: var(--bx-s5, 32px);
+        font-size: 12px;
+        opacity: 0.6;
+      }
+    </style>
   </head>
   <body data-surface="dev">
-    <p>Boxland web dev shell. Real surfaces (Mapmaker, Sandbox, game) wire up in later tasks.</p>
+    <main class="bx-launchpad">
+      <h1 class="bx-launchpad__title bx-mono">Boxland</h1>
+      <p class="bx-launchpad__subtitle">
+        Welcome. Pick a side to start.
+      </p>
+
+      <nav class="bx-launchpad__cards">
+        <a class="bx-launchpad__card" href="/design/login">
+          <span class="bx-launchpad__card-title">Design</span>
+          <span class="bx-launchpad__card-meta">
+            Make assets, entities, maps, and worlds.
+          </span>
+        </a>
+        <a class="bx-launchpad__card" href="/play/login">
+          <span class="bx-launchpad__card-title">Play</span>
+          <span class="bx-launchpad__card-meta">
+            Drop into a public map.
+          </span>
+        </a>
+      </nav>
+
+      <p class="bx-launchpad__health">
+        <a href="/healthz" id="health-link">Server health</a>
+        <span id="health-status">…</span>
+      </p>
+    </main>
+
     <script type="module" src="./boot.ts"></script>
+    <script>
+      // Friendly health check: surfaces "server is up" / "server is
+      // down — start `just design`" without making the user dig
+      // through devtools.
+      (async () => {
+        const status = document.getElementById("health-status");
+        try {
+          const r = await fetch("/healthz");
+          status.textContent = r.ok ? "✓ up" : `✕ ${r.status}`;
+        } catch {
+          status.textContent =
+            "✕ unreachable — run `just design` in another terminal.";
+        }
+      })();
+    </script>
   </body>
 </html>

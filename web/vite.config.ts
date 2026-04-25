@@ -34,11 +34,17 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: {
-      // Design-tool HTTP + WS share the Go server on :8080 (set in task #16+).
-      "/api": "http://localhost:8080",
-      "/design": "http://localhost:8080",
-      "/auth": "http://localhost:8080",
-      "/ws": { target: "ws://localhost:8080", ws: true },
+      // Design-tool HTTP + WS share the Go server on :8080. The /play
+      // surfaces (player auth, map picker, game view) live on the same
+      // Go server. The Vite root (/, /index.html) renders the dev
+      // landing page that links to both sides.
+      "/api":     "http://localhost:8080",
+      "/design":  "http://localhost:8080",
+      "/play":    "http://localhost:8080",
+      "/auth":    "http://localhost:8080",
+      "/static":  "http://localhost:8080",
+      "/healthz": "http://localhost:8080",
+      "/ws":      { target: "ws://localhost:8080", ws: true },
     },
   },
   build: {

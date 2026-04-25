@@ -26,16 +26,46 @@ docker/      Dockerfile, docker-compose, pinned flatc build image
 - Docker + Docker Compose (for the local dev stack)
 - Optional: [`golangci-lint`](https://golangci-lint.run) for `just lint` (`go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`)
 
-## Quickstart (placeholder — wired up across early tasks)
+## Quickstart
+
+Install [Docker Desktop](https://www.docker.com/products/docker-desktop/),
+[Go](https://go.dev/dl/), [Node](https://nodejs.org/), and
+[Just](https://just.systems). Then run:
 
 ```
-just            # list available recipes
-just dev        # bring up Postgres, Redis, Mailpit, MinIO; run server + Vite
-just test       # Go + TS tests
-just build      # Production server binary + web bundle
-just bench      # ECS microbenchmarks (regression-gated)
-just gen-fb     # Regenerate FlatBuffers Go + TS code from /schemas/
-just migrate    # Run SQL migrations
+just design
+```
+
+That single command brings up Postgres + Redis + Mailpit + MinIO in
+Docker, runs migrations, builds the web bundle, and starts the Go
+server. If everything works, you'll see this:
+
+```
+   ██████╗   ██████╗  ██╗  ██╗ ██╗       █████╗  ███╗   ██╗ ██████╗
+   ██╔══██╗ ██╔═══██╗ ╚██╗██╔╝ ██║      ██╔══██╗ ████╗  ██║ ██╔══██╗
+   ██████╔╝ ██║   ██║  ╚███╔╝  ██║      ███████║ ██╔██╗ ██║ ██║  ██║
+   ██╔══██╗ ██║   ██║  ██╔██╗  ██║      ██╔══██║ ██║╚██╗██║ ██║  ██║
+   ██████╔╝ ╚██████╔╝ ██╔╝ ██╗ ███████╗ ██║  ██║ ██║ ╚████║ ██████╔╝
+   ╚═════╝   ╚═════╝  ╚═╝  ╚═╝ ╚══════╝ ╚═╝  ╚═╝ ╚═╝  ╚═══╝ ╚═════╝
+
+  Design tools  →  http://localhost:8080/design/login
+  Game client   →  http://localhost:8080/play/login
+  Health check  →  http://localhost:8080/healthz
+```
+
+### Other recipes
+
+```
+just                   # list available recipes
+just up                # just the Docker dependencies (no server)
+just down              # stop the Docker dependencies
+just serve             # run the Go server only (you build the web bundle yourself)
+just dev               # Vite dev server (HMR-friendly TS edits; expects `just serve` running)
+just test              # Go + TS tests + the realm-isolation invariant
+just build             # Production server binary + web bundle
+just bench             # ECS microbenchmarks (regression-gated)
+just gen-fb            # Regenerate FlatBuffers Go + TS code from /schemas/
+just migrate           # Run SQL migrations
 ```
 
 ## Documentation

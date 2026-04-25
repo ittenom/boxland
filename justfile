@@ -33,6 +33,32 @@ serve:
 dev:
     npm run dev
 
+# One-command Boxland: bring up the dependencies, build the web bundle,
+# run migrations, and start the Go server. Designed for non-developers
+# who just want to start using Boxland on their own machine.
+#
+# After this runs, the banner prints clickable links to the design
+# tools + player game in the user's browser. Re-running is safe: each
+# step is idempotent.
+#
+# Prereqs: Docker Desktop, Go, Node. The Docker stack hosts Postgres,
+# Redis, Mailpit, and MinIO so users don't install any of those by hand.
+design:
+    @just up
+    @cd server && go run ./cmd/boxland migrate up
+    @cd web && npm install --silent --no-audit --no-fund
+    @cd web && npm run build --silent
+    @just _stage-web
+    @node web/scripts/banner.mjs
+    @cd server && go run ./cmd/boxland serve
+
+# Internal: copy the freshly-built web bundle into the Go server's
+# embed tree so /static/web/*.js resolves at runtime. The production
+# Docker image does the same copy in its multi-stage build.
+[private]
+_stage-web:
+    powershell -NoProfile -Command "if (Test-Path 'server/static/web') { Get-ChildItem 'server/static/web' -Exclude '.gitkeep' | Remove-Item -Recurse -Force }; New-Item -ItemType Directory -Force -Path 'server/static/web' | Out-Null; Copy-Item -Force -Recurse 'web/dist/*' 'server/static/web/'"
+
 # Run Go + TS tests.
 test: test-go test-web realm-isolation
 
