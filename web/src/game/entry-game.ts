@@ -44,7 +44,7 @@ function readBootConfig(host: HTMLElement): GameBootConfig {
  *  game's CachedEntity list to the renderer's Renderable shape. */
 function adaptRenderer(app: BoxlandApp): RendererLike {
 	return {
-		updateFrame({ entities, hostId, hostX, hostY }) {
+		updateFrame({ entities, hostId, hostX, hostY, cameraX, cameraY }) {
 			const renderables: Renderable[] = entities.map((e: CachedEntity) => {
 				// Override the host's position with the predicted one so
 				// our own movement feels immediate; everyone else uses
@@ -67,14 +67,15 @@ function adaptRenderer(app: BoxlandApp): RendererLike {
 					hpPct: e.hpPct,
 				};
 			});
-			void app.update(renderables, { cx: hostX, cy: hostY });
+			void app.update(renderables, { cx: cameraX, cy: cameraY });
 		},
 	};
 }
 
 function buildHud(): HudLike {
-	const badge = document.querySelector("[data-bx-state-badge]") as HTMLElement | null;
+	const badge  = document.querySelector("[data-bx-state-badge]") as HTMLElement | null;
 	const tickEl = document.querySelector("[data-bx-tick]") as HTMLElement | null;
+	const camEl  = document.querySelector("[data-bx-camera-mode]") as HTMLElement | null;
 	return {
 		setState(s: ConnState) {
 			if (badge) {
@@ -84,6 +85,12 @@ function buildHud(): HudLike {
 		},
 		setTick(tick) {
 			if (tickEl) tickEl.textContent = `tick ${tick.toString()}`;
+		},
+		setCameraMode(mode) {
+			if (camEl) {
+				camEl.textContent = mode === "free-cam" ? "free-cam" : "follow";
+				camEl.dataset.bxCameraMode = mode;
+			}
 		},
 	};
 }
@@ -111,8 +118,18 @@ export async function bootGame(host: HTMLElement = document.getElementById("bx-g
 	// after we construct it below.
 	let cachedLoop: GameLoop | null = null;
 	const audioCam: AudioCameraReader = {
-		cx: () => cachedLoop?.snapshot().hostX ?? 0,
-		cy: () => cachedLoop?.snapshot().hostY ?? 0,
+		cx: () => {
+			const l = cachedLoop;
+			if (!l) return 0;
+			const target = { cx: l.snapshot().hostX, cy: l.snapshot().hostY };
+			return l.camera.snapshot(target).cx;
+		},
+		cy: () => {
+			const l = cachedLoop;
+			if (!l) return 0;
+			const target = { cx: l.snapshot().hostX, cy: l.snapshot().hostY };
+			return l.camera.snapshot(target).cy;
+		},
 	};
 	const audio = new SoundEngine({
 		catalog: soundCatalog,
@@ -122,13 +139,25 @@ export async function bootGame(host: HTMLElement = document.getElementById("bx-g
 	const localSettings = loadLocal("player");
 	applyAudio(localSettings, audio);
 
+	// Spectator mode flag: ?spectate=1 (or freeCam preference) flips
+	// the loop into spectator mode -- HUD chrome switches, no Move
+	// emissions, free-cam toggle is registered.
+	const spectator = new URLSearchParams(window.location.search).get("spectate") === "1";
 	const loop = new GameLoop({
 		config,
 		renderer: adaptRenderer(app),
 		hud: buildHud(),
 		audio,
+		spectator,
+		initialCameraMode: localSettings.spectator.freeCam ? "free-cam" : "follow",
 	});
 	cachedLoop = loop;
+	// Reflect mode in the HUD on boot.
+	if (spectator) {
+		const hud = buildHud();
+		hud.setCameraMode?.(loop.camera.getMode());
+		document.body.dataset.bxSpectator = "1";
+	}
 	// First user gesture (a click) unblocks the AudioContext.
 	host.addEventListener("pointerdown", () => audio.resume(), { once: true });
 	// Expose the bus globally so the Settings page can list the

@@ -873,3 +873,15 @@ p, li {
     flex: 1;
     accent-color: var(--bx-accent);
 }
+
+
+/* -- Spectator chrome (PLAN.md §6h, §4m) ------------------------------- */
+/* Spectator-only HUD bits stay hidden until body[data-bx-spectator]=1. */
+.bx-spectator-only { display: none; }
+body[data-bx-spectator="1"] .bx-spectator-only { display: inline; }
+body[data-bx-spectator="1"] .bx-game-hud {
+    border-color: var(--bx-accent);
+}
+body[data-bx-spectator="1"] [data-bx-camera-mode][data-bx-camera-mode="free-cam"] {
+    color: var(--bx-accent);
+}

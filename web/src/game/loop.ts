@@ -41,19 +41,33 @@ import {
 } from "./prediction";
 import { installMovementBindings, type MovementIntent } from "./intents";
 import { mailboxAsWorld } from "./world";
+import {
+	GameCamera,
+	buildCameraToggleCommand,
+	CAMERA_TOGGLE_COMMAND_ID,
+	type CameraMode,
+} from "./camera";
 
 /** Cadence the client emits MovePayloads at. Server runs 10 Hz so
  *  matching the cadence keeps inputs responsive without flooding. */
 const MOVE_INTENT_INTERVAL_MS = 100;
 
 /** Renderer surface the loop expects. Production: a thin wrapper over
- *  render/BoxlandApp.update. Tests: stub that records frames. */
+ *  render/BoxlandApp.update. Tests: stub that records frames.
+ *
+ * `cameraX`/`cameraY` are the world-space sub-pixel centre of the
+ * viewport (follows host in normal play; user-controlled in spectator
+ * free-cam). The host fields stay separate so the renderer can apply
+ * client-side prediction to its own sprite.
+ */
 export interface RendererLike {
 	updateFrame(args: {
 		entities: CachedEntity[];
 		hostId: bigint;
 		hostX: number;
 		hostY: number;
+		cameraX: number;
+		cameraY: number;
 	}): void;
 }
 
@@ -61,6 +75,9 @@ export interface RendererLike {
 export interface HudLike {
 	setState(s: ConnState): void;
 	setTick(tick: bigint): void;
+	/** Optional: render the spectator camera mode in the HUD chrome.
+	 *  Ignored when the surface isn't in a spectator session. */
+	setCameraMode?(mode: CameraMode): void;
 }
 
 /** Tiny scheduler abstraction so tests drive the loop deterministically. */
@@ -96,6 +113,14 @@ export interface GameLoopOptions {
 	/** Optional Web Audio engine. The loop drains audio events from
 	 *  the mailbox each frame and forwards them. Omit for tests. */
 	audio?: SoundEngine;
+	/** Spectator session? Skips Move emissions and lets the camera
+	 *  free-cam vs follow under the user's control. PLAN.md §6h
+	 *  "spectator UI affordances". */
+	spectator?: boolean;
+	/** Initial camera mode for spectator sessions. Defaults to
+	 *  "follow"; the Settings.spectator.freeCam preference flips this
+	 *  to "free-cam" when boot picks the player up. */
+	initialCameraMode?: CameraMode;
 }
 
 /**
@@ -108,6 +133,8 @@ export class GameLoop {
 	readonly mailbox: Mailbox;
 	readonly net: NetClient;
 	readonly intent: MovementIntent;
+	readonly camera: GameCamera;
+	readonly spectator: boolean;
 
 	private readonly renderer: RendererLike;
 	private readonly hud: HudLike | undefined;
@@ -134,8 +161,23 @@ export class GameLoop {
 		this.bus = opts.bus ?? new CommandBus();
 		this.mailbox = opts.mailbox ?? new Mailbox();
 		this.audio = opts.audio;
+		this.spectator = opts.spectator ?? false;
+		this.camera = new GameCamera();
+		if (opts.initialCameraMode) this.camera.setMode(opts.initialCameraMode);
 
 		this.intent = installMovementBindings(this.bus);
+
+		// Spectators get a camera-toggle command they can rebind in
+		// Settings; default combo is "C" so it doesn't conflict with
+		// the WASD pan keys.
+		if (this.spectator) {
+			const toggle = buildCameraToggleCommand({
+				camera: this.camera,
+				onToggle: (mode) => this.hud?.setCameraMode?.(mode),
+			});
+			this.bus.register(toggle);
+			this.bus.bindHotkey("C", CAMERA_TOGGLE_COMMAND_ID);
+		}
 
 		const ticketURL = opts.config.ticketURL ?? "/play/ws-ticket";
 		const authFactory: () => Promise<AuthParams> = async () => {
@@ -230,31 +272,45 @@ export class GameLoop {
 		this.state.intentVx = v.vx;
 		this.state.intentVy = v.vy;
 
-		// Predict.
-		const world = mailboxAsWorld({ values: () => this.mailbox.allTiles() });
-		this.state = predictStep(this.state, dtMs, world);
+		if (this.spectator && this.camera.getMode() === "free-cam") {
+			// In free-cam, the input vector pans the camera instead of
+			// moving the entity. Spectators don't own an entity, so
+			// nothing else needs to happen here.
+			this.camera.pan(v.vx, v.vy, dtMs);
+		} else {
+			// Predict the host's local position.
+			const world = mailboxAsWorld({ values: () => this.mailbox.allTiles() });
+			this.state = predictStep(this.state, dtMs, world);
 
-		// Rate-limit MovePayload emissions to the tick rate. We always
-		// send if the intent changed since the last emit so quick taps
-		// don't get coalesced away.
-		const intentChanged = v.vx !== this.lastSentVx || v.vy !== this.lastSentVy;
-		const dueByCadence  = nowMs - this.lastIntentSentMs >= MOVE_INTENT_INTERVAL_MS;
-		if (intentChanged || dueByCadence) {
-			if (this.net.getState() === "open") {
-				this.net.sendMove({ vx: v.vx, vy: v.vy });
-				this.lastIntentSentMs = nowMs;
-				this.lastSentVx = v.vx;
-				this.lastSentVy = v.vy;
+			// Rate-limit MovePayload emissions to the tick rate. We
+			// always send if the intent changed since the last emit so
+			// quick taps don't get coalesced away. Spectator sessions
+			// don't own an entity, so we never emit Move from them.
+			const intentChanged = v.vx !== this.lastSentVx || v.vy !== this.lastSentVy;
+			const dueByCadence  = nowMs - this.lastIntentSentMs >= MOVE_INTENT_INTERVAL_MS;
+			if (!this.spectator && (intentChanged || dueByCadence)) {
+				if (this.net.getState() === "open") {
+					this.net.sendMove({ vx: v.vx, vy: v.vy });
+					this.lastIntentSentMs = nowMs;
+					this.lastSentVx = v.vx;
+					this.lastSentVy = v.vy;
+				}
 			}
 		}
 
-		// Render.
+		// Render against the camera. Spectator + follow tracks the host
+		// (or whatever the server sets as the spectate target later);
+		// player + follow tracks the host's predicted position.
+		const target = { cx: this.state.hostX, cy: this.state.hostY };
+		const cam = this.camera.snapshot(target);
 		const entities: CachedEntity[] = [...this.mailbox.allEntities()];
 		this.renderer.updateFrame({
 			entities,
 			hostId: this.state.hostId,
 			hostX: this.state.hostX,
 			hostY: this.state.hostY,
+			cameraX: cam.cx,
+			cameraY: cam.cy,
 		});
 
 		// Drain queued AudioEvents into the Web Audio engine. Empty

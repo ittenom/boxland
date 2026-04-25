@@ -82,10 +82,13 @@ class TickClock implements Scheduler, LoopScheduler {
 }
 
 class StubRenderer implements RendererLike {
-	frames: Array<{ entities: number; hostId: bigint; hostX: number; hostY: number }> = [];
-	updateFrame(args: { entities: import("@net").CachedEntity[]; hostId: bigint; hostX: number; hostY: number }): void {
+	frames: Array<{ entities: number; hostId: bigint; hostX: number; hostY: number; cameraX: number; cameraY: number }> = [];
+	updateFrame(args: { entities: import("@net").CachedEntity[]; hostId: bigint; hostX: number; hostY: number; cameraX: number; cameraY: number }): void {
 		this.frames.push({
-			entities: args.entities.length, hostId: args.hostId, hostX: args.hostX, hostY: args.hostY,
+			entities: args.entities.length,
+			hostId: args.hostId,
+			hostX: args.hostX, hostY: args.hostY,
+			cameraX: args.cameraX, cameraY: args.cameraY,
 		});
 	}
 }
@@ -159,6 +162,29 @@ function makeLoop(): { loop: GameLoop; ws: { current: FakeWS | null }; clock: Ti
 		backoff: { baseMs: 100, factor: 2, maxMs: 1000, jitter: 0, maxAttempts: 0 },
 	});
 	const loop = new GameLoop({ config, renderer, mailbox, netClient: net, scheduler: clock });
+	return { loop, ws: wsRef, clock, renderer, net };
+}
+
+function makeSpectatorLoop(): { loop: GameLoop; ws: { current: FakeWS | null }; clock: TickClock; renderer: StubRenderer; net: NetClient } {
+	const clock = new TickClock();
+	const wsRef = { current: null as FakeWS | null };
+	const renderer = new StubRenderer();
+	const config: GameBootConfig = {
+		mapId: 1, mapName: "test", mapWidth: 64, mapHeight: 64,
+		wsURL: "ws://localhost/ws", accessToken: "tok",
+	};
+	const auth = (): AuthParams => ({
+		realm: Realm.Player, token: "tok", clientKind: ClientKind.Web, clientVersion: "test",
+	});
+	const mailbox = new Mailbox();
+	const net = new NetClient(config.wsURL, {
+		auth,
+		wsFactory: (u) => { const ws = new FakeWS(); ws.binaryType = "arraybuffer"; wsRef.current = ws; return ws; },
+		scheduler: clock,
+		mailbox,
+		backoff: { baseMs: 100, factor: 2, maxMs: 1000, jitter: 0, maxAttempts: 0 },
+	});
+	const loop = new GameLoop({ config, renderer, mailbox, netClient: net, scheduler: clock, spectator: true });
 	return { loop, ws: wsRef, clock, renderer, net };
 }
 
@@ -272,6 +298,69 @@ describe("GameLoop frame tick", () => {
 		// Mailbox.onDiff is sync; ack should already have been sent.
 		const after = ws.current!.sent.slice(start).map(decodeClientMsg);
 		expect(after.some((m) => m.verb === Verb.AckTick)).toBe(true);
+		loop.stop();
+	});
+});
+
+describe("GameLoop spectator mode", () => {
+	it("never emits Move payloads even with intent active", async () => {
+		const { loop, ws, clock } = makeSpectatorLoop();
+		loop.start();
+		ws.current!.open();
+		await Promise.resolve(); await Promise.resolve();
+		const start = ws.current!.sent.length;
+		loop.intent.setRight(true);
+		clock.advanceTo(120);
+		loop.tick(120);
+		const after = ws.current!.sent.slice(start).map(decodeClientMsg);
+		expect(after.some((m) => m.verb === Verb.Move)).toBe(false);
+		loop.stop();
+	});
+
+	it("registers a camera-toggle command bound to C", async () => {
+		const { loop } = makeSpectatorLoop();
+		loop.start();
+		expect(loop.bus.get("game.camera.toggle")).toBeDefined();
+		expect(loop.bus.bindings().get("C")).toBe("game.camera.toggle");
+		expect(loop.camera.getMode()).toBe("follow");
+		await loop.bus.dispatch("game.camera.toggle", undefined);
+		expect(loop.camera.getMode()).toBe("free-cam");
+		loop.stop();
+	});
+
+	it("free-cam pans the camera; intent does not predict the host", async () => {
+		const { loop, renderer, clock } = makeSpectatorLoop();
+		loop.start();
+		// Toggle into free-cam.
+		await loop.bus.dispatch("game.camera.toggle", undefined);
+		// Push intent right; prediction should NOT advance hostX, but
+		// camera should pan.
+		loop.intent.setRight(true);
+		clock.advanceTo(100);
+		loop.tick(100);
+		const f = renderer.frames[renderer.frames.length - 1]!;
+		expect(f.hostX).toBe(0); // host doesn't move in spectator
+		expect(f.cameraX).toBeGreaterThan(0); // camera panned
+		loop.stop();
+	});
+
+	it("follow mode tracks the host position via the camera", async () => {
+		const { loop, ws, renderer, clock } = makeSpectatorLoop();
+		loop.start();
+		ws.current!.open();
+		await Promise.resolve(); await Promise.resolve();
+		// Deliver a host-add diff so loop.state.hostId is non-zero.
+		ws.current!.deliver(buildDiff({
+			tick: 1n,
+			added: [{ id: 5n, x: 100, y: 200 }],
+			chunks: [{ chunkId: 0n, version: 1n }],
+		}));
+		clock.advanceTo(50);
+		loop.tick(50);
+		const f = renderer.frames[renderer.frames.length - 1]!;
+		// Spectator follow mode: cameraX/Y match the host snapshot.
+		expect(f.cameraX).toBe(f.hostX);
+		expect(f.cameraY).toBe(f.hostY);
 		loop.stop();
 	});
 });

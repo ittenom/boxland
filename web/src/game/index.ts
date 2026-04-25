@@ -25,6 +25,14 @@ export {
 
 export { mailboxAsWorld } from "./world";
 
+export {
+	GameCamera,
+	buildCameraToggleCommand,
+	CAMERA_TOGGLE_COMMAND_ID,
+	CAMERA_PAN_SUB_PER_MS,
+} from "./camera";
+export type { CameraMode, CameraPos } from "./camera";
+
 export type {
 	GameBootConfig,
 	LocalState,
