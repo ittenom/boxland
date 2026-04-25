@@ -106,6 +106,20 @@ func (o *ObjectStore) Put(ctx context.Context, key, contentType string, body io.
 	return nil
 }
 
+// Get streams an object back from storage. Caller must Close the returned
+// ReadCloser. Used by internal jobs that need to re-read content (e.g. the
+// palette-variant bake job re-reads the source PNG to apply a recipe).
+func (o *ObjectStore) Get(ctx context.Context, key string) (io.ReadCloser, error) {
+	out, err := o.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(o.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get object %q: %w", key, err)
+	}
+	return out.Body, nil
+}
+
 // PublicURL returns the CDN-fronted read URL for a key.
 func (o *ObjectStore) PublicURL(key string) string {
 	if o.publicBase == "" {

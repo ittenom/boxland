@@ -36,12 +36,29 @@ func openTestPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
+// resetDB wipes designer-realm rows AND every table that has a FK pointing
+// at designers (e.g. assets.created_by). Order matters: delete dependents
+// before parents. Errors are surfaced loudly so a future leak doesn't
+// silently corrupt subsequent tests.
 func resetDB(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	wipe := func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM designer_ws_tickets`)
-		_, _ = pool.Exec(context.Background(), `DELETE FROM designer_sessions`)
-		_, _ = pool.Exec(context.Background(), `DELETE FROM designers`)
+		ctx := context.Background()
+		for _, q := range []string{
+			`DELETE FROM asset_variants`,
+			`DELETE FROM palette_variants`,
+			`DELETE FROM asset_animations`,
+			`DELETE FROM assets`,
+			`DELETE FROM designer_ws_tickets`,
+			`DELETE FROM designer_sessions`,
+			`DELETE FROM publish_diffs`,
+			`DELETE FROM drafts`,
+			`DELETE FROM designers`,
+		} {
+			if _, err := pool.Exec(ctx, q); err != nil {
+				t.Logf("resetDB %s: %v", q, err)
+			}
+		}
 	}
 	wipe()
 	t.Cleanup(wipe)

@@ -1,50 +1,84 @@
-Tasks 37-44: command bus, collision corpus, PixiJS renderer
+Tasks 45-62: asset pipeline + Asset Manager UI + pixel editor + waveform
 
-Web shared modules complete; renderer ready to consume game state.
+Designers can now upload sprite/tile/audio assets, edit metadata via the
+generic form renderer, and the publish pipeline applies drafts atomically.
 
-  Command bus (37-38):
-    - CommandBus core (Map registry, undo/redo stack, hotkey + gamepad
-      bindings) with portable Mod/Ctrl alias on non-mac
-    - keys.ts: KeyboardEvent -> normalized "Mod+Shift+Z" combos, with
-      synonym handling (cmd, esc, space, etc.)
-    - persistence.ts: optional localStorage round-trip for user rebindings
-    - listeners.ts: opt-in DOM keydown + RAF-polled gamepad adapters
-    - CommandPalette (Cmd-K UI): fuzzy substring filter, ArrowUp/Down nav,
-      Enter dispatches, Esc closes; restores focus to opener; bound-hotkey
-      kbd badges next to each command
-    - 36 tests across 4 suites, all green
+  Schema (45-49):
+    - assets (single canonical table; kind discriminator + metadata_json)
+    - asset_animations (named tags within a sheet)
+    - palettes (with default retro palette seeded)
+    - palette_variants (recipes, source_to_dest_json)
+    - asset_variants (baked outputs; status pending/baked/failed)
 
-  Collision module + corpus (39-40):
-    - web/src/collision/move.ts: literal port of schemas/collision.md
-      pseudocode in int32 fixed-point sub-pixels (1 px = 256 sub)
-    - 32-vector cross-runtime corpus authored at
-      shared/test-vectors/collision.json covering: open ground, walk-into-
-      wall (all 4 directions), exact-meet, overshoot-clipped, slide along
-      walls, diagonal-into-corner (NW + SE), parallel-no-contact, channels,
-      collision-layer mask filtering (mismatch / overlap / partial / ghost),
-      edge-bit selectivity (only-east doesn't block westbound, etc.),
-      half-blockers, zero-motion idempotency
-    - just author-collision recipe regenerates the corpus from the same
-      `move()` implementation
-    - Same corpus will gate the Go server in task #78
+  Upload + parsers (50-55):
+    - Upload endpoint: multipart, sniff-based content-type validation,
+      content-addressed paths via sha256, idempotent dedup
+    - Importer registry with auto-detect + explicit-override dropdown
+    - 5 parsers: raw PNG manual-grid, generic strip (h/v/rows/cols),
+      Aseprite JSON sidecar (hash + array variants), TexturePacker JSON
+      (with filename-pattern animation inference), free-tex-packer JSON
+    - 32 unit + integration tests across the parser surface
 
-  PixiJS renderer (41-44):
-    - Pixi 8.5 with WebGL/WebGPU hybrid, nearest-neighbor everywhere
-    - viewport.ts: integer-scale layout math (largest k where worldView*k
-      fits the canvas, letterbox; fall back to k=1 if canvas too small)
-      + worldToScreen with sub-pixel snapping
-    - TextureCache: per-(asset, variant) base + per-frame texture cache
-      keyed for variant_id pre-baked palette swaps
-    - Scene: unified entity reconciliation -- tiles and free entities go
-      through one sprite pool; per-frame anim_id + anim_frame lookup; tint
-      via Pixi's RGB multiply (alpha-stripped from 0xRRGGBBAA wire form)
-    - LightingLayer: multiply-blend Container, one Graphics rect per cell
-    - DebugOverlay: AOI radius square, per-entity collision AABB stroke,
-      per-entity id labels in TinyUnicode; visible: false by default,
-      Sandbox flips it on
-    - 99 TS tests across 11 suites; covers viewport math, scene
-      reconciliation (creates/re-uses/removes sprites, z-order, resize),
-      variant + tint pipeline, lighting blend mode, debug overlay
-      visibility + label pooling
+  Image normalization + audio (56-57):
+    - 32x32 cell validation with structured warnings (non-square,
+      non-canonical, mixed sizes, empty sheet)
+    - WAV duration extraction in pure Go (RIFF chunk walker, no deps)
+    - OGG/MP3 detected via magic bytes; duration deferred (placeholder
+      metadata until later refinement)
 
-Cumulative: 12 Go packages + 11 TS suites = ~50 + 99 = ~149 tests, all green.
+  Bake job (58):
+    - Per-pixel color remap via NRGBA pixel pass
+    - Output keyed by sha256(source_path || sorted recipe entries) so
+      identical (source, recipe) inputs always land at the same path ->
+      idempotent across re-runs (Reused=true in result)
+    - Multiple recipes per asset bake in parallel via sync.WaitGroup
+    - Baked variants written to bytes.NewReader (seekable) so AWS SDK v2
+      stops complaining about MinIO PutObject without TLS+trailing-checksum
+
+  Asset as Artifact[T] (59):
+    - First concrete user of the publishing/artifact framework
+    - AssetDraft (name, tags) implements configurable.Configurable so the
+      generic form renderer drives the editor UI
+    - Handler.Publish reads previous values, applies update inside the
+      pipeline tx, computes structured diff for the publish_diffs row
+    - Wire-up: cmd/boxland registers the handler in publishRegistry
+
+  Asset Manager UI (60):
+    - assets.templ: list page with grid + tag/kind filter + search
+      (HTMX-driven; #assets-grid swaps in place on every input)
+    - asset_upload.templ: drag-drop modal with kind override
+    - asset_detail.templ: per-asset modal with the generic form renderer
+      driving the AssetDraft editor + delete button
+    - 7 server handlers (list, grid, upload-modal, upload, detail, delete,
+      draft) wired under /design/assets/*
+    - 5 integration tests covering the full HTML response shapes
+    - data-bx-action="open-upload" wired in boot.js so the toolbar button
+      fetches the modal via HTMX
+    - Asset card + drop zone + detail-pane CSS in pixel.css
+
+  Canvas2D pixel editor (61):
+    - PixelBuffer (ImageData wrapper, get/set/blit/toPNGBlob)
+    - PixelEditor binds tools to the shared CommandBus so undo/redo +
+      hotkey rebinding work uniformly
+    - Tools: pencil (B), eraser (E), color picker (I), undo (Mod+Z),
+      redo (Mod+Shift+Z)
+    - Stroke commit captures every changed pixel as one undo entry
+    - POST /design/assets/{id}/replace creates a NEW asset (immutable
+      content-addressed path; original kept) and triggers re-bake of any
+      palette variants the new asset already has
+    - 11 TS tests; deliberately uses a small jsdom shim for ImageData
+
+  Audio waveform (62):
+    - mountWaveform decodes via Web Audio API (handles WAV/OGG/MP3 in any
+      modern browser), downsamples to per-bin peak amplitudes, paints
+      chunky pixel bars in the brand accent color
+    - Falls back to a hairline placeholder on fetch/decode failure so the
+      UI never renders an empty box
+    - Waveform + native <audio controls loop preload=metadata> in
+      asset_detail.templ; 4 TS tests cover happy/fail/decode-fail paths
+
+Test totals: 13 Go packages, 116 TS tests across 15 suites, all green.
+
+Justfile: test-go now passes -p 1 so test packages run sequentially. The
+integration tests share a single dev Postgres; parallel package execution
+clobbered each other's data. Within-package parallelism is unaffected.

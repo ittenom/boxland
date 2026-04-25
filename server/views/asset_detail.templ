@@ -1,0 +1,105 @@
+package views
+
+import (
+	"fmt"
+
+	"boxland/server/internal/assets"
+	"boxland/server/internal/configurable"
+)
+
+// AssetDetailProps drives the per-asset editor pane (rendered as a modal
+// from the grid).
+type AssetDetailProps struct {
+	Asset     assets.Asset
+	PublicURL func(string) string
+}
+
+templ AssetDetail(p AssetDetailProps) {
+	<div class="bx-modal-backdrop" data-bx-dismissible role="dialog" aria-modal="true">
+		<div class="bx-modal">
+			<header class="bx-modal__header">
+				<h2 data-copy-slot="assets.detail.title">{ p.Asset.Name }</h2>
+				<button
+					type="button"
+					class="bx-btn bx-btn--ghost"
+					hx-on:click="this.closest('.bx-modal-backdrop').remove()"
+					aria-label="Close"
+				>
+					Esc
+				</button>
+			</header>
+			<div class="bx-modal__body bx-stack">
+				<div class="bx-row" style="align-items: flex-start;">
+					<div class="bx-asset-detail__preview" style="flex: 0 0 192px;">
+						if p.Asset.Kind == assets.KindAudio {
+							@AudioPreview(p.Asset, p.PublicURL)
+						} else if p.PublicURL != nil {
+							<img src={ p.PublicURL(p.Asset.ContentAddressedPath) } alt={ p.Asset.Name }/>
+						}
+					</div>
+					<div style="flex: 1;">
+						@Form(FormProps{
+							Action:      fmt.Sprintf("/design/assets/%d/draft", p.Asset.ID),
+							SubmitLabel: "Save draft",
+							HXTarget:    "#asset-draft-status",
+							Fields: assets.AssetDraft{}.Descriptor(),
+							Values: map[string]any{
+								"name": p.Asset.Name,
+								"tags": p.Asset.Tags,
+							},
+						})
+						<div id="asset-draft-status" aria-live="polite"></div>
+					</div>
+				</div>
+			</div>
+			<footer class="bx-modal__footer">
+				<button
+					type="button"
+					class="bx-btn bx-btn--danger"
+					hx-delete={ fmt.Sprintf("/design/assets/%d", p.Asset.ID) }
+					hx-confirm="Delete this asset? Variants and animation tags go with it."
+					hx-target="#assets-grid"
+					hx-swap="outerHTML"
+					hx-on:htmx:after-request="document.querySelector('.bx-modal-backdrop')?.remove()"
+					data-copy-slot="assets.detail.delete"
+				>
+					Delete
+				</button>
+			</footer>
+		</div>
+	</div>
+}
+
+// AudioPreview renders the chunky-pixel waveform plus playback controls.
+// The waveform decodes via Web Audio (in waveform.ts); playback uses the
+// browser's native <audio> element so we get loop / volume controls for
+// free without bespoke JS.
+templ AudioPreview(a assets.Asset, publicURL func(string) string) {
+	<div class="bx-panel bx-asset-detail__audio bx-stack-tight">
+		<canvas
+			class="bx-waveform"
+			data-bx-waveform={ publicURL(a.ContentAddressedPath) }
+			data-bins="160"
+			data-height="40"
+			width="160" height="40"
+			aria-label={ "Waveform for " + a.Name }
+		></canvas>
+		<audio
+			controls
+			loop
+			preload="metadata"
+			src={ publicURL(a.ContentAddressedPath) }
+			class="bx-audio-player"
+		>
+			Audio playback unsupported in this browser.
+		</audio>
+		<p class="bx-small bx-muted">
+			Format <code>{ a.OriginalFormat }</code>
+		</p>
+	</div>
+}
+
+// Compile-time guard that keeps the configurable import alive even when no
+// other file in this package references it. Kept tiny so removal is
+// obvious if descriptors move out of templates entirely.
+var _ = configurable.KindString

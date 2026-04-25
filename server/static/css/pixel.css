@@ -571,6 +571,85 @@ p, li {
 }
 
 
+/* -- Asset Manager ----------------------------------------------------- */
+.bx-asset-manager .bx-grid--auto { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+
+.bx-asset-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--bx-s2);
+    padding: var(--bx-s2);
+    background: var(--bx-bg-2);
+    border: var(--bx-px) solid var(--bx-line);
+    color: inherit;
+    text-decoration: none;
+    transition: border-color 0.05s steps(2);
+}
+.bx-asset-card:hover, .bx-asset-card:focus-visible {
+    border-color: var(--bx-line-hi);
+    text-decoration: none;
+}
+.bx-asset-card__thumb {
+    background: var(--bx-bg-1);
+    aspect-ratio: 1;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+}
+.bx-asset-card__thumb img {
+    max-width: 100%;
+    max-height: 100%;
+    image-rendering: pixelated;
+}
+.bx-asset-card__meta { display: flex; flex-direction: column; gap: var(--bx-s1); }
+.bx-asset-card__meta strong {
+    font-size: 14px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Upload modal drop zone */
+.bx-asset-drop {
+    border: var(--bx-px) dashed var(--bx-line);
+    background: var(--bx-bg-1);
+    padding: var(--bx-s5);
+    text-align: center;
+    color: var(--bx-fg-2);
+}
+.bx-asset-drop input[type=file] { margin-top: var(--bx-s2); }
+
+/* Asset detail modal */
+.bx-asset-detail__preview {
+    background: var(--bx-bg-1);
+    border: var(--bx-px) solid var(--bx-line);
+    padding: var(--bx-s2);
+    display: grid;
+    place-items: center;
+    aspect-ratio: 1;
+}
+.bx-asset-detail__preview img {
+    max-width: 100%; max-height: 100%; image-rendering: pixelated;
+}
+.bx-asset-detail__audio { padding: var(--bx-s3); width: 100%; }
+.bx-waveform {
+    display: block;
+    width: 100%;
+    max-width: 320px;
+    height: 80px;
+    background: var(--bx-bg-1);
+    border: var(--bx-px) solid var(--bx-line);
+    image-rendering: pixelated;
+}
+.bx-audio-player {
+    width: 100%;
+    max-width: 320px;
+    margin-top: var(--bx-s2);
+    /* Native audio control styling is browser-specific; we let it through
+       so designers get familiar transport buttons. */
+}
+
+
 /* -- Pixel scrollbar (Webkit; Firefox falls back to native — accepted) -- */
 .bx-scroll::-webkit-scrollbar              { width: var(--bx-s2); height: var(--bx-s2); }
 .bx-scroll::-webkit-scrollbar-track        { background: var(--bx-bg-1); border: var(--bx-px) solid var(--bx-line); }

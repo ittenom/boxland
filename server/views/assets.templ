@@ -1,0 +1,138 @@
+package views
+
+import (
+	"fmt"
+
+	"boxland/server/internal/assets"
+)
+
+// AssetsListProps drives the Asset Manager landing page.
+type AssetsListProps struct {
+	Items       []assets.Asset
+	ActiveKind  string // "" / "sprite" / "tile" / "audio"
+	Search      string
+	PublicURL   func(string) string // assets.Service.ObjectStore.PublicURL or fixture
+}
+
+templ AssetsList(p AssetsListProps) {
+	@Layout(LayoutProps{
+		Title:   "Assets",
+		Surface: "asset-manager",
+	}) {
+		<section class="bx-stack bx-asset-manager">
+			<header class="bx-row bx-row--apart">
+				<h1 data-copy-slot="assets.title">Assets</h1>
+				<div class="bx-row">
+					<button
+						type="button"
+						class="bx-btn bx-btn--primary"
+						data-copy-slot="assets.upload"
+						data-bx-action="open-upload"
+					>
+						Upload
+					</button>
+				</div>
+			</header>
+
+			@AssetsToolbar(p)
+
+			<div id="assets-grid" class="bx-grid bx-grid--auto" hx-target="this" hx-swap="outerHTML">
+				@AssetsGrid(p)
+			</div>
+		</section>
+
+		<div id="modal-host" data-copy-slot="assets.upload-host"></div>
+	}
+}
+
+// AssetsToolbar is the search + kind filter row. HTMX-driven so each
+// change refreshes #assets-grid in place.
+templ AssetsToolbar(p AssetsListProps) {
+	<form
+		class="bx-row"
+		hx-get="/design/assets/grid"
+		hx-target="#assets-grid"
+		hx-swap="outerHTML"
+		hx-trigger="input from:input changed delay:200ms, change from:select"
+	>
+		<input
+			type="search"
+			name="q"
+			value={ p.Search }
+			placeholder="Lorem ipsum search…"
+			class="bx-input"
+			style="max-width: 280px;"
+			data-copy-slot="assets.search.placeholder"
+		/>
+		<select name="kind" class="bx-select" style="max-width: 160px;">
+			<option value="" if p.ActiveKind == "" { selected }>All kinds</option>
+			<option value="sprite" if p.ActiveKind == "sprite" { selected }>Sprites</option>
+			<option value="tile"   if p.ActiveKind == "tile"   { selected }>Tiles</option>
+			<option value="audio"  if p.ActiveKind == "audio"  { selected }>Audio</option>
+		</select>
+	</form>
+}
+
+// AssetsGrid is the swappable inner of #assets-grid.
+templ AssetsGrid(p AssetsListProps) {
+	<div id="assets-grid" class="bx-grid bx-grid--auto" hx-target="this" hx-swap="outerHTML">
+		if len(p.Items) == 0 {
+			<p class="bx-muted" data-copy-slot="assets.empty">
+				Lorem ipsum dolor sit amet. No assets match the current filter — try
+				uploading or clearing the search.
+			</p>
+		}
+		for _, a := range p.Items {
+			@AssetCard(a, p.PublicURL)
+		}
+	</div>
+}
+
+// AssetCard is one tile in the grid. Click → loads the detail panel as a
+// modal via HTMX.
+templ AssetCard(a assets.Asset, publicURL func(string) string) {
+	<a
+		class="bx-asset-card bx-panel"
+		href={ templ.URL(fmt.Sprintf("/design/assets/%d", a.ID)) }
+		hx-get={ fmt.Sprintf("/design/assets/%d", a.ID) }
+		hx-target="#modal-host"
+		hx-swap="innerHTML"
+		hx-trigger="click"
+	>
+		<div class="bx-asset-card__thumb">
+			if a.Kind == assets.KindAudio {
+				@Icon("audio")
+			} else if publicURL != nil {
+				<img
+					src={ publicURL(a.ContentAddressedPath) }
+					alt={ a.Name }
+					loading="lazy"
+				/>
+			}
+		</div>
+		<div class="bx-asset-card__meta">
+			<strong>{ a.Name }</strong>
+			<div class="bx-row">
+				<span class={ "bx-badge bx-badge--" + kindBadgeClass(string(a.Kind)) }>
+					{ string(a.Kind) }
+				</span>
+				for _, t := range a.Tags {
+					<span class="bx-badge">{ t }</span>
+				}
+			</div>
+		</div>
+	</a>
+}
+
+func kindBadgeClass(kind string) string {
+	switch kind {
+	case "sprite":
+		return "info"
+	case "tile":
+		return "success"
+	case "audio":
+		return "warn"
+	default:
+		return "accent"
+	}
+}

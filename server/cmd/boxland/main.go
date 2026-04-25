@@ -21,13 +21,15 @@ import (
 	"syscall"
 	"time"
 
-	authdesigner "boxland/server/internal/auth/designer"
+	"boxland/server/internal/assets"
 	"boxland/server/internal/auth/csrf"
+	authdesigner "boxland/server/internal/auth/designer"
 	"boxland/server/internal/config"
 	designerhandlers "boxland/server/internal/designer"
 	"boxland/server/internal/httpserver"
 	"boxland/server/internal/logging"
 	"boxland/server/internal/persistence"
+	"boxland/server/internal/publishing/artifact"
 )
 
 const Version = "0.0.0-dev"
@@ -127,16 +129,30 @@ func runServe() error {
 	if err != nil {
 		return fmt.Errorf("object store: %w", err)
 	}
-	_ = objStore // wired into asset upload handlers in task #50
 	slog.Info("object store connected", "bucket", cfg.S3Bucket)
 
 	authSvc := authdesigner.New(pgPool)
+	assetSvc := assets.New(pgPool)
+	importerRegistry := assets.DefaultRegistry()
+	bakeJob := assets.NewBakeJob(pgPool, objStore, assetSvc)
+
+	publishRegistry := artifact.NewRegistry()
+	publishRegistry.Register(assets.NewHandler(assetSvc))
+	publishPipeline := artifact.NewPipeline(pgPool, publishRegistry)
+
 	csrfMW := csrf.Middleware(csrf.Config{
 		Secure:   cfg.Env == "prod",
 		SameSite: http.SameSiteStrictMode,
 	})
 
-	designerDeps := designerhandlers.Deps{Auth: authSvc}
+	designerDeps := designerhandlers.Deps{
+		Auth:            authSvc,
+		Assets:          assetSvc,
+		Importers:       importerRegistry,
+		BakeJob:         bakeJob,
+		PublishPipeline: publishPipeline,
+		ObjectStore:     objStore,
+	}
 	loadSessionMW := designerhandlers.LoadSession(designerDeps)
 	// Order matters: CSRF must run on every request to mint the cookie;
 	// LoadSession runs inside CSRF so handlers see both. Inside-out:

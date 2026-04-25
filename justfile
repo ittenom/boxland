@@ -38,7 +38,11 @@ test: test-go test-web
 
 [working-directory: 'server']
 test-go:
-    go test ./...
+    # -p 1 so test PACKAGES run sequentially. The integration tests share
+    # a single dev Postgres instance and would clobber each other under
+    # parallel execution. Within one package, individual tests still run
+    # sequentially by default (no t.Parallel() anywhere yet).
+    go test -p 1 ./...
 
 [working-directory: 'web']
 test-web:

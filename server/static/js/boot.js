@@ -48,7 +48,24 @@
     e.detail.headers["X-CSRF-Token"] = token;
   });
 
-  // 4. Telemetry breadcrumb.
+  // 4. data-bx-action shortcuts: declarative buttons that don't need a
+  //    bespoke handler, just a target URL+selector. Ergonomic enough for
+  //    one-off "open this modal" buttons in Templ.
+  document.body.addEventListener("click", (e) => {
+    const t = e.target instanceof HTMLElement ? e.target.closest("[data-bx-action]") : null;
+    if (!t) return;
+    const action = t.getAttribute("data-bx-action");
+    switch (action) {
+      case "open-upload":
+        // HTMX-friendly: fetch the upload modal HTML and swap it into #modal-host.
+        if (window.htmx) {
+          window.htmx.ajax("GET", "/design/assets/upload", { target: "#modal-host", swap: "innerHTML" });
+        }
+        break;
+    }
+  });
+
+  // 5. Telemetry breadcrumb.
   console.info(
     "[boxland] boot.js loaded; surface=%s",
     document.body.dataset.surface || "unknown"

@@ -1,0 +1,94 @@
+package views
+
+// AssetUploadModalProps is currently empty; we expose the props type so
+// future fields (e.g. recommended kind, max size) land without breaking
+// callers.
+type AssetUploadModalProps struct{}
+
+templ AssetUploadModal(p AssetUploadModalProps) {
+	<div class="bx-modal-backdrop" data-bx-dismissible role="dialog" aria-modal="true">
+		<div class="bx-modal">
+			<header class="bx-modal__header">
+				<h2 data-copy-slot="assets.upload.title">Upload an asset</h2>
+				<button
+					type="button"
+					class="bx-btn bx-btn--ghost"
+					hx-on:click="this.closest('.bx-modal-backdrop').remove()"
+					data-copy-slot="assets.upload.close"
+					aria-label="Close"
+				>
+					Esc
+				</button>
+			</header>
+			<div class="bx-modal__body">
+				<form
+					id="asset-upload-form"
+					hx-post="/design/assets/upload"
+					hx-encoding="multipart/form-data"
+					hx-target="#asset-upload-result"
+					hx-swap="innerHTML"
+					class="bx-stack"
+				>
+					<div
+						class="bx-asset-drop"
+						data-copy-slot="assets.upload.drop"
+					>
+						<p>Lorem ipsum: drop a PNG / WAV / OGG / MP3 here, or browse.</p>
+						<input
+							type="file"
+							name="file"
+							accept=".png,.wav,.ogg,.mp3"
+							required
+							class="bx-input"
+						/>
+					</div>
+					<div class="bx-field">
+						<label class="bx-label" data-copy-slot="assets.upload.kind">Kind</label>
+						<select name="kind" class="bx-select">
+							<option value="">Auto-detect from content</option>
+							<option value="sprite">Sprite</option>
+							<option value="tile">Tile</option>
+							<option value="audio">Audio</option>
+						</select>
+						<small class="bx-help" data-copy-slot="assets.upload.kind-help">
+							Lorem ipsum: PNG defaults to Sprite. Override here for tiles
+							so the renderer treats them correctly.
+						</small>
+					</div>
+					<div class="bx-row bx-row--end">
+						<button type="submit" class="bx-btn bx-btn--primary" data-copy-slot="assets.upload.submit">
+							Upload
+						</button>
+					</div>
+				</form>
+				<div id="asset-upload-result" aria-live="polite"></div>
+			</div>
+		</div>
+	</div>
+}
+
+// AssetUploadResult is rendered into #asset-upload-result after a
+// successful upload. The detail panel can swap into the modal next.
+type AssetUploadResultProps struct {
+	AssetID int64
+	Name    string
+	Kind    string
+	Reused  bool
+}
+
+templ AssetUploadResult(p AssetUploadResultProps) {
+	<div class={ "bx-toast bx-toast--" + uploadResultSeverity(p.Reused) }>
+		if p.Reused {
+			Reused existing asset <strong>{ p.Name }</strong>.
+		} else {
+			Uploaded <strong>{ p.Name }</strong> as { p.Kind }.
+		}
+	</div>
+}
+
+func uploadResultSeverity(reused bool) string {
+	if reused {
+		return "info"
+	}
+	return "success"
+}
