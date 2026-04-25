@@ -1,0 +1,132 @@
+// Boxland — input.fbs
+//
+// Client -> server messages. The wire model is:
+//   1. First message after WS open is `Auth` (carries realm + token).
+//   2. Every subsequent message is a `ClientMessage` envelope: a `Verb` enum
+//      plus a `payload` byte array (optionally containing a nested FlatBuffer
+//      table for verbs that need structured data).
+//
+// One dispatcher, one place to add verbs. Designer-only verbs are rejected
+// at the gateway unless `connection.realm == designer`. See PLAN.md §1
+// "WS message envelope" and §4l.
+
+include "world.fbs";
+
+namespace boxland.proto;
+
+file_identifier "BLIN";
+
+enum Realm:uint8 {
+    Player   = 0,
+    Designer = 1,
+}
+
+enum ClientKind:uint8 {
+    Web = 0,
+    IOS = 1,                        // reserved for v1.1
+}
+
+// First message after WebSocket open. The connection is realm-tagged from
+// this handshake; later verbs check the connection's realm, never the token.
+table Auth {
+    protocol_version:ProtocolVersion (required);
+    realm:Realm;
+    token:string (required);        // designer WS ticket or player JWT
+    client_kind:ClientKind;
+    client_version:string;
+}
+
+// Verb space. All post-auth client messages route through ClientMessage.
+// `None` (0) is a sentinel for uninitialized envelopes and is rejected by
+// the dispatcher; never send it.
+enum Verb:uint16 {
+    None            = 0,
+    JoinMap         = 1,
+    LeaveMap        = 2,
+    Move            = 3,
+    Interact        = 4,
+    Action          = 5,
+    Spectate        = 6,
+    DesignerCommand = 7,            // requires connection.realm == Designer
+    Heartbeat       = 8,
+    AckTick         = 9,            // reconnect handshake / backpressure
+}
+
+// Generic post-auth envelope. `payload` is verb-specific FlatBuffer bytes
+// (one of the tables below) or empty for verbs that need no payload.
+table ClientMessage {
+    verb:Verb;
+    payload:[ubyte];
+}
+
+// ---- Verb payload tables ----
+
+table JoinMapPayload {
+    map_id:uint32;
+    instance_hint:string;           // "" = default; "party:<id>" or "sandbox:<...>" for routed instances
+}
+
+table LeaveMapPayload {
+    map_id:uint32;
+}
+
+// Normalized intent vector. Server is authoritative on speed; clients only
+// declare direction.
+table MovePayload {
+    vx:int16;                       // -1000..1000, /1000 -> [-1.0, 1.0]
+    vy:int16;
+}
+
+table InteractPayload {
+    target_entity_id:uint64 = 0;    // 0 = no specific target
+    has_world_pos:bool = false;
+    world_x:int32 = 0;
+    world_y:int32 = 0;
+}
+
+table ActionPayload {
+    action_id:uint32;
+    data:[ubyte];                   // action-specific
+}
+
+enum SpectateMode:uint8 {
+    FreeCam       = 0,
+    FollowPlayer  = 1,
+}
+
+table SpectatePayload {
+    mode:SpectateMode;
+    target_player_id:uint64 = 0;    // for FollowPlayer
+}
+
+// Designer-only opcodes. Gateway rejects unless connection.realm == Designer
+// AND the designer's role permits the opcode. `None` (0) is a sentinel.
+enum DesignerOpcode:uint16 {
+    None               = 0,
+    SpawnAny           = 1,
+    SetResource        = 2,
+    TakeControlEntity  = 3,
+    ReleaseControl     = 4,
+    Teleport           = 5,
+    FreezeTick         = 6,
+    StepTick           = 7,
+    Godmode            = 8,
+}
+
+table DesignerCommandPayload {
+    opcode:DesignerOpcode;
+    data:[ubyte];                   // opcode-specific FlatBuffer
+}
+
+table HeartbeatPayload {
+    client_now_ms:uint64;
+}
+
+// Reconnect / backpressure: client tells server the last tick it has applied
+// so server can either resend Diffs since that tick or send a fresh Snapshot
+// (per PLAN.md §4l reconnect rule).
+table AckTickPayload {
+    last_applied_tick:uint64;
+}
+
+root_type ClientMessage;

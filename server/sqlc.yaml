@@ -1,0 +1,36 @@
+# sqlc generates type-safe Go for the hot-path queries (tick-loop reads,
+# WAL flush, AOI loads). Design-tool CRUD goes through internal/persistence/repo
+# instead. See PLAN.md §1 "Postgres access pattern".
+#
+# Run: just gen-sqlc
+#
+# Schema is derived from the embedded migrations so the generator sees the
+# same DDL the runtime applies.
+
+version: "2"
+sql:
+  - engine: "postgresql"
+    queries: "queries"
+    schema: "migrations"
+    gen:
+      go:
+        package: "hotpath"
+        out: "internal/persistence/hotpath"
+        sql_package: "pgx/v5"
+        emit_interface: false
+        emit_json_tags: false
+        emit_db_tags: true
+        emit_prepared_queries: false
+        emit_exact_table_names: false
+        emit_empty_slices: true
+        emit_pointers_for_null_types: true
+        # Stable type mappings; extended later as new column types appear.
+        overrides:
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"
+            nullable: false
+          - db_type: "uuid"
+            go_type:
+              type: "uuid.NullUUID"
+              import: "github.com/google/uuid"
+            nullable: true

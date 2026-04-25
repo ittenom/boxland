@@ -1,0 +1,54 @@
+// Boxland — design.fbs
+//
+// "Push to Live" broadcast: when a designer publishes drafts, the server
+// emits a LivePublish to every running map. The runtime applies the change
+// at the next tick boundary (between-tick atomic hot-swap; see PLAN.md §4j).
+//
+// LivePublish is also delivered to design-tool surfaces over the same WS
+// gateway via htmx-ext-ws (designer realm) so the publish-progress UI
+// updates without a parallel SSE channel.
+
+include "world.fbs";
+
+namespace boxland.proto;
+
+file_identifier "BLDS";
+
+enum ArtifactKind:uint8 {
+    Asset           = 0,
+    EntityType      = 1,
+    Map             = 2,
+    Palette         = 3,
+    PaletteVariant  = 4,
+    EdgeSocketType  = 5,
+    TileGroup       = 6,
+}
+
+enum DiffOp:uint8 {
+    Created  = 0,
+    Updated  = 1,
+    Deleted  = 2,
+}
+
+// One entry per artifact touched by a publish. structured_diff is a typed
+// FlatBuffer payload chosen by ArtifactKind; summary_line is the
+// human-readable line consumed by the diff preview modal (Lorem-Ipsum
+// placeholders are filled by humans later via copy.json).
+table ArtifactDiff {
+    kind:ArtifactKind;
+    artifact_id:uint64;
+    op:DiffOp;
+    summary_line:string;
+    structured_diff:[ubyte];        // kind-specific FlatBuffer
+}
+
+// Broadcast on Push-to-Live. Affected maps hot-swap at their next tick boundary.
+table LivePublish {
+    protocol_version:ProtocolVersion (required);
+    changeset_id:uint64;
+    published_at_ms:uint64;
+    affected_map_ids:[uint32];      // running instances of these maps must hot-swap
+    diffs:[ArtifactDiff];
+}
+
+root_type LivePublish;

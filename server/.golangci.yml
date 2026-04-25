@@ -1,0 +1,49 @@
+# Boxland — Go linter configuration.
+# Goals: catch bugs and antipatterns early, especially N+1 patterns and
+# tenant-isolation slips (per PLAN.md §10). Stays out of style debates.
+
+run:
+  timeout: 3m
+  tests: true
+
+# Generated FlatBuffers code is excluded from linting.
+issues:
+  exclude-dirs:
+    - internal/proto
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+        - gosec
+
+linters:
+  disable-all: true
+  enable:
+    # Correctness
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - bodyclose
+    - rowserrcheck
+    - sqlclosecheck
+    # Bug-prone patterns
+    - copyloopvar
+    - nilerr
+    - errorlint
+    - nilnil
+    # Hygiene
+    - misspell
+    - unconvert
+    - whitespace
+    # Security
+    - gosec
+
+linters-settings:
+  errorlint:
+    asserts: true
+    comparison: true
+  gosec:
+    excludes:
+      - G104  # already covered by errcheck

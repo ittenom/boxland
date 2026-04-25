@@ -1,0 +1,150 @@
+// Boxland — world.fbs
+//
+// Server -> client wire snapshots, per-tick diffs, and the internal MapState
+// used for both the Postgres warm-state blob and Redis Streams WAL entries.
+// One schema, three uses: wire Snapshot is a MapState clipped to the
+// subscriber's AOI; WAL entries are Mutations (small per-tick deltas) plus
+// periodic full-MapState checkpoints.
+//
+// Coordinate convention: positions and AABBs are int32 fixed-point sub-pixel
+// units (1 px = 256 units). See schemas/collision.md for the canonical
+// algorithm. Tile grid coordinates (gx, gy) are int32 tile indices.
+
+namespace boxland.proto;
+
+file_identifier "BLWO";
+file_extension  "blworld";
+
+// Bumped on incompatible changes. Server rejects mismatched majors.
+table ProtocolVersion {
+    major:uint16;
+    minor:uint16;
+}
+
+// Tile collision-shape preset enum. Edge bits are derived from this at load.
+// See PLAN.md §1 "Tile collision authoring" and §4f.
+enum CollisionShape:uint8 {
+    Open       = 0,
+    Solid      = 1,
+    WallNorth  = 2,
+    WallEast   = 3,
+    WallSouth  = 4,
+    WallWest   = 5,
+    DiagNE     = 6,
+    DiagNW     = 7,
+    DiagSE     = 8,
+    DiagSW     = 9,
+    HalfNorth  = 10,
+    HalfEast   = 11,
+    HalfSouth  = 12,
+    HalfWest   = 13,
+}
+
+// A single tile cell. Tiles are also entities in the ECS (with Tile + Static
+// components); this table is the on-wire / on-disk projection optimized for
+// chunked bulk loading.
+table Tile {
+    layer_id:uint16;
+    gx:int32;
+    gy:int32;
+    asset_id:uint32;
+    frame:uint16;
+    collision_shape:CollisionShape;
+    edge_collisions:uint8;          // 4 bits derived from collision_shape (N=1, E=2, S=4, W=8)
+    collision_layer_mask:uint32;
+}
+
+// Per-tick state for a free entity (non-tile, or tile being animated).
+table EntityState {
+    id:uint64;
+    type_id:uint32;
+    x:int32;                        // fixed-point sub-pixels
+    y:int32;
+    facing:uint8;                   // 0=N, 1=E, 2=S, 3=W (extensible)
+    anim_id:uint16;
+    anim_frame:uint16;
+    variant_id:uint16;              // palette variant; 0 = base art
+    tint:uint32;                    // 0xRRGGBBAA secondary multiply for runtime effects (0 = no tint)
+    nameplate:string;
+    hp_pct:uint8 = 255;             // 255 = no HP bar; 0..100 = percentage
+}
+
+// Lighting cell on the dedicated lighting layer.
+table LightingCell {
+    gx:int32;
+    gy:int32;
+    color:uint32;                   // 0xRRGGBBAA
+    intensity:uint8;                // 0..255
+}
+
+// Audio event, optionally positional.
+table AudioEvent {
+    sound_id:uint32;
+    has_position:bool = false;
+    x:int32 = 0;
+    y:int32 = 0;
+    volume:uint8 = 255;
+    pitch:int16 = 0;                // cents from base; 0 = unmodified
+}
+
+// Full state of a map instance. Used three ways:
+//   1. The wire Snapshot is a MapState clipped to the subscriber's AOI.
+//   2. Postgres `map_state.state_blob_fb` stores a serialized MapState.
+//   3. Redis WAL stores periodic full-MapState checkpoints alongside Mutations.
+table MapState {
+    protocol_version:ProtocolVersion (required);
+    map_id:uint32;
+    instance_id:string (required);  // "live:<map>:<n>" or "sandbox:<designer>:<map>"
+    tick:uint64;
+    tiles:[Tile];
+    entities:[EntityState];
+    lighting:[LightingCell];
+}
+
+// Per-tick diff broadcast to subscribers. Only chunks whose version vector
+// advanced are included; see PLAN.md §4h AOI section.
+table Diff {
+    protocol_version:ProtocolVersion (required);
+    map_id:uint32;
+    tick:uint64;
+    added:[EntityState];
+    removed:[uint64];
+    moved:[EntityState];            // EntityState rows for entities whose position/anim changed
+    tile_changes:[Tile];
+    lighting_changes:[LightingCell];
+    audio:[AudioEvent];
+}
+
+// ---- WAL ----
+//
+// Mutations are the unit of the Redis Streams WAL. One entry per applied
+// mutation; flushed to Postgres every 20 ticks (see PLAN.md §4k).
+
+enum MutationKind:uint8 {
+    EntitySpawn      = 0,
+    EntityDespawn    = 1,
+    EntityMove       = 2,
+    EntitySetAnim    = 3,
+    EntitySetVariant = 4,
+    EntitySetTint    = 5,
+    TilePlace        = 6,
+    TileRemove       = 7,
+    LightingSet      = 8,
+    ResourceAdjust   = 9,
+}
+
+table Mutation {
+    protocol_version:ProtocolVersion (required);
+    tick:uint64;
+    seq:uint32;                     // monotonic within a tick
+    kind:MutationKind;
+    entity_id:uint64 = 0;
+    type_id:uint32 = 0;
+    x:int32 = 0;
+    y:int32 = 0;
+    aux_u32:uint32 = 0;             // anim_id / variant_id / tint / etc., depending on kind
+    aux_u32_b:uint32 = 0;
+    payload:[ubyte];                // optional FlatBuffer-encoded extra payload for complex mutations
+}
+
+root_type MapState;

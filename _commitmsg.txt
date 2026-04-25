@@ -1,0 +1,35 @@
+Tasks 1-36: foundation, data layer, designer auth, design-tool shell
+
+Completes the first 25% of PLAN.md §13:
+
+  Foundation (1-19):
+    - Mono-repo skeleton, justfile (replaced make), gitignore
+    - FlatBuffers schemas: world, input, design + collision pseudocode
+    - Pinned flatc 24.3.25 docker image; just gen-fb pipeline
+    - docker-compose dev stack: Postgres / Redis / Mailpit / MinIO
+    - Go server: slog, pgx pool, rueidis, AWS SDK v2 S3 client, /healthz
+    - golang-migrate runner with embedded SQL migrations
+
+  Generic data layer (20-25):
+    - Repo[T] generic CRUD on pgx + squirrel (~150 lines)
+    - sqlc.yaml + queries/ scaffold; generated hotpath package
+    - configurable.FieldDescriptor + Configurable interface + DiffJSON
+    - publishing/artifact: Registry, Handler, Pipeline (atomic publish tx)
+    - drafts + publish_diffs migrations
+
+  Designer auth + shell (26-36):
+    - argon2id password hashing
+    - designers / designer_sessions / designer_ws_tickets migrations
+    - Service: signup, login, logout, change-password, sessions, WS tickets
+    - CSRF middleware (double-submit cookie + X-CSRF-Token header)
+    - LoadSession + RequireDesigner middleware
+    - Templ layout, login/signup pages, shell home, generic form renderer
+    - pixel-CSS design system (~600 lines, dark retro palette, no curves)
+    - 16x16 placeholder icon sprite sheet + Templ helper
+    - Vendored htmx 2.0.4, htmx-ext-ws 2.0.2, alpine 3.14.7
+    - boot.js: global Esc + CSRF header + nav-current tracking
+    - docs/hotkeys.md
+
+  Tests: 14 Go packages with tests, 3 TS test suites, all green.
+  End-to-end verified: signup -> shell -> logout flow works against the
+  live server with CSRF protection enforced.

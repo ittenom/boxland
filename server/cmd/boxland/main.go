@@ -1,0 +1,187 @@
+// Boxland — server entrypoint.
+//
+// Subcommands (filled in across PLAN.md tasks):
+//
+//	boxland serve     run the game server + design tools (task #16+)
+//	boxland migrate   run SQL migrations (task #17)
+//	boxland seed      seed the database with development fixtures
+//
+// Currently a placeholder so the module compiles end-to-end while the rest
+// of the server is built incrementally.
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	authdesigner "boxland/server/internal/auth/designer"
+	"boxland/server/internal/auth/csrf"
+	"boxland/server/internal/config"
+	designerhandlers "boxland/server/internal/designer"
+	"boxland/server/internal/httpserver"
+	"boxland/server/internal/logging"
+	"boxland/server/internal/persistence"
+)
+
+const Version = "0.0.0-dev"
+
+func main() {
+	logging.Init(logging.FromEnv())
+
+	if len(os.Args) < 2 {
+		usage()
+		os.Exit(2)
+	}
+	switch os.Args[1] {
+	case "serve":
+		if err := runServe(); err != nil {
+			slog.Error("serve failed", "err", err)
+			os.Exit(1)
+		}
+	case "migrate":
+		if err := runMigrate(os.Args[2:]); err != nil {
+			slog.Error("migrate failed", "err", err)
+			os.Exit(1)
+		}
+	case "seed":
+		slog.Info("subcommand not yet implemented", "cmd", "seed")
+		os.Exit(1)
+	case "version":
+		fmt.Println(Version)
+	default:
+		usage()
+		os.Exit(2)
+	}
+}
+
+func usage() {
+	fmt.Fprintln(os.Stderr, "usage: boxland <serve|migrate [up|down|version]|seed|version>")
+}
+
+func runMigrate(args []string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	sub := "up"
+	if len(args) > 0 {
+		sub = args[0]
+	}
+	switch sub {
+	case "up":
+		return persistence.MigrateUp(cfg.DatabaseURL)
+	case "down":
+		return persistence.MigrateDown(cfg.DatabaseURL)
+	case "version":
+		v, dirty, err := persistence.MigrateVersion(cfg.DatabaseURL)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("version=%d dirty=%v\n", v, dirty)
+		return nil
+	default:
+		return fmt.Errorf("unknown migrate subcommand: %s (want up|down|version)", sub)
+	}
+}
+
+func runServe() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	slog.Info("boxland starting", "version", Version, "env", cfg.Env, "addr", cfg.HTTPAddr)
+
+	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	pgPool, err := persistence.NewPool(rootCtx, cfg.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("postgres: %w", err)
+	}
+	defer pgPool.Close()
+	slog.Info("postgres connected")
+
+	redisCli, err := persistence.NewRedis(rootCtx, cfg.RedisURL)
+	if err != nil {
+		return fmt.Errorf("redis: %w", err)
+	}
+	defer redisCli.Close()
+	slog.Info("redis connected")
+
+	objStore, err := persistence.NewObjectStore(rootCtx, persistence.ObjectStoreConfig{
+		Endpoint:        cfg.S3Endpoint,
+		Region:          cfg.S3Region,
+		Bucket:          cfg.S3Bucket,
+		AccessKeyID:     cfg.S3AccessKeyID,
+		SecretAccessKey: cfg.S3SecretAccessKey,
+		UsePathStyle:    cfg.S3UsePathStyle,
+		PublicBaseURL:   cfg.S3PublicBaseURL,
+	})
+	if err != nil {
+		return fmt.Errorf("object store: %w", err)
+	}
+	_ = objStore // wired into asset upload handlers in task #50
+	slog.Info("object store connected", "bucket", cfg.S3Bucket)
+
+	authSvc := authdesigner.New(pgPool)
+	csrfMW := csrf.Middleware(csrf.Config{
+		Secure:   cfg.Env == "prod",
+		SameSite: http.SameSiteStrictMode,
+	})
+
+	designerDeps := designerhandlers.Deps{Auth: authSvc}
+	loadSessionMW := designerhandlers.LoadSession(designerDeps)
+	// Order matters: CSRF must run on every request to mint the cookie;
+	// LoadSession runs inside CSRF so handlers see both. Inside-out:
+	//   csrfMW( loadSessionMW( designer routes ) )
+	designerMount := csrfMW(loadSessionMW(designerhandlers.New(designerDeps)))
+
+	rootHandler := httpserver.New(
+		httpserver.Health{
+			Postgres: pgPool, // *pgxpool.Pool implements Ping(context.Context) error
+			Redis:    redisCli,
+		},
+		httpserver.Mounts{
+			Designer: designerMount,
+		},
+	)
+
+	srv := &http.Server{
+		Addr:              cfg.HTTPAddr,
+		Handler:           rootHandler,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	serverErr := make(chan error, 1)
+	go func() {
+		slog.Info("http listening", "addr", srv.Addr)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErr <- err
+		}
+		close(serverErr)
+	}()
+
+	select {
+	case <-rootCtx.Done():
+		slog.Info("shutdown signal received")
+	case err := <-serverErr:
+		if err != nil {
+			return fmt.Errorf("http: %w", err)
+		}
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Warn("http shutdown", "err", err)
+	}
+	slog.Info("boxland stopped")
+	return nil
+}

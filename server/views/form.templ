@@ -1,0 +1,308 @@
+package views
+
+import (
+	"fmt"
+	"strconv"
+
+	"boxland/server/internal/configurable"
+)
+
+// FormProps drives the generic form renderer.
+//   Action — POST URL (HTMX hx-post target).
+//   Fields — descriptor list from a Configurable.
+//   Values — current values keyed by FieldDescriptor.Key. Missing keys
+//            render as empty inputs (or the descriptor's Default).
+//   SubmitLabel — text on the primary button. Lorem-Ipsum if blank.
+type FormProps struct {
+	Action      string
+	Fields      []configurable.FieldDescriptor
+	Values      map[string]any
+	SubmitLabel string
+	HXTarget    string // optional: hx-target selector for the response swap
+}
+
+templ Form(p FormProps) {
+	<form
+		method="post"
+		action={ templ.URL(p.Action) }
+		hx-post={ p.Action }
+		hx-target={ p.HXTarget }
+		class="bx-stack bx-form"
+	>
+		for _, f := range p.Fields {
+			@FormField(f, p.Values[f.Key])
+		}
+		<div class="bx-row bx-row--end">
+			<button type="submit" class="bx-btn bx-btn--primary">
+				if p.SubmitLabel != "" {
+					{ p.SubmitLabel }
+				} else {
+					{ "Save" }
+				}
+			</button>
+		</div>
+	</form>
+}
+
+// FormField dispatches on FieldKind. New kinds added in configurable must
+// land a corresponding case here.
+templ FormField(f configurable.FieldDescriptor, value any) {
+	<div class="bx-field">
+		switch f.Kind {
+			case configurable.KindString:
+				@stringField(f, value)
+			case configurable.KindMultilineText:
+				@multilineField(f, value)
+			case configurable.KindInt:
+				@intField(f, value)
+			case configurable.KindFloat:
+				@floatField(f, value)
+			case configurable.KindBool:
+				@boolField(f, value)
+			case configurable.KindEnum:
+				@enumField(f, value)
+			case configurable.KindColor:
+				@colorField(f, value)
+			case configurable.KindAssetRef:
+				@refField(f, value, "asset")
+			case configurable.KindEntityTypeRef:
+				@refField(f, value, "entity-type")
+			case configurable.KindVec2:
+				@vec2Field(f, value)
+			case configurable.KindRange:
+				@rangeField(f, value)
+			case configurable.KindNested:
+				@nestedField(f, value)
+			case configurable.KindList:
+				@listField(f, value)
+			default:
+				<div class="bx-error-msg">
+					unknown field kind: { string(f.Kind) }
+				</div>
+		}
+		if f.Help != "" {
+			<small class="bx-help" data-copy-slot={ "help." + f.Key }>{ f.Help }</small>
+		}
+	</div>
+}
+
+// ---- per-kind partials -----------------------------------------------------
+
+templ labelEl(f configurable.FieldDescriptor) {
+	<label for={ "f-" + f.Key } class="bx-label" data-copy-slot={ "label." + f.Key }>
+		{ f.Label }
+		if f.Required {
+			<span aria-hidden="true" class="bx-muted"> *</span>
+		}
+	</label>
+}
+
+templ stringField(f configurable.FieldDescriptor, value any) {
+	@labelEl(f)
+	<input
+		class="bx-input"
+		type="text"
+		id={ "f-" + f.Key }
+		name={ f.Key }
+		value={ stringValue(value, f.Default) }
+		if f.Required { required }
+		if f.MaxLen > 0 { maxlength={ strconv.Itoa(f.MaxLen) } }
+		if f.Pattern != "" { pattern={ f.Pattern } }
+	/>
+}
+
+templ multilineField(f configurable.FieldDescriptor, value any) {
+	@labelEl(f)
+	<textarea
+		class="bx-textarea"
+		id={ "f-" + f.Key }
+		name={ f.Key }
+		if f.Required { required }
+		if f.MaxLen > 0 { maxlength={ strconv.Itoa(f.MaxLen) } }
+	>{ stringValue(value, f.Default) }</textarea>
+}
+
+templ intField(f configurable.FieldDescriptor, value any) {
+	@labelEl(f)
+	<input
+		class="bx-input"
+		type="number"
+		step="1"
+		id={ "f-" + f.Key }
+		name={ f.Key }
+		value={ stringValue(value, f.Default) }
+		if f.Required { required }
+		if f.Min != nil { min={ formatFloat(*f.Min) } }
+		if f.Max != nil { max={ formatFloat(*f.Max) } }
+	/>
+}
+
+templ floatField(f configurable.FieldDescriptor, value any) {
+	@labelEl(f)
+	<input
+		class="bx-input"
+		type="number"
+		step={ stepValue(f) }
+		id={ "f-" + f.Key }
+		name={ f.Key }
+		value={ stringValue(value, f.Default) }
+		if f.Required { required }
+		if f.Min != nil { min={ formatFloat(*f.Min) } }
+		if f.Max != nil { max={ formatFloat(*f.Max) } }
+	/>
+}
+
+templ boolField(f configurable.FieldDescriptor, value any) {
+	<label class="bx-row" for={ "f-" + f.Key }>
+		<input
+			class="bx-checkbox"
+			type="checkbox"
+			id={ "f-" + f.Key }
+			name={ f.Key }
+			value="true"
+			if isTruthy(value, f.Default) { checked }
+		/>
+		<span class="bx-label" data-copy-slot={ "label." + f.Key } style="margin: 0;">{ f.Label }</span>
+	</label>
+}
+
+templ enumField(f configurable.FieldDescriptor, value any) {
+	@labelEl(f)
+	<select class="bx-select" id={ "f-" + f.Key } name={ f.Key } if f.Required { required }>
+		for _, opt := range f.Options {
+			<option value={ opt.Value } if opt.Value == stringValue(value, f.Default) { selected }>
+				{ opt.Label }
+			</option>
+		}
+	</select>
+}
+
+templ colorField(f configurable.FieldDescriptor, value any) {
+	@labelEl(f)
+	<input
+		class="bx-input"
+		type="color"
+		id={ "f-" + f.Key }
+		name={ f.Key }
+		value={ stringValue(value, f.Default) }
+	/>
+}
+
+// refField renders a placeholder picker for asset/entity references.
+// The real picker UI (modal, search) lands when assets/entities exist
+// (tasks #60, #67). For now it's a typed text input so the form can be
+// exercised end-to-end.
+templ refField(f configurable.FieldDescriptor, value any, refKind string) {
+	@labelEl(f)
+	<input
+		class="bx-input"
+		type="text"
+		id={ "f-" + f.Key }
+		name={ f.Key }
+		value={ stringValue(value, f.Default) }
+		data-bx-ref={ refKind }
+		placeholder={ "Lorem ipsum " + refKind + " id" }
+	/>
+}
+
+templ vec2Field(f configurable.FieldDescriptor, value any) {
+	@labelEl(f)
+	<div class="bx-row">
+		<input class="bx-input" type="number" step="1" name={ f.Key + ".x" } value={ vec2Component(value, "x") } placeholder="x"/>
+		<input class="bx-input" type="number" step="1" name={ f.Key + ".y" } value={ vec2Component(value, "y") } placeholder="y"/>
+	</div>
+}
+
+templ rangeField(f configurable.FieldDescriptor, value any) {
+	@labelEl(f)
+	<div class="bx-row">
+		<input class="bx-input" type="number" name={ f.Key + ".min" } value={ vec2Component(value, "min") } placeholder="min"/>
+		<input class="bx-input" type="number" name={ f.Key + ".max" } value={ vec2Component(value, "max") } placeholder="max"/>
+	</div>
+}
+
+// nestedField recurses into Children with prefixed keys (key.child).
+templ nestedField(f configurable.FieldDescriptor, value any) {
+	<fieldset class="bx-panel">
+		<legend class="bx-panel__title" data-copy-slot={ "label." + f.Key }>{ f.Label }</legend>
+		for _, child := range f.Children {
+			@FormField(prefixed(f.Key, child), nestedValue(value, child.Key))
+		}
+	</fieldset>
+}
+
+// listField is the v1 placeholder. Real list editing (add/remove rows,
+// reorder) lands when an artifact actually needs it (probably automations
+// in task #127). For now we render the children once as a single-row list
+// so the descriptor exercises the renderer.
+templ listField(f configurable.FieldDescriptor, value any) {
+	<fieldset class="bx-panel">
+		<legend class="bx-panel__title" data-copy-slot={ "label." + f.Key }>{ f.Label }</legend>
+		<p class="bx-help" data-copy-slot={ "help." + f.Key + ".list-stub" }>
+			Lorem ipsum list editor — full UI in PLAN.md task #127.
+		</p>
+		for _, child := range f.Children {
+			@FormField(prefixed(f.Key+"[0]", child), nil)
+		}
+	</fieldset>
+}
+
+// ---- helpers (regular Go) --------------------------------------------------
+
+func stringValue(value, defVal any) string {
+	if value == nil {
+		value = defVal
+	}
+	if value == nil {
+		return ""
+	}
+	return fmt.Sprint(value)
+}
+
+func isTruthy(value, defVal any) bool {
+	if value == nil {
+		value = defVal
+	}
+	switch v := value.(type) {
+	case bool:
+		return v
+	case string:
+		b, _ := strconv.ParseBool(v)
+		return b
+	default:
+		return false
+	}
+}
+
+func formatFloat(v float64) string {
+	return strconv.FormatFloat(v, 'f', -1, 64)
+}
+
+func stepValue(f configurable.FieldDescriptor) string {
+	if f.Step != nil {
+		return formatFloat(*f.Step)
+	}
+	return "any"
+}
+
+func vec2Component(value any, key string) string {
+	if m, ok := value.(map[string]any); ok {
+		return stringValue(m[key], nil)
+	}
+	return ""
+}
+
+func nestedValue(value any, key string) any {
+	if m, ok := value.(map[string]any); ok {
+		return m[key]
+	}
+	return nil
+}
+
+// prefixed returns a copy of child with its key prefixed by parent (using a
+// dot). Used by nestedField so form names round-trip into nested JSON.
+func prefixed(parent string, child configurable.FieldDescriptor) configurable.FieldDescriptor {
+	out := child
+	out.Key = parent + "." + child.Key
+	return out
+}

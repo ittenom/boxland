@@ -1,0 +1,22 @@
+{
+  "name": "boxland-web",
+  "version": "0.0.0-dev",
+  "private": true,
+  "type": "module",
+  "description": "Boxland web — game client + Mapmaker + Sandbox + pixel editor + design-tool widgets.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vite": "^7.0.0",
+    "vitest": "^3.0.0",
+    "@vitest/coverage-v8": "^3.0.0",
+    "@types/node": "^22.10.0",
+    "flatbuffers": "^25.2.10"
+  }
+}

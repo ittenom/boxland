@@ -1,0 +1,47 @@
+package views
+
+import "fmt"
+
+// Icon names mirror server/static/icons/gen.go's IconNames slice.
+// Keep both lists aligned. Lookup is by name; an unknown name renders the
+// 0,0 cell so we get an obvious visual error instead of broken HTML.
+var iconIndex = map[string]int{
+	"home": 0, "asset": 1, "entity": 2, "map": 3, "sandbox": 4, "settings": 5, "search": 6, "filter": 7,
+	"plus": 8, "minus": 9, "edit": 10, "trash": 11, "duplicate": 12, "save": 13, "undo": 14, "redo": 15,
+	"play": 16, "pause": 17, "step": 18, "freeze": 19, "godmode": 20, "spawn": 21, "control": 22, "release": 23,
+	"layer": 24, "lighting": 25, "sprite": 26, "audio": 27, "palette": 28, "variant": 29, "bake": 30, "publish": 31,
+}
+
+const (
+	iconCellPx  = 16
+	iconSheetCols = 8
+)
+
+// Icon emits a 16x16 sprite slot from /static/icons/sprites.png. Use a
+// CSS class on the wrapping element to scale (`.bx-icon-2x`, etc.).
+templ Icon(name string) {
+	<span
+		class="bx-icon"
+		role="img"
+		aria-label={ name }
+		style={ iconBackground(name) }
+	></span>
+}
+
+// iconBackground returns the inline style that crops the sprite sheet to
+// the requested cell. Returns the 0,0 cell for unknown names so the bug
+// surfaces visually without crashing.
+func iconBackground(name string) string {
+	idx, ok := iconIndex[name]
+	if !ok {
+		idx = 0
+	}
+	col, row := idx%iconSheetCols, idx/iconSheetCols
+	x := -col * iconCellPx
+	y := -row * iconCellPx
+	return fmt.Sprintf(
+		"display:inline-block;width:%dpx;height:%dpx;background:url('/static/icons/sprites.png') %dpx %dpx no-repeat;image-rendering:pixelated;",
+		iconCellPx, iconCellPx, x, y,
+	)
+}
+

@@ -1,0 +1,41 @@
+package views
+
+import (
+	"boxland/server/internal/auth/designer"
+)
+
+// ShellProps drives the post-login landing page (the "home" of the design
+// tools). Real per-surface pages live in views/assets.templ etc.; this is
+// just the welcome stub for end-to-end auth verification.
+type ShellProps struct {
+	Designer *designer.Designer
+}
+
+templ ShellHome(p ShellProps) {
+	@Layout(LayoutProps{
+		Title:   "Boxland design tools",
+		Surface: "shell",
+	}) {
+		<section class="bx-panel">
+			<h1 data-copy-slot="shell.title">Welcome to Boxland</h1>
+			<p data-copy-slot="shell.lede">
+				Lorem ipsum dolor sit amet, consectetur adipiscing elit. Use the
+				navigation above to manage assets, entities, maps, and the live
+				sandbox. Press <kbd>Ctrl</kbd>+<kbd>K</kbd> to open the command
+				palette.
+			</p>
+			if p.Designer != nil {
+				<p class="bx-muted">
+					Logged in as <strong>{ p.Designer.Email }</strong>
+					&nbsp;
+					<span class="bx-badge bx-badge--accent">{ string(p.Designer.Role) }</span>
+				</p>
+			}
+			<form method="post" action="/design/logout" class="bx-row bx-row--end">
+				<button type="submit" class="bx-btn bx-btn--ghost" data-copy-slot="shell.logout">
+					Log out
+				</button>
+			</form>
+		</section>
+	}
+}

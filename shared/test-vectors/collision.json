@@ -1,0 +1,5 @@
+{
+  "$schema_version": 1,
+  "description": "Cross-runtime swept-AABB collision test vectors. Server (Go), web (TS), and at v1.1 iOS (Swift) must produce byte-identical resolved positions for every entry. See schemas/collision.md for the canonical pseudocode. All coordinates are in fixed-point sub-pixel units (1 px = 256 units).",
+  "vectors": []
+}

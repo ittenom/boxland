@@ -1,0 +1,44 @@
+# Build artifacts
+/server/boxland
+/server/boxland.exe
+/server/dist/
+/web/dist/
+/web/node_modules/
+/web/**/node_modules/
+/web/.vite/
+/web/**/.vite/
+
+# Generated FlatBuffers code (regenerated via `just gen-fb`)
+/server/internal/proto/
+/web/src/net/proto/
+
+# Generated sqlc code (regenerated via `just gen-sqlc`)
+/server/internal/persistence/hotpath/
+
+# Generated Templ code (regenerated via `just gen-templ`)
+/server/views/*_templ.go
+
+# Synced fonts (canonical copy lives in /shared/fonts/)
+/server/static/fonts/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# Environment
+.env
+.env.local
+*.log
+
+# Coverage
+coverage.out
+coverage.html
+
+# Go
+vendor/
+
+# Docker
+.docker-data/

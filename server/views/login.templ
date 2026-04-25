@@ -1,0 +1,87 @@
+package views
+
+// LoginProps drives both /design/login (login) and /design/signup (signup).
+// FormError is shown above the form when the previous attempt failed.
+type LoginProps struct {
+	Mode      string // "login" or "signup"
+	Email     string // pre-filled email (e.g. after a failed login)
+	FormError string // human-readable error from the previous attempt
+}
+
+templ LoginPage(p LoginProps) {
+	@Layout(LayoutProps{
+		Title:      titleFor(p.Mode),
+		Surface:    "designer-auth",
+		HideTopNav: true,
+	}) {
+		<section class="bx-panel" style="max-width: 400px; margin: var(--bx-s7) auto;">
+			<h1 data-copy-slot={ "auth." + p.Mode + ".title" }>{ titleFor(p.Mode) }</h1>
+			<p class="bx-muted" data-copy-slot={ "auth." + p.Mode + ".lede" }>
+				Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+			</p>
+			if p.FormError != "" {
+				<div class="bx-toast bx-toast--error" role="alert">{ p.FormError }</div>
+			}
+			<form method="post" class="bx-stack" action={ templ.URL(actionFor(p.Mode)) }>
+				<div class="bx-field">
+					<label for="email" class="bx-label" data-copy-slot="auth.email">Email</label>
+					<input
+						class="bx-input"
+						id="email"
+						name="email"
+						type="email"
+						autocomplete="email"
+						required
+						value={ p.Email }
+					/>
+				</div>
+				<div class="bx-field">
+					<label for="password" class="bx-label" data-copy-slot="auth.password">Password</label>
+					<input
+						class="bx-input"
+						id="password"
+						name="password"
+						type="password"
+						if p.Mode == "signup" { autocomplete="new-password" minlength="8" } else { autocomplete="current-password" }
+						required
+					/>
+				</div>
+				<div class="bx-row bx-row--apart">
+					if p.Mode == "login" {
+						<a href="/design/signup" class="bx-small" data-copy-slot="auth.create-account">
+							Create account
+						</a>
+					} else {
+						<a href="/design/login" class="bx-small" data-copy-slot="auth.have-account">
+							Have an account?
+						</a>
+					}
+					<button type="submit" class="bx-btn bx-btn--primary" data-copy-slot={ "auth." + p.Mode + ".submit" }>
+						{ submitLabelFor(p.Mode) }
+					</button>
+				</div>
+			</form>
+		</section>
+	}
+}
+
+func titleFor(mode string) string {
+	if mode == "signup" {
+		return "Create designer account"
+	}
+	return "Designer login"
+}
+
+func actionFor(mode string) string {
+	if mode == "signup" {
+		return "/design/signup"
+	}
+	return "/design/login"
+}
+
+func submitLabelFor(mode string) string {
+	if mode == "signup" {
+		return "Sign up"
+	}
+	return "Log in"
+}

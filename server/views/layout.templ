@@ -1,0 +1,61 @@
+// Package views holds Templ templates for the design-tool surfaces.
+//
+// All page-level templates wrap themselves in Layout for a consistent shell
+// (HTMX + Alpine + pixel-CSS, CSRF meta tag, surface tagging for the JS
+// boot script). Filenames starting with an underscore are conventional for
+// "partials" — kept lower-cased to match Templ's package conventions.
+package views
+
+import (
+	"boxland/server/internal/auth/csrf"
+)
+
+// LayoutProps configures the page chrome. Keep this small; page-specific
+// data goes in the children.
+type LayoutProps struct {
+	Title       string // browser tab + first heading
+	Surface     string // body data-surface, drives web/src/boot.ts dispatch
+	BodyClass   string // additional CSS class on <body>; optional
+	HideTopNav  bool   // login/signup pages set true
+}
+
+templ Layout(p LayoutProps) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+			<meta name="csrf-token" content={ csrf.Token(ctx) }/>
+			<title>{ p.Title } — Boxland</title>
+			<link rel="stylesheet" href="/static/css/pixel.css"/>
+			<script src="/static/vendor/htmx.min.js" defer></script>
+			<script src="/static/vendor/htmx-ext-ws.min.js" defer></script>
+			<script src="/static/vendor/alpine.min.js" defer></script>
+			<script src="/static/js/boot.js" type="module" defer></script>
+		</head>
+		<body data-surface={ p.Surface } class={ p.BodyClass }>
+			if !p.HideTopNav {
+				@TopNav()
+			}
+			<main class="bx-main">
+				{ children... }
+			</main>
+		</body>
+	</html>
+}
+
+// TopNav is the persistent top navigation. Stub now, fleshed out in task #34.
+templ TopNav() {
+	<nav class="bx-topnav" aria-label="Main navigation">
+		<ol>
+			<li><a href="/design/assets" data-copy-slot="nav.assets">Assets</a></li>
+			<li><a href="/design/entities" data-copy-slot="nav.entities">Entities</a></li>
+			<li><a href="/design/maps" data-copy-slot="nav.mapmaker">Mapmaker</a></li>
+			<li><a href="/design/sandbox" data-copy-slot="nav.sandbox">Sandbox</a></li>
+			<li><a href="/design/settings" data-copy-slot="nav.settings">Settings</a></li>
+		</ol>
+		<button type="button" class="bx-btn bx-btn--push" data-copy-slot="nav.push">
+			Push to Live
+		</button>
+	</nav>
+}
