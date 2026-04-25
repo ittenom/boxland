@@ -1,35 +1,50 @@
-Tasks 1-36: foundation, data layer, designer auth, design-tool shell
+Tasks 37-44: command bus, collision corpus, PixiJS renderer
 
-Completes the first 25% of PLAN.md §13:
+Web shared modules complete; renderer ready to consume game state.
 
-  Foundation (1-19):
-    - Mono-repo skeleton, justfile (replaced make), gitignore
-    - FlatBuffers schemas: world, input, design + collision pseudocode
-    - Pinned flatc 24.3.25 docker image; just gen-fb pipeline
-    - docker-compose dev stack: Postgres / Redis / Mailpit / MinIO
-    - Go server: slog, pgx pool, rueidis, AWS SDK v2 S3 client, /healthz
-    - golang-migrate runner with embedded SQL migrations
+  Command bus (37-38):
+    - CommandBus core (Map registry, undo/redo stack, hotkey + gamepad
+      bindings) with portable Mod/Ctrl alias on non-mac
+    - keys.ts: KeyboardEvent -> normalized "Mod+Shift+Z" combos, with
+      synonym handling (cmd, esc, space, etc.)
+    - persistence.ts: optional localStorage round-trip for user rebindings
+    - listeners.ts: opt-in DOM keydown + RAF-polled gamepad adapters
+    - CommandPalette (Cmd-K UI): fuzzy substring filter, ArrowUp/Down nav,
+      Enter dispatches, Esc closes; restores focus to opener; bound-hotkey
+      kbd badges next to each command
+    - 36 tests across 4 suites, all green
 
-  Generic data layer (20-25):
-    - Repo[T] generic CRUD on pgx + squirrel (~150 lines)
-    - sqlc.yaml + queries/ scaffold; generated hotpath package
-    - configurable.FieldDescriptor + Configurable interface + DiffJSON
-    - publishing/artifact: Registry, Handler, Pipeline (atomic publish tx)
-    - drafts + publish_diffs migrations
+  Collision module + corpus (39-40):
+    - web/src/collision/move.ts: literal port of schemas/collision.md
+      pseudocode in int32 fixed-point sub-pixels (1 px = 256 sub)
+    - 32-vector cross-runtime corpus authored at
+      shared/test-vectors/collision.json covering: open ground, walk-into-
+      wall (all 4 directions), exact-meet, overshoot-clipped, slide along
+      walls, diagonal-into-corner (NW + SE), parallel-no-contact, channels,
+      collision-layer mask filtering (mismatch / overlap / partial / ghost),
+      edge-bit selectivity (only-east doesn't block westbound, etc.),
+      half-blockers, zero-motion idempotency
+    - just author-collision recipe regenerates the corpus from the same
+      `move()` implementation
+    - Same corpus will gate the Go server in task #78
 
-  Designer auth + shell (26-36):
-    - argon2id password hashing
-    - designers / designer_sessions / designer_ws_tickets migrations
-    - Service: signup, login, logout, change-password, sessions, WS tickets
-    - CSRF middleware (double-submit cookie + X-CSRF-Token header)
-    - LoadSession + RequireDesigner middleware
-    - Templ layout, login/signup pages, shell home, generic form renderer
-    - pixel-CSS design system (~600 lines, dark retro palette, no curves)
-    - 16x16 placeholder icon sprite sheet + Templ helper
-    - Vendored htmx 2.0.4, htmx-ext-ws 2.0.2, alpine 3.14.7
-    - boot.js: global Esc + CSRF header + nav-current tracking
-    - docs/hotkeys.md
+  PixiJS renderer (41-44):
+    - Pixi 8.5 with WebGL/WebGPU hybrid, nearest-neighbor everywhere
+    - viewport.ts: integer-scale layout math (largest k where worldView*k
+      fits the canvas, letterbox; fall back to k=1 if canvas too small)
+      + worldToScreen with sub-pixel snapping
+    - TextureCache: per-(asset, variant) base + per-frame texture cache
+      keyed for variant_id pre-baked palette swaps
+    - Scene: unified entity reconciliation -- tiles and free entities go
+      through one sprite pool; per-frame anim_id + anim_frame lookup; tint
+      via Pixi's RGB multiply (alpha-stripped from 0xRRGGBBAA wire form)
+    - LightingLayer: multiply-blend Container, one Graphics rect per cell
+    - DebugOverlay: AOI radius square, per-entity collision AABB stroke,
+      per-entity id labels in TinyUnicode; visible: false by default,
+      Sandbox flips it on
+    - 99 TS tests across 11 suites; covers viewport math, scene
+      reconciliation (creates/re-uses/removes sprites, z-order, resize),
+      variant + tint pipeline, lighting blend mode, debug overlay
+      visibility + label pooling
 
-  Tests: 14 Go packages with tests, 3 TS test suites, all green.
-  End-to-end verified: signup -> shell -> logout flow works against the
-  live server with CSRF protection enforced.
+Cumulative: 12 Go packages + 11 TS suites = ~50 + 99 = ~149 tests, all green.

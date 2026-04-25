@@ -87,6 +87,14 @@ sync-fonts:
 gen-icons:
     go run -tags=iconsgen ./static/icons
 
+# Re-author /shared/test-vectors/collision.json by running each scenario
+# through the web `move` implementation. Only run when intentionally
+# rebuilding the cross-runtime corpus (rare); the file is hand-audited.
+[working-directory: 'web']
+author-collision:
+    npx tsx src/collision/_author_vectors.ts > ../shared/test-vectors/collision.json
+    @echo "Re-authored collision corpus."
+
 # Regenerate FlatBuffers Go + TS code from /schemas/ using the pinned flatc Docker image.
 gen-fb:
     @echo "Building pinned flatc image (cached on subsequent runs)..."

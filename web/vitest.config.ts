@@ -10,6 +10,9 @@ export default mergeConfig(
       globals: true,
       environment: "node",
       include: ["**/*.{test,spec}.ts"],
+      // _author_vectors.ts is a one-shot CLI used to regenerate the
+      // collision corpus; not a test, must not be auto-discovered.
+      exclude: ["**/_*.ts", "**/node_modules/**", "**/dist/**"],
       coverage: {
         provider: "v8",
         reporter: ["text", "html"],

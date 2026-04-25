@@ -1,5 +1,952 @@
 {
   "$schema_version": 1,
   "description": "Cross-runtime swept-AABB collision test vectors. Server (Go), web (TS), and at v1.1 iOS (Swift) must produce byte-identical resolved positions for every entry. See schemas/collision.md for the canonical pseudocode. All coordinates are in fixed-point sub-pixel units (1 px = 256 units).",
-  "vectors": []
+  "vectors": [
+    {
+      "name": "open_no_motion",
+      "world": {
+        "tiles": []
+      },
+      "entity": {
+        "aabb": [
+          1024,
+          1024,
+          2304,
+          1792
+        ],
+        "mask": 1
+      },
+      "delta": [
+        0,
+        0
+      ],
+      "expected_resolved_delta": [
+        0,
+        0
+      ]
+    },
+    {
+      "name": "open_walk_east_one_pixel",
+      "world": {
+        "tiles": []
+      },
+      "entity": {
+        "aabb": [
+          1024,
+          1024,
+          2304,
+          1792
+        ],
+        "mask": 1
+      },
+      "delta": [
+        256,
+        0
+      ],
+      "expected_resolved_delta": [
+        256,
+        0
+      ]
+    },
+    {
+      "name": "open_walk_west_two_pixels",
+      "world": {
+        "tiles": []
+      },
+      "entity": {
+        "aabb": [
+          1024,
+          1024,
+          2304,
+          1792
+        ],
+        "mask": 1
+      },
+      "delta": [
+        -512,
+        0
+      ],
+      "expected_resolved_delta": [
+        -512,
+        0
+      ]
+    },
+    {
+      "name": "open_walk_south",
+      "world": {
+        "tiles": []
+      },
+      "entity": {
+        "aabb": [
+          1024,
+          1024,
+          2304,
+          1792
+        ],
+        "mask": 1
+      },
+      "delta": [
+        0,
+        1024
+      ],
+      "expected_resolved_delta": [
+        0,
+        1024
+      ]
+    },
+    {
+      "name": "open_walk_diagonal_se",
+      "world": {
+        "tiles": []
+      },
+      "entity": {
+        "aabb": [
+          1024,
+          1024,
+          2304,
+          1792
+        ],
+        "mask": 1
+      },
+      "delta": [
+        768,
+        768
+      ],
+      "expected_resolved_delta": [
+        768,
+        768
+      ]
+    },
+    {
+      "name": "open_walk_diagonal_nw_subpixel",
+      "world": {
+        "tiles": []
+      },
+      "entity": {
+        "aabb": [
+          2560,
+          2560,
+          3840,
+          3328
+        ],
+        "mask": 1
+      },
+      "delta": [
+        -100,
+        -100
+      ],
+      "expected_resolved_delta": [
+        -100,
+        -100
+      ]
+    },
+    {
+      "name": "open_one_subpixel_step",
+      "world": {
+        "tiles": []
+      },
+      "entity": {
+        "aabb": [
+          1024,
+          1024,
+          2304,
+          1792
+        ],
+        "mask": 1
+      },
+      "delta": [
+        1,
+        0
+      ],
+      "expected_resolved_delta": [
+        1,
+        0
+      ]
+    },
+    {
+      "name": "wall_east_clear_short_step",
+      "world": {
+        "tiles": [
+          {
+            "gx": 1,
+            "gy": 0,
+            "edge_collisions": 8,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          0,
+          256,
+          1280,
+          1024
+        ],
+        "mask": 1
+      },
+      "delta": [
+        2048,
+        0
+      ],
+      "expected_resolved_delta": [
+        2048,
+        0
+      ]
+    },
+    {
+      "name": "wall_east_exact_meet",
+      "world": {
+        "tiles": [
+          {
+            "gx": 1,
+            "gy": 0,
+            "edge_collisions": 8,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          0,
+          256,
+          1280,
+          1024
+        ],
+        "mask": 1
+      },
+      "delta": [
+        6912,
+        0
+      ],
+      "expected_resolved_delta": [
+        6912,
+        0
+      ]
+    },
+    {
+      "name": "wall_east_overshoot_clipped",
+      "world": {
+        "tiles": [
+          {
+            "gx": 1,
+            "gy": 0,
+            "edge_collisions": 8,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          0,
+          256,
+          1280,
+          1024
+        ],
+        "mask": 1
+      },
+      "delta": [
+        10240,
+        0
+      ],
+      "expected_resolved_delta": [
+        6912,
+        0
+      ]
+    },
+    {
+      "name": "wall_west_overshoot_clipped",
+      "world": {
+        "tiles": [
+          {
+            "gx": -1,
+            "gy": 0,
+            "edge_collisions": 2,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          2560,
+          256,
+          3840,
+          1024
+        ],
+        "mask": 1
+      },
+      "delta": [
+        -12800,
+        0
+      ],
+      "expected_resolved_delta": [
+        -2560,
+        0
+      ]
+    },
+    {
+      "name": "wall_north_overshoot_clipped",
+      "world": {
+        "tiles": [
+          {
+            "gx": 0,
+            "gy": -1,
+            "edge_collisions": 4,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          256,
+          2048,
+          1536,
+          2816
+        ],
+        "mask": 1
+      },
+      "delta": [
+        0,
+        -7680
+      ],
+      "expected_resolved_delta": [
+        0,
+        -2048
+      ]
+    },
+    {
+      "name": "wall_south_overshoot_clipped",
+      "world": {
+        "tiles": [
+          {
+            "gx": 0,
+            "gy": 1,
+            "edge_collisions": 1,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          256,
+          0,
+          1536,
+          1024
+        ],
+        "mask": 1
+      },
+      "delta": [
+        0,
+        12800
+      ],
+      "expected_resolved_delta": [
+        0,
+        7168
+      ]
+    },
+    {
+      "name": "slide_along_east_wall_southward",
+      "world": {
+        "tiles": [
+          {
+            "gx": 1,
+            "gy": 0,
+            "edge_collisions": 8,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          0,
+          256,
+          1280,
+          1024
+        ],
+        "mask": 1
+      },
+      "delta": [
+        10240,
+        1280
+      ],
+      "expected_resolved_delta": [
+        6912,
+        1280
+      ]
+    },
+    {
+      "name": "slide_along_east_wall_northward",
+      "world": {
+        "tiles": [
+          {
+            "gx": 1,
+            "gy": 0,
+            "edge_collisions": 8,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          0,
+          1536,
+          1280,
+          2304
+        ],
+        "mask": 1
+      },
+      "delta": [
+        10240,
+        -768
+      ],
+      "expected_resolved_delta": [
+        6912,
+        -768
+      ]
+    },
+    {
+      "name": "slide_along_south_wall_eastward",
+      "world": {
+        "tiles": [
+          {
+            "gx": 0,
+            "gy": 1,
+            "edge_collisions": 1,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          256,
+          0,
+          1536,
+          1024
+        ],
+        "mask": 1
+      },
+      "delta": [
+        1024,
+        12800
+      ],
+      "expected_resolved_delta": [
+        1024,
+        7168
+      ]
+    },
+    {
+      "name": "parallel_to_south_wall_no_contact",
+      "world": {
+        "tiles": [
+          {
+            "gx": 0,
+            "gy": 1,
+            "edge_collisions": 1,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          256,
+          0,
+          1536,
+          1024
+        ],
+        "mask": 1
+      },
+      "delta": [
+        1024,
+        0
+      ],
+      "expected_resolved_delta": [
+        1024,
+        0
+      ]
+    },
+    {
+      "name": "diagonal_into_corner_se",
+      "world": {
+        "tiles": [
+          {
+            "gx": 1,
+            "gy": 0,
+            "edge_collisions": 8,
+            "collision_layer_mask": 1
+          },
+          {
+            "gx": 0,
+            "gy": 1,
+            "edge_collisions": 1,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          0,
+          0,
+          1280,
+          1024
+        ],
+        "mask": 1
+      },
+      "delta": [
+        12800,
+        12800
+      ],
+      "expected_resolved_delta": [
+        6912,
+        7168
+      ]
+    },
+    {
+      "name": "outside_corner_no_walls",
+      "world": {
+        "tiles": []
+      },
+      "entity": {
+        "aabb": [
+          256,
+          256,
+          1536,
+          1024
+        ],
+        "mask": 1
+      },
+      "delta": [
+        2560,
+        2560
+      ],
+      "expected_resolved_delta": [
+        2560,
+        2560
+      ]
+    },
+    {
+      "name": "diagonal_into_corner_nw",
+      "world": {
+        "tiles": [
+          {
+            "gx": -1,
+            "gy": 0,
+            "edge_collisions": 2,
+            "collision_layer_mask": 1
+          },
+          {
+            "gx": 0,
+            "gy": -1,
+            "edge_collisions": 4,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          2560,
+          2560,
+          3840,
+          3328
+        ],
+        "mask": 1
+      },
+      "delta": [
+        -12800,
+        -12800
+      ],
+      "expected_resolved_delta": [
+        -2560,
+        -2560
+      ]
+    },
+    {
+      "name": "channel_walks_east_blocked",
+      "world": {
+        "tiles": [
+          {
+            "gx": 1,
+            "gy": 0,
+            "edge_collisions": 8,
+            "collision_layer_mask": 1
+          },
+          {
+            "gx": -1,
+            "gy": 0,
+            "edge_collisions": 2,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          0,
+          256,
+          1280,
+          1024
+        ],
+        "mask": 1
+      },
+      "delta": [
+        2560,
+        0
+      ],
+      "expected_resolved_delta": [
+        2560,
+        0
+      ]
+    },
+    {
+      "name": "mask_mismatch_passes_through",
+      "world": {
+        "tiles": [
+          {
+            "gx": 1,
+            "gy": 0,
+            "edge_collisions": 8,
+            "collision_layer_mask": 2
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          0,
+          256,
+          1280,
+          1024
+        ],
+        "mask": 1
+      },
+      "delta": [
+        10240,
+        0
+      ],
+      "expected_resolved_delta": [
+        10240,
+        0
+      ]
+    },
+    {
+      "name": "mask_overlap_blocks",
+      "world": {
+        "tiles": [
+          {
+            "gx": 1,
+            "gy": 0,
+            "edge_collisions": 8,
+            "collision_layer_mask": 5
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          0,
+          256,
+          1280,
+          1024
+        ],
+        "mask": 4
+      },
+      "delta": [
+        10240,
+        0
+      ],
+      "expected_resolved_delta": [
+        6912,
+        0
+      ]
+    },
+    {
+      "name": "mask_filters_one_of_two",
+      "world": {
+        "tiles": [
+          {
+            "gx": 1,
+            "gy": 0,
+            "edge_collisions": 8,
+            "collision_layer_mask": 1
+          },
+          {
+            "gx": 2,
+            "gy": 0,
+            "edge_collisions": 8,
+            "collision_layer_mask": 2
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          0,
+          256,
+          1280,
+          1024
+        ],
+        "mask": 2
+      },
+      "delta": [
+        20480,
+        0
+      ],
+      "expected_resolved_delta": [
+        15104,
+        0
+      ]
+    },
+    {
+      "name": "ghost_entity_passes_everything",
+      "world": {
+        "tiles": [
+          {
+            "gx": 1,
+            "gy": 0,
+            "edge_collisions": 8,
+            "collision_layer_mask": 255
+          },
+          {
+            "gx": 0,
+            "gy": 1,
+            "edge_collisions": 1,
+            "collision_layer_mask": 255
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          0,
+          0,
+          1280,
+          1024
+        ],
+        "mask": 0
+      },
+      "delta": [
+        12800,
+        12800
+      ],
+      "expected_resolved_delta": [
+        12800,
+        12800
+      ]
+    },
+    {
+      "name": "edge_bit_selectivity_east_only",
+      "world": {
+        "tiles": [
+          {
+            "gx": 1,
+            "gy": 0,
+            "edge_collisions": 2,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          0,
+          256,
+          1280,
+          1024
+        ],
+        "mask": 1
+      },
+      "delta": [
+        10240,
+        0
+      ],
+      "expected_resolved_delta": [
+        10240,
+        0
+      ]
+    },
+    {
+      "name": "solid_tile_blocks_east_approach",
+      "world": {
+        "tiles": [
+          {
+            "gx": 1,
+            "gy": 0,
+            "edge_collisions": 15,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          0,
+          256,
+          1280,
+          1024
+        ],
+        "mask": 1
+      },
+      "delta": [
+        10240,
+        0
+      ],
+      "expected_resolved_delta": [
+        6912,
+        0
+      ]
+    },
+    {
+      "name": "north_edge_blocks_southbound",
+      "world": {
+        "tiles": [
+          {
+            "gx": 0,
+            "gy": 1,
+            "edge_collisions": 1,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          256,
+          0,
+          1536,
+          1024
+        ],
+        "mask": 1
+      },
+      "delta": [
+        0,
+        7680
+      ],
+      "expected_resolved_delta": [
+        0,
+        7168
+      ]
+    },
+    {
+      "name": "south_only_does_not_block_southbound",
+      "world": {
+        "tiles": [
+          {
+            "gx": 0,
+            "gy": 1,
+            "edge_collisions": 4,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          256,
+          0,
+          1536,
+          1024
+        ],
+        "mask": 1
+      },
+      "delta": [
+        0,
+        7680
+      ],
+      "expected_resolved_delta": [
+        0,
+        7680
+      ]
+    },
+    {
+      "name": "lower_half_blocker_below",
+      "world": {
+        "tiles": [
+          {
+            "gx": 0,
+            "gy": 1,
+            "edge_collisions": 1,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          256,
+          1024,
+          1536,
+          2048
+        ],
+        "mask": 1
+      },
+      "delta": [
+        0,
+        100
+      ],
+      "expected_resolved_delta": [
+        0,
+        100
+      ]
+    },
+    {
+      "name": "zero_motion_under_clutter",
+      "world": {
+        "tiles": [
+          {
+            "gx": 1,
+            "gy": 0,
+            "edge_collisions": 8,
+            "collision_layer_mask": 1
+          },
+          {
+            "gx": 0,
+            "gy": 1,
+            "edge_collisions": 1,
+            "collision_layer_mask": 1
+          },
+          {
+            "gx": -1,
+            "gy": 0,
+            "edge_collisions": 2,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          256,
+          256,
+          1536,
+          1024
+        ],
+        "mask": 1
+      },
+      "delta": [
+        0,
+        0
+      ],
+      "expected_resolved_delta": [
+        0,
+        0
+      ]
+    },
+    {
+      "name": "x_blocked_y_negative",
+      "world": {
+        "tiles": [
+          {
+            "gx": -1,
+            "gy": 0,
+            "edge_collisions": 2,
+            "collision_layer_mask": 1
+          }
+        ]
+      },
+      "entity": {
+        "aabb": [
+          1024,
+          1280,
+          2304,
+          2048
+        ],
+        "mask": 1
+      },
+      "delta": [
+        -12800,
+        -512
+      ],
+      "expected_resolved_delta": [
+        -1024,
+        -512
+      ]
+    }
+  ]
 }
