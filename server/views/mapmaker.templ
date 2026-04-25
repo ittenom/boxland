@@ -130,6 +130,93 @@ templ MapmakerToolbar(p MapmakerProps) {
 			}
 		</ol>
 	</section>
+
+	if p.Map.Mode == "procedural" {
+		@MapmakerProceduralPanel(p)
+	}
+}
+
+// MapmakerProceduralPanel is the WFC-driven procedural-mode controls
+// (PLAN.md §4g, task 112). Only rendered when the map's mode is
+// "procedural". Drives /design/maps/{id}/preview asynchronously; the
+// result overlays the canvas as a ghost layer.
+templ MapmakerProceduralPanel(p MapmakerProps) {
+	<script src="/static/js/mapmaker-procedural.js" defer></script>
+	<section class="bx-panel" data-bx-procedural data-map-id={ fmt.Sprintf("%d", p.Map.ID) }>
+		<h3 class="bx-panel__title" data-copy-slot="mapmaker.proc.title">Procedural</h3>
+		<p class="bx-small bx-muted" data-copy-slot="mapmaker.proc.help">
+			Lorem ipsum dolor: pick a seed, then Generate to preview a WFC
+			layout. Lock the seed to keep it; Reroll picks a new one.
+		</p>
+
+		<div class="bx-stack-tight">
+			<label class="bx-row" style="gap: 8px;">
+				<span class="bx-small">Seed</span>
+				<input
+					type="number"
+					class="bx-input bx-small"
+					data-bx-proc-seed
+					value={ fmt.Sprintf("%d", proceduralInitialSeed(p.Map)) }
+					min="0"
+					style="width: 140px; font-variant-numeric: tabular-nums;"
+				/>
+			</label>
+
+			<label class="bx-row" style="gap: 8px;">
+				<input type="checkbox" data-bx-proc-locked />
+				<span class="bx-small" data-copy-slot="mapmaker.proc.lock">Lock seed</span>
+			</label>
+
+			<div class="bx-row">
+				<button
+					type="button"
+					class="bx-btn bx-btn--primary bx-small"
+					data-bx-proc-generate
+					data-copy-slot="mapmaker.proc.generate"
+				>Generate</button>
+				<button
+					type="button"
+					class="bx-btn bx-btn--ghost bx-small"
+					data-bx-proc-reroll
+					title="Pick a new random seed and generate"
+					data-copy-slot="mapmaker.proc.reroll"
+				>Reroll</button>
+				<button
+					type="button"
+					class="bx-btn bx-btn--ghost bx-small"
+					data-bx-proc-clear
+					title="Hide the procedural ghost overlay"
+					data-copy-slot="mapmaker.proc.clear"
+				>Clear</button>
+			</div>
+
+			if p.Map.PersistenceMode == "persistent" {
+				<button
+					type="button"
+					class="bx-btn bx-btn--push bx-small"
+					data-bx-proc-commit
+					title="Persist the previewed layout to map_tiles. Replaces the base layer's existing tiles."
+					data-copy-slot="mapmaker.proc.commit"
+				>Commit to map</button>
+			} else {
+				<p class="bx-small bx-muted" data-copy-slot="mapmaker.proc.transient">
+					Lorem ipsum: this map is transient — the world regenerates from the seed every refresh window.
+				</p>
+			}
+
+			<p class="bx-small bx-muted" data-bx-proc-status aria-live="polite"></p>
+			<p class="bx-small" data-bx-proc-error role="alert" style="color: var(--bx-color-danger, #e6536b); display: none;"></p>
+		</div>
+	</section>
+}
+
+// proceduralInitialSeed returns the persisted seed, or 1 as a sensible
+// non-zero default so the first preview produces something deterministic.
+func proceduralInitialSeed(m maps.Map) int64 {
+	if m.Seed != nil {
+		return *m.Seed
+	}
+	return 1
 }
 
 templ toolButton(id, hotkey, label string) {

@@ -22,6 +22,7 @@ import (
 	"boxland/server/internal/entities"
 	"boxland/server/internal/entities/components"
 	mapsservice "boxland/server/internal/maps"
+	"boxland/server/internal/maps/wfc"
 	"boxland/server/internal/persistence"
 	"boxland/server/internal/publishing/artifact"
 	"boxland/server/views"
@@ -106,8 +107,10 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /design/maps/grid",     auth(getMapsGrid(d)))
 	mux.Handle("GET /design/maps/new",      auth(getMapNewModal(d)))
 	mux.Handle("POST /design/maps",         auth(postMapCreate(d)))
-	mux.Handle("GET /design/maps/{id}",     auth(getMapmakerPage(d)))
-	mux.Handle("DELETE /design/maps/{id}",  auth(deleteMap(d)))
+	mux.Handle("GET /design/maps/{id}",              auth(getMapmakerPage(d)))
+	mux.Handle("POST /design/maps/{id}/preview",     auth(postMapPreview(d)))
+	mux.Handle("POST /design/maps/{id}/materialize", auth(postMapMaterialize(d)))
+	mux.Handle("DELETE /design/maps/{id}",           auth(deleteMap(d)))
 
 	return mux
 }
@@ -1316,6 +1319,176 @@ func getMapmakerPage(d Deps) http.HandlerFunc {
 			Layers:             layers,
 			PaletteEntityTypes: palette,
 		}))
+	}
+}
+
+// previewRequest is the JSON body POSTed by the procedural-mode UI.
+// All fields are optional except seed (which defaults to 0); the map's
+// own width/height are used unless the body overrides them, so the
+// designer can preview a smaller region while iterating on the seed.
+type previewRequest struct {
+	Seed       uint64 `json:"seed"`
+	Width      int32  `json:"width,omitempty"`
+	Height     int32  `json:"height,omitempty"`
+	MaxReseeds int    `json:"max_reseeds,omitempty"`
+	Anchors    []struct {
+		X, Y         int32 `json:"x"`
+		EntityTypeID int64 `json:"entity_type_id"`
+	} `json:"anchors,omitempty"`
+}
+
+// previewResponse mirrors wfc.Region but uses snake_case keys for the
+// JS client. Cells are flat row-major to keep the payload small.
+type previewResponse struct {
+	Width       int32             `json:"width"`
+	Height      int32             `json:"height"`
+	TileSetSize int               `json:"tileset_size"`
+	Cells       []previewCellJSON `json:"cells"`
+}
+
+type previewCellJSON struct {
+	X            int32 `json:"x"`
+	Y            int32 `json:"y"`
+	EntityTypeID int64 `json:"entity_type_id"`
+}
+
+// postMapPreview returns a procedural WFC preview for the given map.
+// JSON in / JSON out — the Mapmaker JS overlays the result as a ghost
+// layer on the canvas. No mutation: the preview is purely read-only.
+func postMapPreview(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := pathID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		m, err := d.Maps.FindByID(r.Context(), id)
+		if err != nil {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+
+		var req previewRequest
+		if r.ContentLength > 0 {
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+		width := req.Width
+		if width <= 0 {
+			width = m.Width
+		}
+		height := req.Height
+		if height <= 0 {
+			height = m.Height
+		}
+
+		anchors := make([]wfc.Cell, 0, len(req.Anchors))
+		for _, a := range req.Anchors {
+			anchors = append(anchors, wfc.Cell{
+				X:          a.X,
+				Y:          a.Y,
+				EntityType: wfc.EntityTypeID(a.EntityTypeID),
+			})
+		}
+
+		res, err := d.Maps.GenerateProceduralPreview(r.Context(), mapsservice.ProceduralPreviewInput{
+			Width:      width,
+			Height:     height,
+			Seed:       req.Seed,
+			Anchors:    anchors,
+			MaxReseeds: req.MaxReseeds,
+		})
+		if err != nil {
+			switch {
+			case errors.Is(err, mapsservice.ErrNoTileKinds):
+				http.Error(w, "no tile-kind entity types in project; create some in the Entity Manager first", http.StatusUnprocessableEntity)
+			case errors.Is(err, wfc.ErrInvalidRegion):
+				http.Error(w, "invalid width/height", http.StatusBadRequest)
+			case errors.Is(err, wfc.ErrTooManyReseeds):
+				http.Error(w, "wfc could not satisfy constraints; try a different seed or relax anchors", http.StatusUnprocessableEntity)
+			default:
+				slog.Error("wfc preview", "err", err, "map_id", id)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+			}
+			return
+		}
+
+		out := previewResponse{
+			Width:       res.Region.Width,
+			Height:      res.Region.Height,
+			TileSetSize: res.TileSetSize,
+			Cells:       make([]previewCellJSON, 0, len(res.Region.Cells)),
+		}
+		for _, c := range res.Region.Cells {
+			out.Cells = append(out.Cells, previewCellJSON{
+				X: c.X, Y: c.Y, EntityTypeID: int64(c.EntityType),
+			})
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(w).Encode(out)
+	}
+}
+
+// materializeRequest commits a previewed procedural layout to the
+// map_tiles table. Only meaningful for procedural+persistent maps; the
+// service rejects other modes.
+type materializeRequest struct {
+	Seed    uint64 `json:"seed"`
+	LayerID int64  `json:"layer_id,omitempty"`
+}
+
+type materializeResponse struct {
+	TilesWritten int    `json:"tiles_written"`
+	LayerID      int64  `json:"layer_id"`
+	Seed         uint64 `json:"seed"`
+}
+
+func postMapMaterialize(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := pathID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		var req materializeRequest
+		if r.ContentLength > 0 {
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+		res, err := d.Maps.MaterializeProcedural(r.Context(), mapsservice.MaterializeProceduralInput{
+			MapID:   id,
+			Seed:    req.Seed,
+			LayerID: req.LayerID,
+		})
+		if err != nil {
+			switch {
+			case errors.Is(err, mapsservice.ErrMapNotFound):
+				http.Error(w, "not found", http.StatusNotFound)
+			case errors.Is(err, mapsservice.ErrNotProcedural),
+				errors.Is(err, mapsservice.ErrNotPersistent),
+				errors.Is(err, mapsservice.ErrNoBaseLayer),
+				errors.Is(err, mapsservice.ErrNoTileKinds):
+				http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+			case errors.Is(err, wfc.ErrInvalidRegion):
+				http.Error(w, "invalid map dimensions", http.StatusBadRequest)
+			case errors.Is(err, wfc.ErrTooManyReseeds):
+				http.Error(w, "wfc could not satisfy constraints; try a different seed", http.StatusUnprocessableEntity)
+			default:
+				slog.Error("wfc materialize", "err", err, "map_id", id)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+			}
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(w).Encode(materializeResponse{
+			TilesWritten: res.TilesWritten,
+			LayerID:      res.LayerID,
+			Seed:         res.Seed,
+		})
 	}
 }
 
