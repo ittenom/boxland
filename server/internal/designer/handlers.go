@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -55,7 +56,7 @@ type Deps struct {
 	// Automation editor wiring (PLAN.md §4i + §5d). The two registries
 	// drive the form renderer for triggers/actions; the service
 	// persists the AutomationSet under entity_automations.
-	Automations       *automations.Service
+	Automations        *automations.Service
 	AutomationTriggers *automations.Registry
 	AutomationActions  *automations.Registry
 
@@ -70,8 +71,8 @@ type Deps struct {
 	// Per-realm HUD layouts. The mapmaker HUD editor reads + mutates
 	// this; the publish-time validator cross-checks bindings against
 	// Flags + ActionGroups before allowing a save.
-	HUD            *hud.Repo
-	HUDWidgets     *hud.Registry
+	HUD        *hud.Repo
+	HUDWidgets *hud.Registry
 }
 
 // New returns an http.Handler with the designer routes mounted under
@@ -93,110 +94,111 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /design/ws-ticket", auth(postWSTicket(d)))
 
 	// Asset Manager surface (PLAN.md §5c).
-	mux.Handle("GET /design/assets",            auth(getAssetsList(d)))
-	mux.Handle("GET /design/assets/grid",       auth(getAssetsGrid(d)))
-	mux.Handle("GET /design/assets/upload",     auth(getAssetUploadModal(d)))
-	mux.Handle("POST /design/assets/upload",    auth(postAssetUpload(d)))
-	mux.Handle("GET /design/assets/{id}",       auth(getAssetDetail(d)))
-	mux.Handle("DELETE /design/assets/{id}",    auth(deleteAsset(d)))
-	mux.Handle("POST /design/assets/{id}/draft",   auth(postAssetDraft(d)))
+	mux.Handle("GET /design/assets", auth(getAssetsList(d)))
+	mux.Handle("GET /design/assets/grid", auth(getAssetsGrid(d)))
+	mux.Handle("GET /design/assets/blob/{id}", auth(getAssetBlob(d)))
+	mux.Handle("GET /design/assets/upload", auth(getAssetUploadModal(d)))
+	mux.Handle("POST /design/assets/upload", auth(postAssetUpload(d)))
+	mux.Handle("GET /design/assets/{id}", auth(getAssetDetail(d)))
+	mux.Handle("DELETE /design/assets/{id}", auth(deleteAsset(d)))
+	mux.Handle("POST /design/assets/{id}/draft", auth(postAssetDraft(d)))
 	mux.Handle("POST /design/assets/{id}/replace", auth(postAssetReplace(d)))
 	mux.Handle("POST /design/assets/{id}/promote-to-entity", auth(postAssetPromoteToEntity(d)))
-	mux.Handle("POST /design/assets/promote-bulk",            auth(postAssetPromoteBulk(d)))
-	mux.Handle("POST /design/assets/delete-bulk",             auth(postAssetDeleteBulk(d)))
+	mux.Handle("POST /design/assets/promote-bulk", auth(postAssetPromoteBulk(d)))
+	mux.Handle("POST /design/assets/delete-bulk", auth(postAssetDeleteBulk(d)))
 
 	// Entity Manager surface (PLAN.md §5d).
-	mux.Handle("GET /design/entities",                       auth(getEntitiesList(d)))
-	mux.Handle("GET /design/entities/grid",                  auth(getEntitiesGrid(d)))
-	mux.Handle("GET /design/entities/new",                   auth(getEntityNewModal(d)))
-	mux.Handle("POST /design/entities",                      auth(postEntityCreate(d)))
-	mux.Handle("GET /design/entities/{id}",                  auth(getEntityDetail(d)))
-	mux.Handle("DELETE /design/entities/{id}",               auth(deleteEntity(d)))
-	mux.Handle("POST /design/entities/{id}/draft",           auth(postEntityDraft(d)))
-	mux.Handle("POST /design/entities/{id}/duplicate",       auth(postEntityDuplicate(d)))
-	mux.Handle("POST /design/entities/delete-bulk",          auth(postEntityDeleteBulk(d)))
-	mux.Handle("POST /design/entities/tag-bulk",             auth(postEntityTagBulk(d)))
-	mux.Handle("POST /design/entities/{id}/components/add",  auth(postEntityComponentAdd(d)))
+	mux.Handle("GET /design/entities", auth(getEntitiesList(d)))
+	mux.Handle("GET /design/entities/grid", auth(getEntitiesGrid(d)))
+	mux.Handle("GET /design/entities/new", auth(getEntityNewModal(d)))
+	mux.Handle("POST /design/entities", auth(postEntityCreate(d)))
+	mux.Handle("GET /design/entities/{id}", auth(getEntityDetail(d)))
+	mux.Handle("DELETE /design/entities/{id}", auth(deleteEntity(d)))
+	mux.Handle("POST /design/entities/{id}/draft", auth(postEntityDraft(d)))
+	mux.Handle("POST /design/entities/{id}/duplicate", auth(postEntityDuplicate(d)))
+	mux.Handle("POST /design/entities/delete-bulk", auth(postEntityDeleteBulk(d)))
+	mux.Handle("POST /design/entities/tag-bulk", auth(postEntityTagBulk(d)))
+	mux.Handle("POST /design/entities/{id}/components/add", auth(postEntityComponentAdd(d)))
 	mux.Handle("POST /design/entities/{id}/components/{kind}", auth(postEntityComponentSave(d)))
 	mux.Handle("DELETE /design/entities/{id}/components/{kind}", auth(deleteEntityComponent(d)))
 
 	// Automation editor (PLAN.md §4i, §5d). Per-entity-type AutomationSet:
 	// add/save/delete one automation; the surface is rendered inline on
 	// the entity-detail page.
-	mux.Handle("POST /design/entities/{id}/automations/add",          auth(postAutomationAdd(d)))
-	mux.Handle("POST /design/entities/{id}/automations/{idx}",        auth(postAutomationSave(d)))
-	mux.Handle("DELETE /design/entities/{id}/automations/{idx}",      auth(deleteAutomation(d)))
+	mux.Handle("POST /design/entities/{id}/automations/add", auth(postAutomationAdd(d)))
+	mux.Handle("POST /design/entities/{id}/automations/{idx}", auth(postAutomationSave(d)))
+	mux.Handle("DELETE /design/entities/{id}/automations/{idx}", auth(deleteAutomation(d)))
 	mux.Handle("POST /design/entities/{id}/automations/{idx}/actions/add", auth(postAutomationActionAdd(d)))
 	mux.Handle("DELETE /design/entities/{id}/automations/{idx}/actions/{aIdx}", auth(deleteAutomationAction(d)))
 
 	// Edge sockets surface (PLAN.md §4e + §5d).
-	mux.Handle("GET /design/sockets",         auth(getSocketsList(d)))
-	mux.Handle("POST /design/sockets",        auth(postSocketCreate(d)))
+	mux.Handle("GET /design/sockets", auth(getSocketsList(d)))
+	mux.Handle("POST /design/sockets", auth(postSocketCreate(d)))
 	mux.Handle("DELETE /design/sockets/{id}", auth(deleteSocket(d)))
 
 	// Tile groups surface (PLAN.md §4e + §5d).
-	mux.Handle("GET /design/tile-groups",                auth(getTileGroupsList(d)))
-	mux.Handle("POST /design/tile-groups",               auth(postTileGroupCreate(d)))
-	mux.Handle("GET /design/tile-groups/{id}",           auth(getTileGroupDetail(d)))
-	mux.Handle("DELETE /design/tile-groups/{id}",        auth(deleteTileGroup(d)))
-	mux.Handle("POST /design/tile-groups/{id}/layout",   auth(postTileGroupLayout(d)))
+	mux.Handle("GET /design/tile-groups", auth(getTileGroupsList(d)))
+	mux.Handle("POST /design/tile-groups", auth(postTileGroupCreate(d)))
+	mux.Handle("GET /design/tile-groups/{id}", auth(getTileGroupDetail(d)))
+	mux.Handle("DELETE /design/tile-groups/{id}", auth(deleteTileGroup(d)))
+	mux.Handle("POST /design/tile-groups/{id}/layout", auth(postTileGroupLayout(d)))
 
 	// Mapmaker (PLAN.md §5e). Painting is over WS (DesignerCommand
 	// PlaceTiles/EraseTiles/PlaceLighting); these HTTP routes only
 	// handle list + create + detail + delete.
-	mux.Handle("GET /design/maps",          auth(getMapsList(d)))
-	mux.Handle("GET /design/maps/grid",     auth(getMapsGrid(d)))
-	mux.Handle("GET /design/maps/new",      auth(getMapNewModal(d)))
-	mux.Handle("POST /design/maps",         auth(postMapCreate(d)))
-	mux.Handle("GET /design/maps/{id}",              auth(getMapmakerPage(d)))
-	mux.Handle("POST /design/maps/{id}/preview",     auth(postMapPreview(d)))
+	mux.Handle("GET /design/maps", auth(getMapsList(d)))
+	mux.Handle("GET /design/maps/grid", auth(getMapsGrid(d)))
+	mux.Handle("GET /design/maps/new", auth(getMapNewModal(d)))
+	mux.Handle("POST /design/maps", auth(postMapCreate(d)))
+	mux.Handle("GET /design/maps/{id}", auth(getMapmakerPage(d)))
+	mux.Handle("POST /design/maps/{id}/preview", auth(postMapPreview(d)))
 	mux.Handle("POST /design/maps/{id}/materialize", auth(postMapMaterialize(d)))
-	mux.Handle("DELETE /design/maps/{id}",           auth(deleteMap(d)))
-	mux.Handle("GET /design/maps/{id}/settings",     auth(getMapSettingsModal(d)))
-	mux.Handle("POST /design/maps/{id}/draft",       auth(postMapDraft(d)))
+	mux.Handle("DELETE /design/maps/{id}", auth(deleteMap(d)))
+	mux.Handle("GET /design/maps/{id}/settings", auth(getMapSettingsModal(d)))
+	mux.Handle("POST /design/maps/{id}/draft", auth(postMapDraft(d)))
 	mux.Handle("POST /design/maps/{id}/public-toggle", auth(postMapPublicToggle(d)))
 	mux.Handle("POST /design/maps/{mapID}/layers/{layerID}/y-sort", auth(postMapLayerYSortToggle(d)))
 
 	// Per-realm HUD editor (PLAN.md research §P1 #7 + Todo 5).
 	// Edits land on maps.hud_layout_json directly (no draft staging
 	// for v1 — same pattern as map_tiles and lighting cells).
-	mux.Handle("GET /design/maps/{id}/hud",                              auth(getMapHUDPage(d)))
-	mux.Handle("POST /design/maps/{id}/hud/widgets",                     auth(postHUDWidgetAdd(d)))
-	mux.Handle("GET /design/maps/{id}/hud/widgets/{anchor}/{order}",     auth(getHUDWidgetForm(d)))
-	mux.Handle("POST /design/maps/{id}/hud/widgets/{anchor}/{order}",    auth(postHUDWidgetSave(d)))
-	mux.Handle("DELETE /design/maps/{id}/hud/widgets/{anchor}/{order}",  auth(deleteHUDWidget(d)))
+	mux.Handle("GET /design/maps/{id}/hud", auth(getMapHUDPage(d)))
+	mux.Handle("POST /design/maps/{id}/hud/widgets", auth(postHUDWidgetAdd(d)))
+	mux.Handle("GET /design/maps/{id}/hud/widgets/{anchor}/{order}", auth(getHUDWidgetForm(d)))
+	mux.Handle("POST /design/maps/{id}/hud/widgets/{anchor}/{order}", auth(postHUDWidgetSave(d)))
+	mux.Handle("DELETE /design/maps/{id}/hud/widgets/{anchor}/{order}", auth(deleteHUDWidget(d)))
 	mux.Handle("POST /design/maps/{id}/hud/widgets/{anchor}/{order}/move", auth(postHUDWidgetMove(d)))
-	mux.Handle("POST /design/maps/{id}/hud/anchors/{anchor}",            auth(postHUDStackMetadata(d)))
+	mux.Handle("POST /design/maps/{id}/hud/anchors/{anchor}", auth(postHUDStackMetadata(d)))
 
 	// Authored-mode painting endpoints. JSON in / out. The design
 	// console's mapmaker JS pumps brush strokes through these; the
 	// runtime still loads via the same map_tiles rows on next sandbox
 	// or push-to-live (no WS required for the editor view itself).
-	mux.Handle("GET /design/maps/{id}/tiles",       auth(getMapTiles(d)))
-	mux.Handle("POST /design/maps/{id}/tiles",      auth(postMapTiles(d)))
-	mux.Handle("DELETE /design/maps/{id}/tiles",    auth(deleteMapTiles(d)))
+	mux.Handle("GET /design/maps/{id}/tiles", auth(getMapTiles(d)))
+	mux.Handle("POST /design/maps/{id}/tiles", auth(postMapTiles(d)))
+	mux.Handle("DELETE /design/maps/{id}/tiles", auth(deleteMapTiles(d)))
 
 	// Push-to-Live (PLAN.md §132 + §134). The preview returns the
 	// diffs that WOULD land if the user confirmed the push; the
 	// post commits the publish + fires the post-commit hooks.
-	mux.Handle("GET /design/publish/preview",  auth(getPublishPreview(d)))
-	mux.Handle("POST /design/publish",         auth(postPublish(d)))
+	mux.Handle("GET /design/publish/preview", auth(getPublishPreview(d)))
+	mux.Handle("POST /design/publish", auth(postPublish(d)))
 
 	// Sandbox (PLAN.md §131). Map picker + game-view shell pre-
 	// configured with a sandbox: instance id + designer WS ticket.
-	mux.Handle("GET /design/sandbox",                 auth(getSandboxIndex(d)))
-	mux.Handle("GET /design/sandbox/launch/{id}",     auth(getSandboxLaunch(d)))
+	mux.Handle("GET /design/sandbox", auth(getSandboxIndex(d)))
+	mux.Handle("GET /design/sandbox/launch/{id}", auth(getSandboxLaunch(d)))
 
 	// Shared ref pickers (PLAN.md §5d). One generic "choose an asset /
 	// entity" modal that any form's KindAssetRef / KindEntityTypeRef
 	// field opens via HTMX. Tag filters in the querystring narrow the
 	// list (e.g. tags=sprite for a sprite-only field).
-	mux.Handle("GET /design/picker/assets",   auth(getPickerAssets(d)))
+	mux.Handle("GET /design/picker/assets", auth(getPickerAssets(d)))
 	mux.Handle("GET /design/picker/entities", auth(getPickerEntities(d)))
 	// Bulk name lookup so refField can replace "currently #5" with
 	// "asset name (#5)" without one fetch per field. boot.js batches
 	// every visible refField with a non-zero id into a single call.
-	mux.Handle("GET /design/picker/lookup",   auth(getPickerLookup(d)))
+	mux.Handle("GET /design/picker/lookup", auth(getPickerLookup(d)))
 
 	// Settings (PLAN.md §5g + §6h). Page is rendered server-side via
 	// Templ; the client uses the GET/PUT JSON endpoints to sync. The
@@ -213,8 +215,8 @@ func New(d Deps) http.Handler {
 				return settings.RealmDesigner, ds.ID, true
 			},
 		}
-		mux.Handle("GET /design/settings/me",  auth(settingsHandlers.Get))
-		mux.Handle("PUT /design/settings/me",  auth(settingsHandlers.Put))
+		mux.Handle("GET /design/settings/me", auth(settingsHandlers.Get))
+		mux.Handle("PUT /design/settings/me", auth(settingsHandlers.Put))
 	}
 
 	return mux
@@ -560,10 +562,39 @@ func getAssetsList(d Deps) http.HandlerFunc {
 			Items:        items,
 			ActiveKind:   string(opts.Kind),
 			Search:       opts.Search,
-			PublicURL:    d.ObjectStore.PublicURL,
+			PublicURL:    assetPublicURLFunc(items),
 			UsageByID:    usage,
 			ActiveFilter: filter,
 		}))
+	}
+}
+
+// getAssetBlob serves designer-visible asset bytes from the same origin
+// as the design tool. This keeps previews and the Mapmaker canvas out of
+// MinIO/CDN CORS trouble while still requiring the designer session.
+func getAssetBlob(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := assetIDFromPath(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		a, err := d.Assets.FindByID(r.Context(), id)
+		if err != nil {
+			http.Error(w, "asset not found", http.StatusNotFound)
+			return
+		}
+		body, err := d.ObjectStore.Get(r.Context(), a.ContentAddressedPath)
+		if err != nil {
+			slog.Warn("asset blob", "err", err, "id", id)
+			http.Error(w, "asset unavailable", http.StatusBadGateway)
+			return
+		}
+		defer body.Close()
+
+		w.Header().Set("Cache-Control", "private, max-age=300")
+		w.Header().Set("Content-Type", contentTypeForAsset(*a))
+		_, _ = io.Copy(w, body)
 	}
 }
 
@@ -600,6 +631,49 @@ func assetIDs(items []assets.Asset) []int64 {
 	return out
 }
 
+func assetPublicURLFunc(items []assets.Asset) func(string) string {
+	byPath := make(map[string]int64, len(items))
+	for _, a := range items {
+		byPath[a.ContentAddressedPath] = a.ID
+	}
+	return func(path string) string {
+		if id, ok := byPath[path]; ok && id > 0 {
+			return "/design/assets/blob/" + strconv.FormatInt(id, 10)
+		}
+		return ""
+	}
+}
+
+func mapsValues[K comparable, V any](m map[K]V) []V {
+	out := make([]V, 0, len(m))
+	for _, v := range m {
+		out = append(out, v)
+	}
+	return out
+}
+
+func contentTypeForAsset(a assets.Asset) string {
+	switch a.Kind {
+	case assets.KindAudio:
+		format := strings.ToLower(strings.TrimPrefix(a.OriginalFormat, "."))
+		switch format {
+		case "ogg", "oga":
+			return "audio/ogg"
+		case "mp3", "mpeg":
+			return "audio/mpeg"
+		case "wav":
+			return "audio/wav"
+		default:
+			return "application/octet-stream"
+		}
+	default:
+		if strings.EqualFold(a.OriginalFormat, "svg") {
+			return "image/svg+xml"
+		}
+		return "image/png"
+	}
+}
+
 // getAssetsGrid returns just the inner grid HTML for HTMX swaps from the
 // search/filter form. No chrome data is sent — just the work area's
 // grid contents.
@@ -619,7 +693,7 @@ func getAssetsGrid(d Deps) http.HandlerFunc {
 			Items:        items,
 			ActiveKind:   string(opts.Kind),
 			Search:       opts.Search,
-			PublicURL:    d.ObjectStore.PublicURL,
+			PublicURL:    assetPublicURLFunc(items),
 			UsageByID:    usage,
 			ActiveFilter: filter,
 		}))
@@ -658,7 +732,7 @@ func getAssetDetail(d Deps) http.HandlerFunc {
 		}
 		renderHTML(w, r, views.AssetDetail(views.AssetDetailProps{
 			Asset:     *a,
-			PublicURL: d.ObjectStore.PublicURL,
+			PublicURL: assetPublicURLFunc([]assets.Asset{*a}),
 			UsedBy:    usedBy,
 		}))
 	}
@@ -692,7 +766,7 @@ func deleteAsset(d Deps) http.HandlerFunc {
 		}
 		renderHTML(w, r, views.AssetsGrid(views.AssetsListProps{
 			Items:     items,
-			PublicURL: d.ObjectStore.PublicURL,
+			PublicURL: assetPublicURLFunc(items),
 		}))
 	}
 }
@@ -975,7 +1049,7 @@ func postAssetDeleteBulk(d Deps) http.HandlerFunc {
 		usage, _ := AssetUsageMap(r.Context(), d, assetIDs(items))
 		renderHTML(w, r, views.AssetsGrid(views.AssetsListProps{
 			Items:     items,
-			PublicURL: d.ObjectStore.PublicURL,
+			PublicURL: assetPublicURLFunc(items),
 			UsageByID: usage,
 		}))
 	}
@@ -1271,8 +1345,8 @@ func assetIDFromPath(r *http.Request) (int64, error) {
 	if idStr == "" {
 		return 0, errors.New("missing asset id")
 	}
-	var id int64
-	if _, err := fmt.Sscan(idStr, &id); err != nil {
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
 		return 0, fmt.Errorf("invalid asset id %q", idStr)
 	}
 	return id, nil
@@ -1849,7 +1923,7 @@ func spriteURLFor(d Deps, et *entities.EntityType) string {
 	if err != nil {
 		return ""
 	}
-	return d.ObjectStore.PublicURL(a.ContentAddressedPath)
+	return assetPublicURLFunc([]assets.Asset{*a})(a.ContentAddressedPath)
 }
 
 // ---- Edge sockets ----
@@ -2337,6 +2411,7 @@ func getMapmakerPage(d Deps) http.HandlerFunc {
 					slog.Warn("palette assets bulk lookup", "err", lerr)
 				}
 			}
+			paletteURL := assetPublicURLFunc(mapsValues(assetByID))
 			for _, et := range ets {
 				entry := views.PaletteEntry{
 					ID:         et.ID,
@@ -2347,7 +2422,7 @@ func getMapmakerPage(d Deps) http.HandlerFunc {
 				}
 				if et.SpriteAssetID != nil {
 					if a, ok := assetByID[*et.SpriteAssetID]; ok {
-						entry.SpriteURL = d.ObjectStore.PublicURL(a.ContentAddressedPath)
+						entry.SpriteURL = paletteURL(a.ContentAddressedPath)
 						// Tile sheets carry their grid dims in
 						// metadata_json; sprite assets fall through
 						// to the (1x1, idx 0) defaults above so the
@@ -3645,8 +3720,8 @@ func deleteMapTiles(d Deps) http.HandlerFunc {
 			return
 		}
 		var body struct {
-			LayerID int64       `json:"layer_id"`
-			Points  [][2]int32  `json:"points"`
+			LayerID int64      `json:"layer_id"`
+			Points  [][2]int32 `json:"points"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
@@ -3728,7 +3803,7 @@ func getPickerAssets(d Deps) http.HandlerFunc {
 			TargetID:  q.Get("target_id"),
 			TargetLbl: q.Get("target_label"),
 			Assets:    picked,
-			PublicURL: d.ObjectStore.PublicURL,
+			PublicURL: assetPublicURLFunc(picked),
 		}
 		if r.Header.Get("HX-Request") == "true" && r.Header.Get("HX-Trigger-Name") == "q" {
 			renderHTML(w, r, views.PickerGrid(props))
@@ -3811,6 +3886,7 @@ func buildEntitySpritePreviews(
 	for _, a := range rows {
 		byID[a.ID] = a
 	}
+	previewURL := assetPublicURLFunc(rows)
 	out := make(map[int64]views.EntitySpritePreview, len(ets))
 	for _, e := range ets {
 		if e.SpriteAssetID == nil {
@@ -3821,7 +3897,7 @@ func buildEntitySpritePreviews(
 			continue
 		}
 		preview := views.EntitySpritePreview{
-			URL:        d.ObjectStore.PublicURL(a.ContentAddressedPath),
+			URL:        previewURL(a.ContentAddressedPath),
 			AtlasIndex: e.AtlasIndex,
 			AtlasCols:  1,
 			TileSize:   assets.TileSize,

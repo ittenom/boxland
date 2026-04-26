@@ -249,7 +249,7 @@ func TestAssetsGrid_TileSheetShowsCellPreview(t *testing.T) {
 	body := rr.Body.String()
 	for _, want := range []string{
 		`bx-asset-card__tile-preview`,
-		`http://localhost:9000/boxland-assets/tiles/cavern.png`,
+		`/design/assets/blob/`,
 		`background-position:-32px -32px`,
 	} {
 		if !strings.Contains(body, want) {

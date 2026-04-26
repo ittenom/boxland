@@ -46,8 +46,8 @@
 		// viewport is smaller; logical coordinates stay tile-true.
 		canvas.width  = mapW * TILE_PX;
 		canvas.height = mapH * TILE_PX;
-		canvas.style.maxWidth  = "100%";
-		canvas.style.maxHeight = "100%";
+		canvas.style.maxWidth  = "none";
+		canvas.style.maxHeight = "none";
 		const ctx = canvas.getContext("2d");
 		if (!ctx) return;
 		ctx.imageSmoothingEnabled = false;
@@ -473,7 +473,6 @@
 		function ensureImage(state, url) {
 			if (!url || state.images.has(url)) return;
 			const img = new Image();
-			img.crossOrigin = "anonymous";
 			img.onload = () => {
 				const canvas = $("[data-bx-mapmaker-canvas]");
 				if (canvas) canvas.dispatchEvent(new CustomEvent("bx:mapmaker-redraw"));

@@ -84,7 +84,7 @@ func TestMapmakerPage_RendersAtlasAwarePalette(t *testing.T) {
 	}
 	body := rr.Body.String()
 	for _, want := range []string{
-		`data-bx-sprite-url="https://cdn.example.test/assets/town.png"`,
+		`data-bx-sprite-url="/design/assets/blob/` + itoa(a.ID) + `"`,
 		`data-bx-atlas-index="5"`,
 		`data-bx-atlas-cols="4"`,
 		`background-position:-32px -32px`,
