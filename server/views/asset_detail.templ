@@ -94,6 +94,18 @@ templ AssetDetail(p AssetDetailProps) {
 				>
 					Delete asset
 				</button>
+				<span style="flex:1;"></span>
+				if p.Asset.Kind != assets.KindAudio {
+					<button
+						type="button"
+						class="bx-btn bx-btn--primary"
+						hx-post={ fmt.Sprintf("/design/assets/%d/promote-to-entity", p.Asset.ID) }
+						hx-target="#asset-draft-status"
+						hx-swap="innerHTML"
+						title="Create a new entity-type that uses this asset as its sprite, then open the editor"
+						data-copy-slot="assets.detail.promote"
+					>+ Use as entity</button>
+				}
 				<button
 					type="button"
 					class="bx-btn bx-btn--ghost bx-btn--small"

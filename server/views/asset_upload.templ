@@ -31,17 +31,50 @@ templ AssetUploadModal(p AssetUploadModalProps) {
 				>
 					<div
 						class="bx-asset-drop"
+						data-bx-drop
 						data-copy-slot="assets.upload.drop"
 					>
-						<p>Drop a PNG, WAV, OGG, or MP3 here, or browse. You can pick a whole folder.</p>
+						<p data-bx-drop-msg>
+							<strong>Drag PNG / WAV / OGG / MP3 files</strong> (or a whole folder) here, or use the buttons below.
+						</p>
+						<div class="bx-row" style="gap: var(--bx-s2); justify-content: center;">
+							<button
+								type="button"
+								class="bx-btn"
+								data-bx-pick-files
+								title="Pick one or more files"
+							>Browse files…</button>
+							<button
+								type="button"
+								class="bx-btn"
+								data-bx-pick-folder
+								title="Pick a folder; we upload every supported asset inside it"
+							>Browse folder…</button>
+						</div>
 						<input
 							type="file"
 							name="files"
 							accept=".png,.wav,.ogg,.mp3"
-							required
 							multiple
-							class="bx-input"
+							class="bx-visually-hidden"
+							data-bx-files-input
+							aria-hidden="true"
+							tabindex="-1"
 						/>
+						<input
+							type="file"
+							accept=".png,.wav,.ogg,.mp3"
+							multiple
+							webkitdirectory
+							directory
+							class="bx-visually-hidden"
+							data-bx-folder-input
+							aria-hidden="true"
+							tabindex="-1"
+						/>
+						<p class="bx-tiny bx-muted" data-bx-drop-counter style="margin-top: var(--bx-s2);">
+							No files queued. Up to 64 per upload, 16 MiB each.
+						</p>
 					</div>
 					<div class="bx-field">
 						<label class="bx-label" data-copy-slot="assets.upload.kind">Kind</label>
@@ -56,12 +89,76 @@ templ AssetUploadModal(p AssetUploadModalProps) {
 						</small>
 					</div>
 					<div class="bx-row bx-row--end">
-						<button type="submit" class="bx-btn bx-btn--primary" data-copy-slot="assets.upload.submit">
+						<button
+							type="submit"
+							class="bx-btn bx-btn--primary"
+							data-bx-upload-submit
+							disabled
+							data-copy-slot="assets.upload.submit"
+						>
 							Upload
 						</button>
 					</div>
 				</form>
 				<div id="asset-upload-result" aria-live="polite"></div>
+				<script>
+					(function () {
+						var form     = document.getElementById('asset-upload-form');
+						if (!form) return;
+						var drop     = form.querySelector('[data-bx-drop]');
+						var files    = form.querySelector('[data-bx-files-input]');
+						var folder   = form.querySelector('[data-bx-folder-input]');
+						var pickF    = form.querySelector('[data-bx-pick-files]');
+						var pickD    = form.querySelector('[data-bx-pick-folder]');
+						var counter  = form.querySelector('[data-bx-drop-counter]');
+						var submit   = form.querySelector('[data-bx-upload-submit]');
+						var MAX      = 64;
+						var ACCEPT   = /\.(png|wav|ogg|mp3)$/i;
+
+						function setQueue(list) {
+							var keep = [];
+							for (var i = 0; i < list.length && keep.length < MAX; i++) {
+								if (ACCEPT.test(list[i].name)) keep.push(list[i]);
+							}
+							var dt = new DataTransfer();
+							keep.forEach(function (f) { dt.items.add(f); });
+							files.files = dt.files;
+							var skipped = list.length - keep.length;
+							var msg = keep.length === 0
+								? 'No files queued. Up to ' + MAX + ' per upload, 16 MiB each.'
+								: keep.length + (keep.length === 1 ? ' file queued.' : ' files queued.');
+							if (skipped > 0) msg += ' (' + skipped + ' skipped — wrong type or over the ' + MAX + '-file cap.)';
+							counter.textContent = msg;
+							submit.disabled = keep.length === 0;
+						}
+
+						pickF.addEventListener('click', function () { files.click(); });
+						pickD.addEventListener('click', function () { folder.click(); });
+						files.addEventListener('change', function () { setQueue(files.files); });
+						folder.addEventListener('change', function () { setQueue(folder.files); });
+
+						['dragenter', 'dragover'].forEach(function (ev) {
+							drop.addEventListener(ev, function (e) {
+								e.preventDefault(); e.stopPropagation();
+								drop.classList.add('is-dragover');
+							});
+						});
+						['dragleave', 'drop'].forEach(function (ev) {
+							drop.addEventListener(ev, function (e) {
+								e.preventDefault(); e.stopPropagation();
+								drop.classList.remove('is-dragover');
+							});
+						});
+						drop.addEventListener('drop', function (e) {
+							var dropped = (e.dataTransfer && e.dataTransfer.files) || [];
+							if (dropped.length === 0) return;
+							setQueue(dropped);
+						});
+						form.addEventListener('htmx:afterRequest', function () {
+							setQueue([]);
+						});
+					})();
+				</script>
 			</div>
 		</div>
 	</div>

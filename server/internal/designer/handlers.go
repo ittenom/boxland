@@ -85,6 +85,7 @@ func New(d Deps) http.Handler {
 	mux.Handle("DELETE /design/assets/{id}",    auth(deleteAsset(d)))
 	mux.Handle("POST /design/assets/{id}/draft",   auth(postAssetDraft(d)))
 	mux.Handle("POST /design/assets/{id}/replace", auth(postAssetReplace(d)))
+	mux.Handle("POST /design/assets/{id}/promote-to-entity", auth(postAssetPromoteToEntity(d)))
 
 	// Entity Manager surface (PLAN.md §5d).
 	mux.Handle("GET /design/entities",                       auth(getEntitiesList(d)))
@@ -131,6 +132,8 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /design/maps/{id}/preview",     auth(postMapPreview(d)))
 	mux.Handle("POST /design/maps/{id}/materialize", auth(postMapMaterialize(d)))
 	mux.Handle("DELETE /design/maps/{id}",           auth(deleteMap(d)))
+	mux.Handle("GET /design/maps/{id}/settings",     auth(getMapSettingsModal(d)))
+	mux.Handle("POST /design/maps/{id}/draft",       auth(postMapDraft(d)))
 
 	// Authored-mode painting endpoints. JSON in / out. The design
 	// console's mapmaker JS pumps brush strokes through these; the
@@ -157,6 +160,10 @@ func New(d Deps) http.Handler {
 	// list (e.g. tags=sprite for a sprite-only field).
 	mux.Handle("GET /design/picker/assets",   auth(getPickerAssets(d)))
 	mux.Handle("GET /design/picker/entities", auth(getPickerEntities(d)))
+	// Bulk name lookup so refField can replace "currently #5" with
+	// "asset name (#5)" without one fetch per field. boot.js batches
+	// every visible refField with a non-zero id into a single call.
+	mux.Handle("GET /design/picker/lookup",   auth(getPickerLookup(d)))
 
 	// Settings (PLAN.md §5g + §6h). Page is rendered server-side via
 	// Templ; the client uses the GET/PUT JSON endpoints to sync. The
@@ -627,6 +634,107 @@ func deleteAsset(d Deps) http.HandlerFunc {
 	}
 }
 
+// postAssetPromoteToEntity creates a fresh entity_type that uses this
+// asset as its sprite, then redirects the HTMX caller to open the new
+// entity's detail modal. One-click "I have a sprite — give me an entity
+// I can paint with."
+//
+// Tile-kind assets get tagged "tile" so the Mapmaker palette filter
+// surfaces them right away. Sprite-kind assets are left untagged so
+// they don't pollute the tile palette by default.
+//
+// Name conflicts walk a "Name (copy N)" suffix the same way
+// postEntityDuplicate does.
+func postAssetPromoteToEntity(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		dr := CurrentDesigner(r.Context())
+		if dr == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		id, err := assetIDFromPath(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		a, err := d.Assets.FindByID(r.Context(), id)
+		if err != nil {
+			http.Error(w, "asset not found", http.StatusNotFound)
+			return
+		}
+		if a.Kind == assets.KindAudio {
+			http.Error(w, "audio assets can't be promoted to an entity (no sprite)", http.StatusBadRequest)
+			return
+		}
+
+		// Suffix-walk to a free name. Most users will have one entity
+		// per asset; the loop covers re-promotion of the same asset.
+		baseName := a.Name
+		newName := baseName
+		for i := 2; i < 100; i++ {
+			if _, err := d.Entities.FindByName(r.Context(), newName); errors.Is(err, entities.ErrEntityTypeNotFound) {
+				break
+			}
+			newName = fmt.Sprintf("%s (%d)", baseName, i)
+		}
+
+		assetID := a.ID
+		var tags []string
+		if a.Kind == assets.KindTile {
+			tags = []string{"tile"}
+		}
+
+		et, err := d.Entities.Create(r.Context(), entities.CreateInput{
+			Name:          newName,
+			SpriteAssetID: &assetID,
+			Tags:          tags,
+			CreatedBy:     dr.ID,
+		})
+		if err != nil {
+			slog.Error("promote-to-entity", "err", err, "asset_id", id)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Redirect the HTMX caller to the new entity's detail modal.
+		// HX-Redirect navigates the page; HX-Trigger fires a custom
+		// event the asset modal can use to close itself first.
+		w.Header().Set("HX-Trigger", "bx:asset-promoted")
+		w.Header().Set("HX-Redirect", fmt.Sprintf("/design/entities/%d", et.ID))
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(fmt.Sprintf(
+			`<div class="bx-toast bx-toast--success">Created entity <strong>%s</strong>. Opening editor…</div>`,
+			templHTMLEscape(newName),
+		)))
+	}
+}
+
+// templHTMLEscape escapes the few characters that matter inside a toast
+// payload. Templ does this automatically inside templates; here we're
+// emitting a literal byte string so we escape ourselves to keep the
+// payload safe for entity names containing < > & " '.
+func templHTMLEscape(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch r {
+		case '<':
+			b.WriteString("&lt;")
+		case '>':
+			b.WriteString("&gt;")
+		case '&':
+			b.WriteString("&amp;")
+		case '"':
+			b.WriteString("&#34;")
+		case '\'':
+			b.WriteString("&#39;")
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 // postAssetDraft persists an AssetDraft into the drafts table. The publish
 // pipeline applies it later via "Push to Live". For now we return a small
 // toast confirming the save.
@@ -683,7 +791,9 @@ func postAssetDraft(d Deps) http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(
-			`<div class="bx-toast bx-toast--success" data-copy-slot="assets.draft.saved">Draft saved.</div>`,
+			`<div class="bx-toast bx-toast--success" data-copy-slot="assets.draft.saved">Draft saved. ` +
+				`<a href="#" hx-get="/design/publish/preview" hx-target="#publish-modal-host" hx-swap="innerHTML" style="text-decoration: underline;">Push to Live</a> ` +
+				`when you're ready to publish.</div>`,
 		))
 	}
 }
@@ -964,7 +1074,11 @@ func postEntityDraft(d Deps) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(`<div class="bx-toast bx-toast--success">Draft saved.</div>`))
+		_, _ = w.Write([]byte(
+			`<div class="bx-toast bx-toast--success">Draft saved. ` +
+				`<a href="#" hx-get="/design/publish/preview" hx-target="#publish-modal-host" hx-swap="innerHTML" style="text-decoration: underline;">Push to Live</a> ` +
+				`to apply changes to the Mapmaker palette and live game.</div>`,
+		))
 	}
 }
 
@@ -1193,6 +1307,18 @@ func parseIntOr(s string, def int64) int64 {
 		return def
 	}
 	return n
+}
+
+// parseCheckbox returns true for the values an HTML checkbox can submit
+// when it's checked: "on" (default), "true", "1". An unchecked checkbox
+// sends nothing, so the empty string is false.
+func parseCheckbox(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "on", "true", "1", "yes":
+		return true
+	default:
+		return false
+	}
 }
 
 func collectDescriptors(reg *components.Registry) map[components.Kind][]configurableFieldDescriptor {
@@ -1519,6 +1645,13 @@ func getMapNewModal(_ Deps) http.HandlerFunc {
             <option value="procedural">Procedural (WFC)</option>
           </select>
         </div>
+        <div class="bx-field">
+          <label class="bx-row" for="m-public" style="gap: var(--bx-s2); align-items: center;">
+            <input id="m-public" name="public" type="checkbox" value="true" class="bx-checkbox">
+            <span class="bx-label" style="margin: 0;">Public — players can see this map at /play/maps</span>
+          </label>
+          <small class="bx-help">Off = sandbox-only (designers can still test it). Toggle later from the Mapmaker header.</small>
+        </div>
         <div class="bx-row bx-row--end">
           <button type="submit" class="bx-btn bx-btn--primary">Create</button>
         </div>
@@ -1546,6 +1679,7 @@ func postMapCreate(d Deps) http.HandlerFunc {
 			Width:     int32(parseIntOr(r.FormValue("width"), 64)),
 			Height:    int32(parseIntOr(r.FormValue("height"), 48)),
 			Mode:      strings.TrimSpace(r.FormValue("mode")),
+			Public:    parseCheckbox(r.FormValue("public")),
 			CreatedBy: dr.ID,
 		})
 		if err != nil {
@@ -1580,12 +1714,16 @@ func getMapmakerPage(d Deps) http.HandlerFunc {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		// Build the tile-palette: every tile-kind entity-type (entity-type
-		// IDs that have a tile_edge_assignments row, or that are tagged
-		// "tile"; v1 just lists everything tagged "tile" to keep it simple
-		// and falls back to all entity types).
+		// Build the tile-palette. Prefer entity types tagged "tile" so
+		// NPCs / items / triggers don't pollute the brush. Fall back to
+		// listing everything if the project hasn't tagged anything yet —
+		// otherwise a brand-new designer would see an empty palette and
+		// nothing to paint with.
 		var palette []views.PaletteEntry
-		ets, err := d.Entities.List(r.Context(), entities.ListOpts{Limit: 100})
+		ets, err := d.Entities.List(r.Context(), entities.ListOpts{Tags: []string{"tile"}, Limit: 200})
+		if err == nil && len(ets) == 0 {
+			ets, err = d.Entities.List(r.Context(), entities.ListOpts{Limit: 200})
+		}
 		if err == nil {
 			for _, et := range ets {
 				entry := views.PaletteEntry{ID: et.ID, Name: et.Name}
@@ -1597,6 +1735,14 @@ func getMapmakerPage(d Deps) http.HandlerFunc {
 				palette = append(palette, entry)
 			}
 		}
+		// Count entity_type drafts so the palette can warn the designer
+		// that pending sprite/collider edits aren't visible until they
+		// Push to Live. Failure degrades quietly.
+		var entityDrafts int
+		_ = d.Maps.Pool.QueryRow(r.Context(),
+			`SELECT COUNT(*) FROM drafts WHERE artifact_kind = 'entity_type'`,
+		).Scan(&entityDrafts)
+
 		layout := BuildChrome(r, d)
 		layout.Title = "Mapmaker · " + m.Name
 		layout.Surface = "mapmaker"
@@ -1609,6 +1755,7 @@ func getMapmakerPage(d Deps) http.HandlerFunc {
 			Map:                *m,
 			Layers:             layers,
 			PaletteEntityTypes: palette,
+			EntityDraftCount:   entityDrafts,
 		}))
 	}
 }
@@ -1802,6 +1949,144 @@ func deleteMap(d Deps) http.HandlerFunc {
 		}
 		items, _ := d.Maps.List(r.Context(), "")
 		renderHTML(w, r, views.MapsGrid(views.MapsListProps{Items: items}))
+	}
+}
+
+// getMapSettingsModal renders the per-map settings drawer that opens
+// from the Mapmaker header. Reuses the generic Form partial driven by
+// MapDraft.Descriptor() so adding a new field to the draft auto-shows
+// up here. Pre-populates Values from the live row so the form is the
+// "source of truth + last saved draft" surface.
+func getMapSettingsModal(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := pathID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		m, err := d.Maps.FindByID(r.Context(), id)
+		if err != nil {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		values := map[string]any{
+			"name":             m.Name,
+			"public":           m.Public,
+			"instancing_mode":  m.InstancingMode,
+			"persistence_mode": m.PersistenceMode,
+			"spectator_policy": m.SpectatorPolicy,
+		}
+		if m.RefreshWindowSeconds != nil {
+			values["refresh_window_seconds"] = *m.RefreshWindowSeconds
+		}
+		if m.Seed != nil {
+			values["seed"] = *m.Seed
+		}
+		// If a draft exists, prefer its values so users see what they
+		// last typed (not what's live). Failure here is non-fatal —
+		// fall back to the live values.
+		var draftJSON []byte
+		row := d.Maps.Pool.QueryRow(r.Context(),
+			`SELECT draft_json FROM drafts WHERE artifact_kind = 'map' AND artifact_id = $1`, id)
+		if err := row.Scan(&draftJSON); err == nil && len(draftJSON) > 0 {
+			var d mapsservice.MapDraft
+			if jerr := json.Unmarshal(draftJSON, &d); jerr == nil {
+				values["name"] = d.Name
+				values["public"] = d.Public
+				if d.InstancingMode != "" {
+					values["instancing_mode"] = d.InstancingMode
+				}
+				if d.PersistenceMode != "" {
+					values["persistence_mode"] = d.PersistenceMode
+				}
+				if d.SpectatorPolicy != "" {
+					values["spectator_policy"] = d.SpectatorPolicy
+				}
+				if d.RefreshWindowSeconds != nil {
+					values["refresh_window_seconds"] = *d.RefreshWindowSeconds
+				}
+				if d.Seed != nil {
+					values["seed"] = *d.Seed
+				}
+			}
+		}
+		renderHTML(w, r, views.MapSettingsModal(views.MapSettingsProps{
+			Map:    *m,
+			Fields: mapsservice.MapDraft{}.Descriptor(),
+			Values: values,
+		}))
+	}
+}
+
+// postMapDraft persists a MapDraft into the drafts table. Mirrors
+// postEntityDraft / postAssetDraft. The publish pipeline (Push to Live)
+// applies it later via the existing maps.Handler in artifact.go, which
+// handles the public, instancing, persistence, spectator, and seed
+// columns. Tile placements are NOT routed through here; they go to the
+// dedicated /tiles endpoints and update the live row directly because
+// they're high-frequency edits.
+func postMapDraft(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		dr := CurrentDesigner(r.Context())
+		if dr == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		id, err := pathID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if _, err := d.Maps.FindByID(r.Context(), id); err != nil {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		draft := mapsservice.MapDraft{
+			Name:            strings.TrimSpace(r.FormValue("name")),
+			Public:          parseCheckbox(r.FormValue("public")),
+			InstancingMode:  strings.TrimSpace(r.FormValue("instancing_mode")),
+			PersistenceMode: strings.TrimSpace(r.FormValue("persistence_mode")),
+			SpectatorPolicy: strings.TrimSpace(r.FormValue("spectator_policy")),
+		}
+		if v := strings.TrimSpace(r.FormValue("refresh_window_seconds")); v != "" {
+			if n, err := strconvAtoi64(v); err == nil {
+				rw := int32(n)
+				draft.RefreshWindowSeconds = &rw
+			}
+		}
+		if v := strings.TrimSpace(r.FormValue("seed")); v != "" {
+			if n, err := strconvAtoi64(v); err == nil {
+				draft.Seed = &n
+			}
+		}
+		if err := draft.Validate(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		body, err := json.Marshal(draft)
+		if err != nil {
+			http.Error(w, "marshal draft", http.StatusInternalServerError)
+			return
+		}
+		if _, err := d.Maps.Pool.Exec(r.Context(), `
+			INSERT INTO drafts (artifact_kind, artifact_id, draft_json, created_by)
+			VALUES ($1, $2, $3, $4)
+			ON CONFLICT (artifact_kind, artifact_id) DO UPDATE
+			SET draft_json = EXCLUDED.draft_json,
+			    updated_at = now()
+		`, "map", id, body, dr.ID); err != nil {
+			slog.Error("save map draft", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(
+			`<div class="bx-toast bx-toast--success">Map draft saved. <a href="#" hx-get="/design/publish/preview" hx-target="#publish-modal-host" hx-swap="innerHTML" style="text-decoration: underline;">Push to Live</a> to make changes visible to players.</div>`,
+		))
 	}
 }
 
@@ -2316,5 +2601,69 @@ func getPickerEntities(d Deps) http.HandlerFunc {
 			return
 		}
 		renderHTML(w, r, views.PickerModal(props))
+	}
+}
+
+// getPickerLookup answers a small batched name lookup so refField can
+// show "asset name (#5)" instead of "currently #5" on first render.
+//
+// Querystring shape:
+//   ?asset=1,2,3&entity=10,11
+//
+// Response:
+//   { "asset": {"1":"Goblin","2":"Tile A"}, "entity": {"10":"Tree"} }
+//
+// Missing ids simply omit themselves from the response so the JS
+// fallback ("currently #N") still applies. Bound to ~64 ids per kind
+// so a runaway form can't stall the page.
+func getPickerLookup(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		const maxIDs = 64
+
+		parseIDs := func(raw string) []int64 {
+			if raw == "" {
+				return nil
+			}
+			parts := strings.Split(raw, ",")
+			if len(parts) > maxIDs {
+				parts = parts[:maxIDs]
+			}
+			out := make([]int64, 0, len(parts))
+			seen := map[int64]struct{}{}
+			for _, p := range parts {
+				n, err := strconvAtoi64(strings.TrimSpace(p))
+				if err != nil || n <= 0 {
+					continue
+				}
+				if _, dup := seen[n]; dup {
+					continue
+				}
+				seen[n] = struct{}{}
+				out = append(out, n)
+			}
+			return out
+		}
+
+		assetIDs := parseIDs(r.URL.Query().Get("asset"))
+		entityIDs := parseIDs(r.URL.Query().Get("entity"))
+
+		assetNames := make(map[string]string, len(assetIDs))
+		for _, id := range assetIDs {
+			if a, err := d.Assets.FindByID(r.Context(), id); err == nil {
+				assetNames[fmt.Sprintf("%d", id)] = a.Name
+			}
+		}
+		entityNames := make(map[string]string, len(entityIDs))
+		for _, id := range entityIDs {
+			if e, err := d.Entities.FindByID(r.Context(), id); err == nil {
+				entityNames[fmt.Sprintf("%d", id)] = e.Name
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"asset":  assetNames,
+			"entity": entityNames,
+		})
 	}
 }

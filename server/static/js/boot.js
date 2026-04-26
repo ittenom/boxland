@@ -92,7 +92,10 @@
     }
     if (tlbl) {
       const lbl = document.getElementById(tlbl);
-      if (lbl) lbl.textContent = label ? `picked “${label}”` : "none chosen";
+      if (lbl) {
+        lbl.textContent = label ? `${label} · #${id}` : "none chosen";
+        if (id) lbl.dataset.bxRefResolved = id;
+      }
     }
     card.closest(".bx-modal-backdrop")?.remove();
   });
@@ -114,6 +117,54 @@
     const lbl = document.getElementById(inputId + "-label");
     if (lbl) lbl.textContent = "none chosen";
   });
+
+  // 5c. Ref label resolver. On initial load + after every HTMX swap,
+  //     find every refField with a non-zero id, batch-fetch the names
+  //     from /design/picker/lookup, and replace "currently #N" with
+  //     "name (#N)". Dramatically nicer for users opening forms with
+  //     refs already set (e.g. an existing entity's sprite assignment).
+  const resolveRefLabels = () => {
+    const inputs = document.querySelectorAll("input[data-bx-ref]");
+    const assetIDs = new Set();
+    const entityIDs = new Set();
+    /** @type {{el: HTMLElement, kind: string, id: string}[]} */
+    const targets = [];
+    for (const el of inputs) {
+      if (!(el instanceof HTMLInputElement)) continue;
+      const id = el.value.trim();
+      if (!id || id === "0") continue;
+      const kind = el.getAttribute("data-bx-ref") || "";
+      const lbl = document.getElementById(el.id + "-label");
+      if (!lbl) continue;
+      // Skip if we already resolved (label has a non-default text).
+      if (lbl.dataset.bxRefResolved === id) continue;
+      targets.push({ el: lbl, kind, id });
+      if (kind === "asset") assetIDs.add(id);
+      else if (kind === "entity-type") entityIDs.add(id);
+    }
+    if (assetIDs.size === 0 && entityIDs.size === 0) return;
+
+    const params = new URLSearchParams();
+    if (assetIDs.size > 0)  params.set("asset",  [...assetIDs].join(","));
+    if (entityIDs.size > 0) params.set("entity", [...entityIDs].join(","));
+
+    fetch(`/design/picker/lookup?${params}`, { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data) return;
+        for (const t of targets) {
+          const bag = t.kind === "asset" ? data.asset : data.entity;
+          const name = bag && bag[t.id];
+          if (name) {
+            t.el.textContent = `${name} · #${t.id}`;
+            t.el.dataset.bxRefResolved = t.id;
+          }
+        }
+      })
+      .catch(() => { /* silent — fallback hint already rendered */ });
+  };
+  resolveRefLabels();
+  document.body.addEventListener("htmx:afterSwap", resolveRefLabels);
 
   // 6. Tile-group editor: click to assign the active entity-type id to a
   //    cell. Each .bx-tilegroup-grid is paired with a hidden input

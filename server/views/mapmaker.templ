@@ -3,6 +3,7 @@ package views
 import (
 	"fmt"
 
+	"boxland/server/internal/configurable"
 	"boxland/server/internal/maps"
 )
 
@@ -15,6 +16,13 @@ type MapmakerProps struct {
 	// every tile-kind entity-type the project has so designers can paint
 	// with anything; later iterations filter / favorite.
 	PaletteEntityTypes []PaletteEntry
+
+	// EntityDraftCount surfaces how many entity_type drafts exist in
+	// the project. The palette reads the LIVE entity_types table, so
+	// pending sprite assignments / collider tweaks won't appear until
+	// the designer hits Push to Live. The chip in the palette panel
+	// makes that gap visible.
+	EntityDraftCount int
 }
 
 // PaletteEntry is one tile selectable from the toolbar.
@@ -36,8 +44,22 @@ templ MapmakerPage(p MapmakerProps) {
 					<span class="bx-mono bx-small bx-muted">
 						{ fmt.Sprintf("%d × %d · %s", p.Map.Width, p.Map.Height, p.Map.Mode) }
 					</span>
+					if p.Map.Public {
+						<span class="bx-badge bx-badge--success" title="Players can find this on /play/maps">public</span>
+					} else {
+						<span class="bx-badge" title="Sandbox-only. Open Settings to publish.">private</span>
+					}
 				</div>
 				<div class="bx-row">
+					<button
+						type="button"
+						class="bx-btn bx-btn--ghost bx-btn--small"
+						hx-get={ fmt.Sprintf("/design/maps/%d/settings", p.Map.ID) }
+						hx-target="#modal-host"
+						hx-swap="innerHTML"
+						title="Edit map settings (visibility, instancing, persistence)"
+						data-copy-slot="mapmaker.settings"
+					>⚙ Settings</button>
 					<a
 						href={ templ.URL(fmt.Sprintf("/design/sandbox/launch/%d", p.Map.ID)) }
 						class="bx-btn bx-btn--primary bx-btn--small"
@@ -140,6 +162,20 @@ templ MapmakerToolbar(p MapmakerProps) {
 
 	<section class="bx-panel" data-bx-palette style="padding: var(--bx-s2);">
 		<h3 class="bx-panel__title" data-copy-slot="mapmaker.palette.title">Palette</h3>
+		if p.EntityDraftCount > 0 {
+			<button
+				type="button"
+				class="bx-toast bx-toast--warn bx-small"
+				style="width: 100%; text-align: left; cursor: pointer; padding: var(--bx-s1) var(--bx-s2);"
+				hx-get="/design/publish/preview"
+				hx-target="#publish-modal-host"
+				hx-swap="innerHTML"
+				title="Open Push to Live to apply your staged entity changes"
+				data-copy-slot="mapmaker.palette.staged"
+			>
+				{ stagedChipLabel(p.EntityDraftCount) } — push to apply
+			</button>
+		}
 		if len(p.PaletteEntityTypes) == 0 {
 			<p class="bx-small bx-muted" data-copy-slot="mapmaker.palette.empty">
 				No tile entities yet.
@@ -252,6 +288,15 @@ func proceduralInitialSeed(m maps.Map) int64 {
 	return 1
 }
 
+// stagedChipLabel pluralizes the staged-changes chip in the palette.
+// Singular gets a neat "1 staged change"; everything else "{n} staged changes".
+func stagedChipLabel(n int) string {
+	if n == 1 {
+		return "1 staged change"
+	}
+	return fmt.Sprintf("%d staged changes", n)
+}
+
 templ toolButton(id, hotkey, label string) {
 	<button
 		type="button"
@@ -263,3 +308,53 @@ templ toolButton(id, hotkey, label string) {
 		<kbd class="bx-small bx-muted" style="margin-left: 6px;">{ hotkey }</kbd>
 	</button>
 }
+
+// MapSettingsProps drives the settings drawer that the Mapmaker header
+// opens. Fields render through the generic Form partial driven by
+// MapDraft.Descriptor() so adding a new field to the draft auto-shows
+// up here.
+type MapSettingsProps struct {
+	Map    maps.Map
+	Fields []configurable.FieldDescriptor
+	Values map[string]any
+}
+
+templ MapSettingsModal(p MapSettingsProps) {
+	<div class="bx-modal-backdrop" data-bx-dismissible role="dialog" aria-modal="true">
+		<div class="bx-modal" style="width: min(560px, 95vw);">
+			<header class="bx-modal__header">
+				<div class="bx-row" style="gap: var(--bx-s2);">
+					<span class="bx-dot bx-dot--map"></span>
+					<h2 style="margin:0;" data-copy-slot="mapmaker.settings.title">Map settings</h2>
+					if p.Map.Public {
+						<span class="bx-badge bx-badge--success">public</span>
+					} else {
+						<span class="bx-badge">private</span>
+					}
+				</div>
+				<button
+					type="button"
+					class="bx-btn bx-btn--ghost bx-btn--small"
+					hx-on:click="this.closest('.bx-modal-backdrop').remove()"
+					aria-label="Close"
+				>Esc</button>
+			</header>
+			<div class="bx-modal__body bx-stack">
+				<p class="bx-small bx-muted" data-copy-slot="mapmaker.settings.lede">
+					Changes save as a draft. Push to Live to apply them. Tile placements
+					save instantly and don't go through this form.
+				</p>
+				@Form(FormProps{
+					Action:      fmt.Sprintf("/design/maps/%d/draft", p.Map.ID),
+					SubmitLabel: "Save draft",
+					HXTarget:    "#map-settings-status",
+					Fields:      p.Fields,
+					Values:      p.Values,
+				})
+				<div id="map-settings-status" aria-live="polite"></div>
+			</div>
+		</div>
+	</div>
+}
+
+

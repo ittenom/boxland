@@ -12,7 +12,7 @@ import (
 //   Fields — descriptor list from a Configurable.
 //   Values — current values keyed by FieldDescriptor.Key. Missing keys
 //            render as empty inputs (or the descriptor's Default).
-//   SubmitLabel — text on the primary button. Lorem-Ipsum if blank.
+//   SubmitLabel — text on the primary button. Defaults to "Save" if blank.
 type FormProps struct {
 	Action      string
 	Fields      []configurable.FieldDescriptor
@@ -201,18 +201,18 @@ templ colorField(f configurable.FieldDescriptor, value any) {
 templ refField(f configurable.FieldDescriptor, value any, refKind string) {
 	@labelEl(f)
 	<div class="bx-row bx-ref-field" style="gap: var(--bx-s2); align-items: center;">
+		// The id is a hidden input — designers pick via the modal, not by typing.
+		// The visible chip below shows the resolved name (boot.js fills it on
+		// load via /design/picker/lookup) and the right-aligned #id.
 		<input
-			class="bx-input bx-mono bx-small"
-			type="text"
+			type="hidden"
 			id={ "f-" + f.Key }
 			name={ f.Key }
 			value={ stringValue(value, f.Default) }
 			data-bx-ref={ refKind }
-			placeholder="—"
-			style="max-width: 96px; text-align: right;"
 		/>
 		<span
-			class="bx-small bx-muted"
+			class="bx-ref-chip bx-mono bx-small"
 			id={ "f-" + f.Key + "-label" }
 			data-bx-ref-label={ refKind }
 		>{ refLabelHint(value) }</span>
