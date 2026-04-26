@@ -1,48 +1,564 @@
 // Package views holds Templ templates for the design-tool surfaces.
 //
-// All page-level templates wrap themselves in Layout for a consistent shell
-// (HTMX + Alpine + pixel-CSS, CSRF meta tag, surface tagging for the JS
-// boot script). Filenames starting with an underscore are conventional for
-// "partials" — kept lower-cased to match Templ's package conventions.
+// All page-level templates wrap themselves in Layout, which renders the
+// design-console shell: chrome + project tree + work area + connections
+// rail + status bar.
+//
+// Variants:
+//   ""        default 3-pane shell (tree + work + rail)
+//   "no-rail" 2-pane shell (tree + work) for surfaces without
+//             cross-artifact context
+//   "bleed"   chrome + status only; the work area fills the viewport
+//             (mapmaker / sandbox)
+//   "auth"    no shell at all (login / signup); uses .bx-auth styling
+//
+// Filenames starting with an underscore are conventional for "partials"
+// kept lower-cased to match Templ's package conventions.
 package views
 
 import (
 	"boxland/server/internal/auth/csrf"
+	authdesigner "boxland/server/internal/auth/designer"
 )
 
-// LayoutProps configures the page chrome. Keep this small; page-specific
-// data goes in the children.
+// LayoutProps configures the shell. Most fields default sensibly; a
+// surface only needs to set what makes its page unique.
 type LayoutProps struct {
-	Title       string // browser tab + first heading
-	Surface     string // body data-surface, drives web/src/boot.ts dispatch
-	BodyClass   string // additional CSS class on <body>; optional
-	HideTopNav  bool   // login/signup pages set true
+	// Document-level
+	Title     string // browser tab + first heading
+	Surface   string // body data-surface, drives web/src/boot.ts dispatch
+	BodyClass string // additional CSS class on <body>; optional
+
+	// Shell shape
+	Variant    string // "" | "no-rail" | "bleed" | "auth"
+	HideTopNav bool   // legacy alias: when true, render no shell (same as Variant="auth")
+
+	// Chrome / per-request data
+	Theme    string                 // "dark" | "light" — read from cookie in BuildChrome
+	Designer *authdesigner.Designer // who's logged in; nil on auth pages
+	Project  ProjectInfo            // counts + drafts banner
+	Tree     ProjectIndex           // left-pane tree
+
+	// Active artifact (highlights tree item; surfaces pass these)
+	ActiveKind string // "asset" | "entity" | "map" | "socket" | "group" | "home" | ""
+	ActiveID   int64
+
+	// Optional work-area chrome
+	Crumbs []Crumb
+
+	// Right rail — nil renders an empty rail; for "no-rail" / "bleed" the rail is hidden entirely
+	Rail *RailData
 }
+
+// Crumb is one step in the breadcrumb above the work area. Href is
+// optional; the trailing crumb (with empty Href) is the "here" highlight.
+type Crumb struct {
+	Label string
+	Href  string
+	Badge string // optional small kind badge next to the label
+}
+
+// ProjectInfo is the chrome's identity strip: project name + per-kind
+// counts + draft total. Single-tenant for now, so ProjectName is a stub.
+type ProjectInfo struct {
+	Name       string
+	AssetCount int
+	EntityCount int
+	MapCount    int
+	SocketCount int
+	GroupCount  int
+	DraftCount  int
+}
+
+// ProjectIndex is the data the left tree renders. Each section is a
+// Kind + count + a small list of items; the tree never renders the
+// whole project, only enough for "where am I" glances. The Home + Settings
+// links are baked into the tree component, not here.
+type ProjectIndex struct {
+	Loaded   bool
+	Assets   IndexSection
+	Entities IndexSection
+	Maps     IndexSection
+	Sockets  IndexSection
+	Groups   IndexSection
+}
+
+type IndexSection struct {
+	Total int
+	Items []IndexItem // truncated to ~6 per section; "+N more" link if more
+}
+
+type IndexItem struct {
+	ID     int64
+	Name   string
+	Meta   string // "spr" / "tile" / "64²" / etc.
+	Warn   string // optional tooltip when something needs attention (e.g., "no sprite")
+	Href   string // /design/<kind>/<id>
+}
+
+// RailData populates the right rail. Surfaces that have a focused
+// artifact pass this; surfaces that are list views typically pass nil
+// or use Variant="no-rail".
+type RailData struct {
+	// "Uses" — what this artifact depends on.
+	Uses []RailRef
+	// "Used by" — what depends on this artifact.
+	UsedBy []RailRef
+	// Suggested next steps — contextual CTAs.
+	Suggestions []RailCTA
+}
+
+// RailRef is one cross-artifact link. Kind determines the icon / color.
+type RailRef struct {
+	Kind  string // "asset" | "entity" | "map" | "socket" | "group" | "automation"
+	Label string
+	Meta  string // "sprite" / "12 placed" / "audio" / etc.
+	Href  string
+}
+
+// RailCTA is one "Suggested next" call-to-action.
+type RailCTA struct {
+	Label string
+	Href  string
+	HX    string // optional HTMX trigger ("post:/design/...?")
+}
+
+// ---- top-level layout -------------------------------------------------
 
 templ Layout(p LayoutProps) {
 	<!DOCTYPE html>
-	<html lang="en">
+	<html lang="en" data-theme={ initialTheme(p.Theme) }>
 		<head>
 			<meta charset="utf-8"/>
 			<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
 			<meta name="csrf-token" content={ csrf.Token(ctx) }/>
-			<title>{ p.Title } — Boxland</title>
+			<title>{ pageTitle(p) }</title>
+			<link rel="icon" href="/static/img/boxland.svg" type="image/svg+xml"/>
 			<link rel="stylesheet" href="/static/css/pixel.css"/>
+			<script>
+				// No-flash theme detection. Runs synchronously in <head> so the
+				// data-theme attribute is set before any paint. Falls back to
+				// localStorage when cookie is missing (private browsing, etc.).
+				(function () {
+					try {
+						var m = document.cookie.match(/(?:^|; )bx_theme=([^;]+)/);
+						var t = m ? decodeURIComponent(m[1]) : (localStorage.getItem('bx_theme') || 'dark');
+						if (t !== 'light' && t !== 'dark') t = 'dark';
+						document.documentElement.setAttribute('data-theme', t);
+					} catch (e) {
+						document.documentElement.setAttribute('data-theme', 'dark');
+					}
+				})();
+				// Theme toggle handler attached via event delegation. Persists
+				// to both cookie (server reads on next page load) and
+				// localStorage (resilient to cookie clears).
+				window.bxToggleTheme = function () {
+					var cur  = document.documentElement.getAttribute('data-theme') || 'dark';
+					var next = cur === 'dark' ? 'light' : 'dark';
+					document.documentElement.setAttribute('data-theme', next);
+					document.cookie = 'bx_theme=' + next + '; path=/; max-age=31536000; SameSite=Lax';
+					try { localStorage.setItem('bx_theme', next); } catch (e) {}
+				};
+			</script>
 			<script src="/static/vendor/htmx.min.js" defer></script>
 			<script src="/static/vendor/htmx-ext-ws.min.js" defer></script>
 			<script src="/static/vendor/alpine.min.js" defer></script>
 			<script src="/static/js/boot.js" type="module" defer></script>
 		</head>
 		<body data-surface={ p.Surface } class={ p.BodyClass }>
-			if !p.HideTopNav {
-				@TopNav()
-			}
-			<main class="bx-main">
+			if isShellHidden(p) {
+				// Auth surface (login/signup): no shell, no chrome.
 				{ children... }
-			</main>
+			} else if p.Variant == "bleed" {
+				@ShellBleed(p) {
+					{ children... }
+				}
+			} else if p.Variant == "no-rail" {
+				@ShellNoRail(p) {
+					{ children... }
+				}
+			} else {
+				@ShellDefault(p) {
+					{ children... }
+				}
+			}
+			// Push-to-Live modal host (separate from per-page #modal-host so
+			// pages can open their own modals without colliding).
+			<div id="publish-modal-host"></div>
 		</body>
 	</html>
 }
+
+// ---- shell variants ---------------------------------------------------
+
+// ShellDefault is the 3-pane console: tree | work | rail.
+templ ShellDefault(p LayoutProps) {
+	<div class="bx-shell">
+		<header class="bx-shell__chrome">
+			@Chrome(p)
+		</header>
+		<aside class="bx-shell__tree">
+			@ProjectTree(p)
+		</aside>
+		<section class="bx-shell__work">
+			if len(p.Crumbs) > 0 {
+				@Crumbs(p.Crumbs)
+			}
+			{ children... }
+		</section>
+		<aside class="bx-shell__rail">
+			@ConnectionsRail(p.Rail)
+		</aside>
+		<footer class="bx-shell__status">
+			@StatusBar(p)
+		</footer>
+	</div>
+}
+
+// ShellNoRail drops the right rail (list / index views).
+templ ShellNoRail(p LayoutProps) {
+	<div class="bx-shell bx-shell--no-rail">
+		<header class="bx-shell__chrome">
+			@Chrome(p)
+		</header>
+		<aside class="bx-shell__tree">
+			@ProjectTree(p)
+		</aside>
+		<section class="bx-shell__work">
+			if len(p.Crumbs) > 0 {
+				@Crumbs(p.Crumbs)
+			}
+			{ children... }
+		</section>
+		<footer class="bx-shell__status">
+			@StatusBar(p)
+		</footer>
+	</div>
+}
+
+// ShellBleed drops the tree AND rail; chrome + status are still visible.
+// Used by Mapmaker and Sandbox where the canvas needs the whole viewport.
+templ ShellBleed(p LayoutProps) {
+	<div class="bx-shell bx-shell--bleed">
+		<header class="bx-shell__chrome">
+			@Chrome(p)
+		</header>
+		<section class="bx-shell__work">
+			{ children... }
+		</section>
+		<footer class="bx-shell__status">
+			@StatusBar(p)
+		</footer>
+	</div>
+}
+
+// ---- chrome ----------------------------------------------------------
+
+templ Chrome(p LayoutProps) {
+	<div class="bx-chrome">
+		<a class="bx-chrome__word" href="/design/" aria-label="Boxland — Workspace home">
+			@Wordmark("")
+		</a>
+		<span class="bx-chrome__sep">·</span>
+		<span class="bx-chrome__project">{ projectName(p) }</span>
+
+		<div class="bx-chrome__counts">
+			<a class="bx-chrome__count" href="/design/assets" data-bx-count="asset" title="Assets">
+				<span class="bx-dot bx-dot--asset"></span>{ countLabel(p.Project.AssetCount) }
+			</a>
+			<a class="bx-chrome__count" href="/design/entities" data-bx-count="entity" title="Entities">
+				<span class="bx-dot bx-dot--entity"></span>{ countLabel(p.Project.EntityCount) }
+			</a>
+			<a class="bx-chrome__count" href="/design/maps" data-bx-count="map" title="Maps">
+				<span class="bx-dot bx-dot--map"></span>{ countLabel(p.Project.MapCount) }
+			</a>
+		</div>
+
+		<span class="bx-chrome__spacer"></span>
+
+		<button
+			type="button"
+			class="bx-chrome__draft"
+			data-count={ countAttr(p.Project.DraftCount) }
+			hx-get="/design/publish/preview"
+			hx-target="#publish-modal-host"
+			hx-swap="innerHTML"
+			data-copy-slot="chrome.drafts"
+		>
+			{ draftLabel(p.Project.DraftCount) }
+		</button>
+
+		<button
+			type="button"
+			class="bx-chrome__push"
+			hx-get="/design/publish/preview"
+			hx-target="#publish-modal-host"
+			hx-swap="innerHTML"
+			data-copy-slot="chrome.push"
+		>
+			Push to Live
+		</button>
+
+		<button
+			type="button"
+			class="bx-chrome__theme"
+			onclick="bxToggleTheme()"
+			aria-label="Toggle theme"
+			data-bx-theme-toggle
+			title="Toggle light / dark"
+		>
+			// Sun + moon glyphs as inline SVG (rectangular pixel-style)
+			<svg viewBox="0 0 14 14" width="14" height="14" fill="currentColor" aria-hidden="true">
+				<rect x="6"  y="0"  width="2" height="2"/>
+				<rect x="6"  y="12" width="2" height="2"/>
+				<rect x="0"  y="6"  width="2" height="2"/>
+				<rect x="12" y="6"  width="2" height="2"/>
+				<rect x="2"  y="2"  width="2" height="2"/>
+				<rect x="10" y="2"  width="2" height="2"/>
+				<rect x="2"  y="10" width="2" height="2"/>
+				<rect x="10" y="10" width="2" height="2"/>
+				<rect x="5"  y="3"  width="4" height="8"/>
+				<rect x="3"  y="5"  width="8" height="4"/>
+			</svg>
+		</button>
+
+		if p.Designer != nil {
+			<span class="bx-chrome__me" title={ p.Designer.Email }>{ designerHandle(p.Designer.Email) }</span>
+		}
+	</div>
+}
+
+// ---- status bar ------------------------------------------------------
+
+templ StatusBar(p LayoutProps) {
+	<div class="bx-status">
+		<span class="bx-status__key">
+			<kbd>⌘K</kbd> palette
+		</span>
+		<span class="bx-status__sep">·</span>
+		<span class="bx-status__live">● live</span>
+		<span class="bx-status__sep">·</span>
+		<span data-bx-status-msg></span>
+		<span class="bx-status__spacer"></span>
+		<span class="bx-status__key">
+			Esc closes
+		</span>
+	</div>
+}
+
+// ---- crumbs ----------------------------------------------------------
+
+templ Crumbs(crumbs []Crumb) {
+	<nav class="bx-work__crumbs" aria-label="Breadcrumb">
+		for i, c := range crumbs {
+			if i > 0 {
+				<span class="bx-work__crumbs__sep">/</span>
+			}
+			if c.Href == "" {
+				<span class="bx-work__crumbs__here">{ c.Label }</span>
+			} else {
+				<a href={ templ.SafeURL(c.Href) }>{ c.Label }</a>
+			}
+			if c.Badge != "" {
+				<span class="bx-badge">{ c.Badge }</span>
+			}
+		}
+	</nav>
+}
+
+// ---- project tree ----------------------------------------------------
+
+templ ProjectTree(p LayoutProps) {
+	<nav class="bx-tree" aria-label="Project tree">
+		// Always-on home + sandbox + settings links at the very top
+		<div class="bx-tree__section">
+			@treePinned(p.ActiveKind)
+		</div>
+
+		@treeSection(treeProps{
+			Kind:    "asset",
+			Title:   "Assets",
+			Section: p.Tree.Assets,
+			Active:  activeMatch(p.ActiveKind, p.ActiveID, "asset"),
+			NewHref: "/design/assets",
+			ListHref: "/design/assets",
+		})
+		@treeSection(treeProps{
+			Kind:    "entity",
+			Title:   "Entities",
+			Section: p.Tree.Entities,
+			Active:  activeMatch(p.ActiveKind, p.ActiveID, "entity"),
+			NewHref: "/design/entities",
+			ListHref: "/design/entities",
+		})
+		@treeSection(treeProps{
+			Kind:    "map",
+			Title:   "Maps",
+			Section: p.Tree.Maps,
+			Active:  activeMatch(p.ActiveKind, p.ActiveID, "map"),
+			NewHref: "/design/maps",
+			ListHref: "/design/maps",
+		})
+		@treeSection(treeProps{
+			Kind:    "socket",
+			Title:   "Sockets",
+			Section: p.Tree.Sockets,
+			Active:  activeMatch(p.ActiveKind, p.ActiveID, "socket"),
+			NewHref: "/design/sockets",
+			ListHref: "/design/sockets",
+		})
+		@treeSection(treeProps{
+			Kind:    "group",
+			Title:   "Tile groups",
+			Section: p.Tree.Groups,
+			Active:  activeMatch(p.ActiveKind, p.ActiveID, "group"),
+			NewHref: "/design/tile-groups",
+			ListHref: "/design/tile-groups",
+		})
+	</nav>
+}
+
+templ treePinned(activeKind string) {
+	<a
+		href="/design/"
+		class={ pinnedClass(activeKind, "home") }
+		aria-current?={ activeKind == "home" }
+	>
+		<span class="bx-tree__item__name">Workspace home</span>
+	</a>
+	<a
+		href="/design/sandbox"
+		class={ pinnedClass(activeKind, "sandbox") }
+		aria-current?={ activeKind == "sandbox" }
+	>
+		<span class="bx-tree__item__name">Sandbox</span>
+	</a>
+	<a
+		href="/design/settings"
+		class={ pinnedClass(activeKind, "settings") }
+		aria-current?={ activeKind == "settings" }
+	>
+		<span class="bx-tree__item__name">Settings</span>
+	</a>
+}
+
+type treeProps struct {
+	Kind     string
+	Title    string
+	Section  IndexSection
+	Active   func(int64) bool
+	NewHref  string
+	ListHref string
+}
+
+templ treeSection(t treeProps) {
+	<div class="bx-tree__section">
+		<div class="bx-tree__head">
+			<span class={ "bx-dot bx-dot--" + t.Kind }></span>
+			<a href={ templ.SafeURL(t.ListHref) }>{ t.Title }</a>
+			<span class="bx-tree__count">{ countLabel(t.Section.Total) }</span>
+			<a href={ templ.SafeURL(t.NewHref) } class="bx-tree__add" title="View all">+</a>
+		</div>
+		if t.Section.Total == 0 {
+			<a href={ templ.SafeURL(t.NewHref) } class="bx-tree__item bx-muted">
+				<span class="bx-tree__item__name">empty — add one</span>
+			</a>
+		} else {
+			<ul class="bx-tree__list">
+				for _, it := range t.Section.Items {
+					<li>
+						<a
+							href={ templ.SafeURL(it.Href) }
+							class="bx-tree__item"
+							aria-current?={ t.Active(it.ID) }
+							title={ it.Name }
+						>
+							<span class="bx-tree__item__name">{ it.Name }</span>
+							if it.Warn != "" {
+								<span class="bx-tree__warn" title={ it.Warn }></span>
+							}
+							if it.Meta != "" {
+								<span class="bx-tree__item__meta">{ it.Meta }</span>
+							}
+						</a>
+					</li>
+				}
+				if t.Section.Total > len(t.Section.Items) {
+					<li>
+						<a href={ templ.SafeURL(t.ListHref) } class="bx-tree__item bx-muted">
+							<span class="bx-tree__item__name">+{ overflowLabel(t.Section.Total, len(t.Section.Items)) } more</span>
+						</a>
+					</li>
+				}
+			</ul>
+		}
+	</div>
+}
+
+// ---- connections rail ------------------------------------------------
+
+templ ConnectionsRail(d *RailData) {
+	<div class="bx-rail">
+		if d == nil || (len(d.Uses) == 0 && len(d.UsedBy) == 0 && len(d.Suggestions) == 0) {
+			<div class="bx-rail__section">
+				<div class="bx-rail__head">Connections</div>
+				<div class="bx-rail__empty">
+					Open an asset, entity, or map to see what it connects to.
+				</div>
+			</div>
+		} else {
+			if len(d.Uses) > 0 {
+				<div class="bx-rail__section">
+					<div class="bx-rail__head">Uses</div>
+					<ul class="bx-rail__list">
+						for _, r := range d.Uses {
+							@railRefItem(r)
+						}
+					</ul>
+				</div>
+			}
+			if len(d.UsedBy) > 0 {
+				<div class="bx-rail__section">
+					<div class="bx-rail__head">Used by</div>
+					<ul class="bx-rail__list">
+						for _, r := range d.UsedBy {
+							@railRefItem(r)
+						}
+					</ul>
+				</div>
+			}
+			if len(d.Suggestions) > 0 {
+				<div class="bx-rail__section">
+					<div class="bx-rail__head">Suggested next</div>
+					for _, c := range d.Suggestions {
+						if c.HX != "" {
+							<button type="button" class="bx-rail__cta"
+								hx-post={ c.HX }
+								hx-target="body"
+							>{ c.Label }</button>
+						} else {
+							<a class="bx-rail__cta" href={ templ.SafeURL(c.Href) }>{ c.Label }</a>
+						}
+					}
+				</div>
+			}
+		}
+	</div>
+}
+
+templ railRefItem(r RailRef) {
+	<li>
+		<a class="bx-rail__item" href={ templ.SafeURL(r.Href) }>
+			<span class={ "bx-rail__item__icon bx-dot bx-dot--" + r.Kind }></span>
+			<span class="bx-rail__item__name">{ r.Label }</span>
+			if r.Meta != "" {
+				<span class="bx-rail__item__meta">{ r.Meta }</span>
+			}
+		</a>
+	</li>
+}
+
+// ---- CSRF helper (unchanged) ----------------------------------------
 
 // CSRFInput renders the hidden form field that plain (non-HTMX) <form
 // method="post"> submissions use to ship the CSRF token. HTMX requests
@@ -53,28 +569,111 @@ templ CSRFInput() {
 	<input type="hidden" name={ csrf.FormField } value={ csrf.Token(ctx) }/>
 }
 
-// TopNav is the persistent top navigation. Stub now, fleshed out in task #34.
-templ TopNav() {
-	<nav class="bx-topnav" aria-label="Main navigation">
-		<ol>
-			<li><a href="/design/assets" data-copy-slot="nav.assets">Assets</a></li>
-			<li><a href="/design/entities" data-copy-slot="nav.entities">Entities</a></li>
-			<li><a href="/design/sockets" data-copy-slot="nav.sockets">Sockets</a></li>
-			<li><a href="/design/tile-groups" data-copy-slot="nav.tilegroups">Tile groups</a></li>
-			<li><a href="/design/maps" data-copy-slot="nav.mapmaker">Mapmaker</a></li>
-			<li><a href="/design/sandbox" data-copy-slot="nav.sandbox">Sandbox</a></li>
-			<li><a href="/design/settings" data-copy-slot="nav.settings">Settings</a></li>
-		</ol>
-		<button type="button" class="bx-btn bx-btn--push"
-			hx-get="/design/publish/preview"
-			hx-target="#publish-modal-host"
-			hx-swap="innerHTML"
-			data-copy-slot="nav.push">
-			Push to Live
-		</button>
-		<span id="publish-status"></span>
-		// Dedicated modal host for the Push-to-Live preview so it
-		// doesn't collide with per-page #modal-host hosts.
-		<div id="publish-modal-host"></div>
-	</nav>
+// ---- helpers (Go side) ----------------------------------------------
+
+// initialTheme picks the theme attribute the server emits on first
+// render. Inline JS in <head> may override (cookie / localStorage may
+// disagree), but server-side default avoids a one-frame mismatch when
+// the cookie says "light".
+func initialTheme(t string) string {
+	if t == "light" {
+		return "light"
+	}
+	return "dark"
+}
+
+func isShellHidden(p LayoutProps) bool {
+	return p.HideTopNav || p.Variant == "auth"
+}
+
+func pageTitle(p LayoutProps) string {
+	if p.Title == "" {
+		return "Boxland"
+	}
+	return p.Title + " — Boxland"
+}
+
+func projectName(p LayoutProps) string {
+	if p.Project.Name == "" {
+		return "my world"
+	}
+	return p.Project.Name
+}
+
+func countLabel(n int) string {
+	if n < 0 {
+		n = 0
+	}
+	return formatIntPad(n)
+}
+
+func countAttr(n int) string {
+	if n < 0 {
+		n = 0
+	}
+	return formatIntPad(n)
+}
+
+func draftLabel(n int) string {
+	if n == 0 {
+		return "no drafts"
+	}
+	if n == 1 {
+		return "1 draft"
+	}
+	return formatIntPad(n) + " drafts"
+}
+
+func designerHandle(email string) string {
+	for i, c := range email {
+		if c == '@' {
+			return email[:i]
+		}
+	}
+	return email
+}
+
+func pinnedClass(active, kind string) string {
+	if active == kind {
+		return "bx-tree__item"
+	}
+	return "bx-tree__item"
+}
+
+func overflowLabel(total, shown int) string {
+	if total <= shown {
+		return "0"
+	}
+	return formatIntPad(total - shown)
+}
+
+// activeMatch returns a closure used by treeSection to mark the active
+// item. Closure form keeps the call site readable in the templ.
+func activeMatch(activeKind string, activeID int64, want string) func(int64) bool {
+	if activeKind != want {
+		return func(int64) bool { return false }
+	}
+	return func(id int64) bool { return id == activeID }
+}
+
+// formatIntPad is a tiny templ-safe int formatter that keeps the
+// templates from importing strconv just for stringification.
+func formatIntPad(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	out := ""
+	for n > 0 {
+		d := byte(n % 10)
+		out = string(rune('0'+d)) + out
+		n /= 10
+	}
+	if neg {
+		out = "-" + out
+	}
+	return out
 }

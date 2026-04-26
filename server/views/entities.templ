@@ -6,20 +6,33 @@ import (
 	"boxland/server/internal/entities"
 )
 
-// EntitiesListProps drives the Entity Manager landing page.
+// EntitiesListProps drives the Entity Manager list page.
 type EntitiesListProps struct {
+	Layout LayoutProps
 	Items  []entities.EntityType
 	Search string
 }
 
 templ EntitiesList(p EntitiesListProps) {
-	@Layout(LayoutProps{
-		Title:   "Entity types",
-		Surface: "entity-manager",
-	}) {
-		<section class="bx-stack">
+	@Layout(p.Layout) {
+		<div class="bx-work__strip">
+			<span class="bx-work__chip">
+				<span class="bx-dot bx-dot--entity"></span>
+				<strong>{ formatIntPad(len(p.Items)) }</strong> entity types
+			</span>
+			<span class="bx-work__chip bx-work__chip--muted">
+				built from your assets · place on maps · drive with automations
+			</span>
+		</div>
+
+		<div class="bx-work__body bx-stack">
 			<header class="bx-row bx-row--apart">
-				<h1 data-copy-slot="entities.title">Entity types</h1>
+				<div>
+					<h1 data-copy-slot="entities.title">Entities</h1>
+					<p class="bx-muted bx-small" data-copy-slot="entities.lede">
+						Compose components and behavior. Tiles, NPCs, items, triggers.
+					</p>
+				</div>
 				<div class="bx-row">
 					<button
 						type="button"
@@ -28,9 +41,7 @@ templ EntitiesList(p EntitiesListProps) {
 						hx-get="/design/entities/new"
 						hx-target="#modal-host"
 						hx-swap="innerHTML"
-					>
-						New entity type
-					</button>
+					>+ New entity type</button>
 				</div>
 			</header>
 
@@ -45,7 +56,7 @@ templ EntitiesList(p EntitiesListProps) {
 					type="search"
 					name="q"
 					value={ p.Search }
-					placeholder="Lorem ipsum search…"
+					placeholder="Search by name or tag"
 					class="bx-input"
 					style="max-width: 280px;"
 					data-copy-slot="entities.search.placeholder"
@@ -53,60 +64,89 @@ templ EntitiesList(p EntitiesListProps) {
 			</form>
 
 			@EntitiesGrid(p)
-		</section>
+		</div>
 
 		<div id="modal-host"></div>
 	}
 }
 
 templ EntitiesGrid(p EntitiesListProps) {
-	<table id="entities-grid" class="bx-table">
-		<thead>
-			<tr>
-				<th>Name</th>
-				<th>Tags</th>
-				<th>Collider</th>
-				<th></th>
-			</tr>
-		</thead>
-		<tbody>
-			if len(p.Items) == 0 {
-				<tr><td colspan="4" class="bx-muted" data-copy-slot="entities.empty">
-					Lorem ipsum dolor sit amet. No entity types match the current filter.
-				</td></tr>
-			}
-			for _, et := range p.Items {
+	if len(p.Items) == 0 {
+		<div id="entities-grid" class="bx-panel" style="text-align:center;">
+			<p class="bx-muted" data-copy-slot="entities.empty">
+				No entities match these filters.
+			</p>
+			<p class="bx-small bx-muted" style="margin-top: var(--bx-s2);">
+				An entity is a thing in your world: a tree, a goblin, a door.
+			</p>
+		</div>
+	} else {
+		<table id="entities-grid" class="bx-table">
+			<thead>
 				<tr>
-					<td>
-						<a
-							href={ templ.URL(fmt.Sprintf("/design/entities/%d", et.ID)) }
-							hx-get={ fmt.Sprintf("/design/entities/%d", et.ID) }
-							hx-target="#modal-host"
-							hx-swap="innerHTML"
-						>{ et.Name }</a>
-					</td>
-					<td>
-						for _, t := range et.Tags {
-							<span class="bx-badge">{ t }</span>
-						}
-					</td>
-					<td class="bx-small bx-muted">
-						{ fmt.Sprintf("%d×%d @ (%d,%d)", et.ColliderW, et.ColliderH, et.ColliderAnchorX, et.ColliderAnchorY) }
-					</td>
-					<td>
-						<button
-							type="button"
-							class="bx-btn bx-btn--ghost bx-small"
-							hx-post={ fmt.Sprintf("/design/entities/%d/duplicate", et.ID) }
-							hx-target="#entities-grid"
-							hx-swap="outerHTML"
-							data-copy-slot="entities.duplicate"
-						>
-							Duplicate
-						</button>
-					</td>
+					<th>Name</th>
+					<th>Kind</th>
+					<th>Tags</th>
+					<th>Collider</th>
+					<th>Sprite</th>
+					<th></th>
 				</tr>
+			</thead>
+			<tbody>
+				for _, et := range p.Items {
+					<tr>
+						<td>
+							<a
+								href={ templ.URL(fmt.Sprintf("/design/entities/%d", et.ID)) }
+								hx-get={ fmt.Sprintf("/design/entities/%d", et.ID) }
+								hx-target="#modal-host"
+								hx-swap="innerHTML"
+							>{ et.Name }</a>
+						</td>
+						<td><span class="bx-badge">{ entityKindLabel(et) }</span></td>
+						<td>
+							for _, t := range et.Tags {
+								<span class="bx-badge">{ t }</span>
+							}
+						</td>
+						<td class="bx-mono bx-small bx-muted">
+							{ fmt.Sprintf("%d×%d @ (%d,%d)", et.ColliderW, et.ColliderH, et.ColliderAnchorX, et.ColliderAnchorY) }
+						</td>
+						<td class="bx-small">
+							if et.SpriteAssetID != nil {
+								<span style="color: var(--bx-success);">✓</span>
+							} else {
+								<span style="color: var(--bx-danger);">missing</span>
+							}
+						</td>
+						<td>
+							<button
+								type="button"
+								class="bx-btn bx-btn--ghost bx-btn--small"
+								hx-post={ fmt.Sprintf("/design/entities/%d/duplicate", et.ID) }
+								hx-target="#entities-grid"
+								hx-swap="outerHTML"
+								data-copy-slot="entities.duplicate"
+							>Duplicate</button>
+						</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	}
+}
+
+// entityKindLabel picks the most-recognizable tag from an entity's tag
+// list to show as its "kind". Falls back to a generic label when none
+// of the well-known kinds is set.
+func entityKindLabel(et entities.EntityType) string {
+	known := []string{"tile", "npc", "item", "trigger"}
+	for _, k := range known {
+		for _, t := range et.Tags {
+			if t == k {
+				return k
 			}
-		</tbody>
-	</table>
+		}
+	}
+	return "entity"
 }

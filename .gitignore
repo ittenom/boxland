@@ -57,3 +57,6 @@ server/migrate.out
 server/migrate.err
 server/server.log
 server/server.err.log
+
+# Superpowers brainstorming session files (mockups, server state)
+.superpowers/

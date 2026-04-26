@@ -8,9 +8,10 @@ import (
 
 // MapmakerProps drives the per-map editor page (/design/maps/{id}).
 type MapmakerProps struct {
+	Layout LayoutProps
 	Map    maps.Map
 	Layers []maps.Layer
-	// EntityTypePalette is the palette shown in the toolbar. v1 just lists
+	// PaletteEntityTypes is the palette shown in the toolbar. v1 lists
 	// every tile-kind entity-type the project has so designers can paint
 	// with anything; later iterations filter / favorite.
 	PaletteEntityTypes []PaletteEntry
@@ -18,30 +19,33 @@ type MapmakerProps struct {
 
 // PaletteEntry is one tile selectable from the toolbar.
 type PaletteEntry struct {
-	ID   int64
-	Name string
+	ID        int64
+	Name      string
+	SpriteURL string // optional CDN URL of the sprite preview
 }
 
 templ MapmakerPage(p MapmakerProps) {
-	@Layout(LayoutProps{
-		Title:     "Mapmaker — " + p.Map.Name,
-		Surface:   "mapmaker",
-		BodyClass: "bx-mapmaker-body",
-	}) {
+	@Layout(p.Layout) {
 		<section class="bx-mapmaker">
-			<header class="bx-row bx-row--apart">
+			<header class="bx-row bx-row--apart" style="padding: 0 var(--bx-s2);">
 				<div class="bx-row">
-					<a href="/design/maps" class="bx-btn bx-btn--ghost bx-small" data-copy-slot="mapmaker.back">
+					<a href="/design/maps" class="bx-btn bx-btn--ghost bx-btn--small" data-copy-slot="mapmaker.back">
 						← Maps
 					</a>
-					<h1 style="margin: 0; font-size: 18px;">{ p.Map.Name }</h1>
-					<span class="bx-small bx-muted">
-						{ fmt.Sprintf("%d × %d  ·  %s", p.Map.Width, p.Map.Height, p.Map.Mode) }
+					<h1 style="margin: 0; font-size: 16px;">{ p.Map.Name }</h1>
+					<span class="bx-mono bx-small bx-muted">
+						{ fmt.Sprintf("%d × %d · %s", p.Map.Width, p.Map.Height, p.Map.Mode) }
 					</span>
 				</div>
 				<div class="bx-row">
-					<button type="button" class="bx-btn bx-btn--ghost" data-bx-action="mapmaker-zoom-out" data-copy-slot="mapmaker.zoomout">−</button>
-					<button type="button" class="bx-btn bx-btn--ghost" data-bx-action="mapmaker-zoom-in" data-copy-slot="mapmaker.zoomin">+</button>
+					<a
+						href={ templ.URL(fmt.Sprintf("/design/sandbox/launch/%d", p.Map.ID)) }
+						class="bx-btn bx-btn--primary bx-btn--small"
+						title="Launch this map in Sandbox"
+						data-copy-slot="mapmaker.test"
+					>▶ Test in Sandbox</a>
+					<button type="button" class="bx-btn bx-btn--ghost bx-btn--small" data-bx-action="mapmaker-zoom-out" data-copy-slot="mapmaker.zoomout">−</button>
+					<button type="button" class="bx-btn bx-btn--ghost bx-btn--small" data-bx-action="mapmaker-zoom-in" data-copy-slot="mapmaker.zoomin">+</button>
 				</div>
 			</header>
 
@@ -59,17 +63,17 @@ templ MapmakerPage(p MapmakerProps) {
 						data-map-w={ fmt.Sprintf("%d", p.Map.Width) }
 						data-map-h={ fmt.Sprintf("%d", p.Map.Height) }
 					></canvas>
-					<div class="bx-mapmaker__statusbar bx-small bx-muted">
+					<div class="bx-mapmaker__statusbar">
 						<span data-bx-mapmaker-status="cursor">(–, –)</span>
-						·
+						<span class="bx-muted">·</span>
 						<span data-bx-mapmaker-status="tool">brush</span>
-						·
+						<span class="bx-muted">·</span>
 						<span data-bx-mapmaker-status="layer">base</span>
 					</div>
 				</main>
 
 				<aside class="bx-mapmaker__inspector bx-stack-tight" id="mapmaker-inspector">
-					<h2 class="bx-panel__title" data-copy-slot="mapmaker.inspector.title">Inspector</h2>
+					<h3 class="bx-panel__title" data-copy-slot="mapmaker.inspector.title">Inspector</h3>
 					<p class="bx-muted bx-small" data-copy-slot="mapmaker.inspector.empty">
 						Click a tile to edit its per-cell overrides.
 					</p>
@@ -83,7 +87,7 @@ templ MapmakerPage(p MapmakerProps) {
 
 // MapmakerToolbar is the left-hand sidebar: tools, layers, palette.
 templ MapmakerToolbar(p MapmakerProps) {
-	<section class="bx-panel" data-bx-toolbar>
+	<section class="bx-panel" data-bx-toolbar style="padding: var(--bx-s2);">
 		<h3 class="bx-panel__title" data-copy-slot="mapmaker.tools.title">Tools</h3>
 		<div class="bx-mapmaker__tools">
 			@toolButton("brush", "B", "Brush")
@@ -94,7 +98,7 @@ templ MapmakerToolbar(p MapmakerProps) {
 		</div>
 	</section>
 
-	<section class="bx-panel" data-bx-layers>
+	<section class="bx-panel" data-bx-layers style="padding: var(--bx-s2);">
 		<h3 class="bx-panel__title" data-copy-slot="mapmaker.layers.title">Layers</h3>
 		<ul class="bx-list bx-mapmaker__layers" role="listbox" aria-label="Layers">
 			for i, l := range p.Layers {
@@ -104,18 +108,19 @@ templ MapmakerToolbar(p MapmakerProps) {
 					if i == 0 { aria-selected="true" } else { aria-selected="false" }
 				>
 					<span>{ l.Name }</span>
-					<span class="bx-badge bx-small">{ l.Kind }</span>
+					<span class="bx-badge">{ l.Kind }</span>
 				</li>
 			}
 		</ul>
 	</section>
 
-	<section class="bx-panel" data-bx-palette>
-		<h3 class="bx-panel__title" data-copy-slot="mapmaker.palette.title">Tile palette</h3>
+	<section class="bx-panel" data-bx-palette style="padding: var(--bx-s2);">
+		<h3 class="bx-panel__title" data-copy-slot="mapmaker.palette.title">Palette</h3>
 		if len(p.PaletteEntityTypes) == 0 {
 			<p class="bx-small bx-muted" data-copy-slot="mapmaker.palette.empty">
-				Lorem ipsum: no tile-kind entity types yet. Create one in
-				the Entity Manager and it appears here.
+				No tile entities yet.
+				<br/>
+				<a href="/design/entities">Create one</a> and it appears here.
 			</p>
 		}
 		<ol class="bx-mapmaker__palette" role="listbox" aria-label="Tile palette">
@@ -125,7 +130,12 @@ templ MapmakerToolbar(p MapmakerProps) {
 					if i == 0 { aria-selected="true" } else { aria-selected="false" }
 					title={ e.Name }
 				>
-					<span>{ e.Name }</span>
+					<span class="bx-mapmaker__palette__thumb bx-pixel">
+						if e.SpriteURL != "" {
+							<img src={ e.SpriteURL } alt={ e.Name } loading="lazy"/>
+						}
+					</span>
+					<span class="bx-mapmaker__palette__name">{ e.Name }</span>
 				</li>
 			}
 		</ol>
@@ -142,14 +152,13 @@ templ MapmakerToolbar(p MapmakerProps) {
 // result overlays the canvas as a ghost layer.
 templ MapmakerProceduralPanel(p MapmakerProps) {
 	<script src="/static/js/mapmaker-procedural.js" defer></script>
-	<section class="bx-panel" data-bx-procedural data-map-id={ fmt.Sprintf("%d", p.Map.ID) }>
+	<section class="bx-panel" data-bx-procedural data-map-id={ fmt.Sprintf("%d", p.Map.ID) } style="padding: var(--bx-s2);">
 		<h3 class="bx-panel__title" data-copy-slot="mapmaker.proc.title">Procedural</h3>
 		<p class="bx-small bx-muted" data-copy-slot="mapmaker.proc.help">
-			Lorem ipsum dolor: pick a seed, then Generate to preview a WFC
-			layout. Lock the seed to keep it; Reroll picks a new one.
+			Pick a seed, then Generate to preview. Lock the seed to keep it.
 		</p>
 
-		<div class="bx-stack-tight">
+		<div class="bx-stack-tight" style="margin-top: var(--bx-s2);">
 			<label class="bx-row" style="gap: 8px;">
 				<span class="bx-small">Seed</span>
 				<input
@@ -163,27 +172,27 @@ templ MapmakerProceduralPanel(p MapmakerProps) {
 			</label>
 
 			<label class="bx-row" style="gap: 8px;">
-				<input type="checkbox" data-bx-proc-locked />
+				<input type="checkbox" data-bx-proc-locked class="bx-checkbox"/>
 				<span class="bx-small" data-copy-slot="mapmaker.proc.lock">Lock seed</span>
 			</label>
 
 			<div class="bx-row">
 				<button
 					type="button"
-					class="bx-btn bx-btn--primary bx-small"
+					class="bx-btn bx-btn--primary bx-btn--small"
 					data-bx-proc-generate
 					data-copy-slot="mapmaker.proc.generate"
 				>Generate</button>
 				<button
 					type="button"
-					class="bx-btn bx-btn--ghost bx-small"
+					class="bx-btn bx-btn--ghost bx-btn--small"
 					data-bx-proc-reroll
 					title="Pick a new random seed and generate"
 					data-copy-slot="mapmaker.proc.reroll"
 				>Reroll</button>
 				<button
 					type="button"
-					class="bx-btn bx-btn--ghost bx-small"
+					class="bx-btn bx-btn--ghost bx-btn--small"
 					data-bx-proc-clear
 					title="Hide the procedural ghost overlay"
 					data-copy-slot="mapmaker.proc.clear"
@@ -193,19 +202,19 @@ templ MapmakerProceduralPanel(p MapmakerProps) {
 			if p.Map.PersistenceMode == "persistent" {
 				<button
 					type="button"
-					class="bx-btn bx-btn--push bx-small"
+					class="bx-btn bx-btn--push bx-btn--small"
 					data-bx-proc-commit
 					title="Persist the previewed layout to map_tiles. Replaces the base layer's existing tiles."
 					data-copy-slot="mapmaker.proc.commit"
 				>Commit to map</button>
 			} else {
 				<p class="bx-small bx-muted" data-copy-slot="mapmaker.proc.transient">
-					Lorem ipsum: this map is transient — the world regenerates from the seed every refresh window.
+					Transient map — regenerates from the seed every refresh window.
 				</p>
 			}
 
 			<p class="bx-small bx-muted" data-bx-proc-status aria-live="polite"></p>
-			<p class="bx-small" data-bx-proc-error role="alert" style="color: var(--bx-color-danger, #e6536b); display: none;"></p>
+			<p class="bx-small" data-bx-proc-error role="alert" style="color: var(--bx-danger); display: none;"></p>
 		</div>
 	</section>
 }
@@ -222,7 +231,7 @@ func proceduralInitialSeed(m maps.Map) int64 {
 templ toolButton(id, hotkey, label string) {
 	<button
 		type="button"
-		class="bx-btn bx-btn--ghost"
+		class="bx-btn"
 		data-bx-tool={ id }
 		title={ label + " (" + hotkey + ")" }
 	>

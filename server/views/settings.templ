@@ -8,19 +8,18 @@ package views
 // can have different rebindable command sets, different audio defaults,
 // etc.) without duplicating the Templ.
 type SettingsProps struct {
-	Realm      string // "designer" or "player"
-	LoadURL    string // GET endpoint that returns the JSON blob
-	SaveURL    string // PUT endpoint that takes the JSON blob
-	HideTopNav bool   // player surface hides the designer chrome
+	Layout  LayoutProps // populated for designer realm; player realm leaves Layout zero + sets HideTopNav
+	Realm   string      // "designer" or "player"
+	LoadURL string      // GET endpoint that returns the JSON blob
+	SaveURL string      // PUT endpoint that takes the JSON blob
+
+	// Player-realm only: legacy hide-shell flag. Designer realm sets
+	// Variant + populates Layout instead.
+	HideTopNav bool
 }
 
 templ SettingsPage(p SettingsProps) {
-	@Layout(LayoutProps{
-		Title:      "Settings",
-		Surface:    "settings",
-		HideTopNav: p.HideTopNav,
-		BodyClass:  "bx-settings-body",
-	}) {
+	@Layout(settingsLayout(p)) {
 		if p.HideTopNav {
 			@PlayTopNav("", "Default server")
 		}
@@ -36,16 +35,34 @@ templ SettingsPage(p SettingsProps) {
 				<span class="bx-small bx-muted" data-bx-status>—</span>
 			</header>
 
-			@SettingsSection("Font", "settings.font.title") {
-				<p class="bx-muted bx-small" data-copy-slot="settings.font.lede">
-					Lorem ipsum dolor sit amet — pick a font for the UI. Live preview applies as you click.
+			@SettingsSection("Theme", "settings.theme.title") {
+				<p class="bx-muted bx-small" data-copy-slot="settings.theme.lede">
+					Console appearance. Designers can pick light or dark; we'll remember.
 				</p>
-				<div class="bx-row bx-row--apart" data-bx-font-picker>
-					@SettingsFontOption("C64esque",  "C64esque")
-					@SettingsFontOption("AtariGames", "AtariGames")
-					@SettingsFontOption("BIOSfontII", "BIOSfontII")
-					@SettingsFontOption("Kubasta",    "Kubasta")
-					@SettingsFontOption("TinyUnicode", "TinyUnicode")
+				<div class="bx-row">
+					<button type="button" class="bx-btn" onclick="document.documentElement.setAttribute('data-theme','dark'); document.cookie='bx_theme=dark; path=/; max-age=31536000; SameSite=Lax'; try{localStorage.setItem('bx_theme','dark');}catch(e){}">
+						Dark
+					</button>
+					<button type="button" class="bx-btn" onclick="document.documentElement.setAttribute('data-theme','light'); document.cookie='bx_theme=light; path=/; max-age=31536000; SameSite=Lax'; try{localStorage.setItem('bx_theme','light');}catch(e){}">
+						Light
+					</button>
+					<span class="bx-small bx-muted" style="margin-left: var(--bx-s2);">
+						Or hit the toggle in the chrome at any time.
+					</span>
+				</div>
+			}
+
+			@SettingsSection("Project font", "settings.font.title") {
+				<p class="bx-muted bx-small" data-copy-slot="settings.font.lede">
+					In-game text uses this font. The console UI always uses DM Mono.
+				</p>
+				<div class="bx-row" data-bx-font-picker style="flex-wrap: wrap;">
+					@SettingsFontOption("DM Mono",     "DM Mono")
+					@SettingsFontOption("C64esque",    "C64esque")
+					@SettingsFontOption("Atari Games", "AtariGames")
+					@SettingsFontOption("BIOS font",   "BIOSfontII")
+					@SettingsFontOption("Kubasta",     "Kubasta")
+					@SettingsFontOption("Tiny Unicode","TinyUnicode")
 				</div>
 				<p class="bx-small bx-muted" style="margin-top: var(--bx-s2);">
 					<span class="bx-mono" data-copy-slot="settings.font.preview">
@@ -62,14 +79,14 @@ templ SettingsPage(p SettingsProps) {
 
 			@SettingsSection("Spectator", "settings.spectator.title") {
 				<label class="bx-row" style="gap: var(--bx-s2); align-items: center;">
-					<input type="checkbox" data-bx-spectator-freecam/>
+					<input type="checkbox" data-bx-spectator-freecam class="bx-checkbox"/>
 					<span data-copy-slot="settings.spectator.freecam">Free-cam by default (vs. follow target)</span>
 				</label>
 			}
 
 			@SettingsSection("Controls", "settings.controls.title") {
 				<p class="bx-muted bx-small" data-copy-slot="settings.controls.lede">
-					Lorem ipsum — click a binding then press a key to rebind. Esc cancels.
+					Click a binding, then press a key to rebind. Esc cancels.
 				</p>
 				<table class="bx-table" data-bx-rebinder>
 					<thead>
@@ -85,9 +102,9 @@ templ SettingsPage(p SettingsProps) {
 				</table>
 			}
 
-			<footer class="bx-row bx-row--apart">
+			<footer class="bx-row bx-row--apart" style="margin-top: var(--bx-s4);">
 				<span class="bx-small bx-muted" data-copy-slot="settings.footnote">
-					Settings are saved to your account; localStorage holds an offline copy.
+					Settings save to your account; localStorage keeps an offline copy.
 				</span>
 				<button type="button" class="bx-btn bx-btn--ghost" data-bx-reset data-copy-slot="settings.reset">
 					Reset to defaults
@@ -96,6 +113,24 @@ templ SettingsPage(p SettingsProps) {
 		</main>
 		<script type="module" src="/static/web/settings.js" defer></script>
 	}
+}
+
+// settingsLayout merges the player-vs-designer realm decision: designer
+// uses the populated Layout; player realm keeps the legacy
+// HideTopNav-controlled chrome via PlayTopNav.
+func settingsLayout(p SettingsProps) LayoutProps {
+	if p.HideTopNav {
+		return LayoutProps{
+			Title:      "Settings",
+			Surface:    "settings",
+			BodyClass:  "bx-settings-body",
+			HideTopNav: true,
+		}
+	}
+	if p.Layout.BodyClass == "" {
+		p.Layout.BodyClass = "bx-settings-body"
+	}
+	return p.Layout
 }
 
 templ SettingsSection(title, slot string) {
@@ -110,7 +145,7 @@ templ SettingsSection(title, slot string) {
 templ SettingsFontOption(label, fontFamily string) {
 	<button
 		type="button"
-		class="bx-btn bx-btn--ghost bx-settings-font"
+		class="bx-btn bx-settings-font"
 		data-bx-font={ fontFamily }
 		style={ "font-family: '" + fontFamily + "', monospace;" }
 	>{ label }</button>

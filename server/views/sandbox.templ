@@ -8,40 +8,63 @@ import (
 
 // SandboxIndexProps drives /design/sandbox -- the picker page where a
 // designer chooses a map to sandbox-test. PLAN.md §131.
+//
+// Note: any map card on /design/maps also has a "▶ Test" CTA that
+// launches sandbox directly; this page is the cross-map entry point
+// when you don't know which map you want yet.
 type SandboxIndexProps struct {
-	Items []maps.Map
+	Layout LayoutProps
+	Items  []maps.Map
 }
 
 templ SandboxIndex(p SandboxIndexProps) {
-	@Layout(LayoutProps{
-		Title:   "Sandbox",
-		Surface: "sandbox-picker",
-	}) {
-		<section class="bx-stack">
-			<header class="bx-row bx-row--apart">
+	@Layout(p.Layout) {
+		<div class="bx-work__strip">
+			<span class="bx-work__chip">
+				<span class="bx-dot bx-dot--map"></span>
+				<strong>{ formatIntPad(len(p.Items)) }</strong> maps available to test
+			</span>
+			<span class="bx-work__chip bx-work__chip--muted">
+				sandbox runs against <em>draft</em> data — try changes safely
+			</span>
+		</div>
+
+		<div class="bx-work__body bx-stack">
+			<header>
 				<h1 data-copy-slot="sandbox.title">Sandbox</h1>
 				<p class="bx-muted bx-small" data-copy-slot="sandbox.lede">
-					Lorem ipsum: pick a map to sandbox-test against draft data.
+					Test any map against your latest drafts. Designer commands are
+					unlocked: spawn entities, freeze the tick, take control.
 				</p>
 			</header>
-			<ul class="bx-cards">
-				if len(p.Items) == 0 {
-					<li class="bx-muted bx-card" data-copy-slot="sandbox.empty">
-						No maps yet. Create one in the Mapmaker first.
-					</li>
-				}
-				for _, m := range p.Items {
-					<li class="bx-card">
-						<a href={ templ.URL(fmt.Sprintf("/design/sandbox/launch/%d", m.ID)) } class="bx-card__title">
-							{ m.Name }
-						</a>
-						<p class="bx-card__meta bx-small bx-muted">
-							{ fmt.Sprintf("%d × %d • %s", m.Width, m.Height, m.Mode) }
-						</p>
-					</li>
-				}
-			</ul>
-		</section>
+
+			if len(p.Items) == 0 {
+				<div class="bx-panel" style="text-align: center;">
+					<p class="bx-muted" data-copy-slot="sandbox.empty">No maps yet.</p>
+					<p class="bx-small bx-muted" style="margin-top: var(--bx-s2);">
+						Create a map to start sandbox-testing.
+					</p>
+					<a href="/design/maps" class="bx-btn bx-btn--primary" style="margin-top: var(--bx-s3);">
+						Go to Maps
+					</a>
+				</div>
+			} else {
+				<ul class="bx-cards">
+					for _, m := range p.Items {
+						<li class="bx-card">
+							<a class="bx-card__title" href={ templ.URL(fmt.Sprintf("/design/sandbox/launch/%d", m.ID)) }>
+								▶ { m.Name }
+							</a>
+							<p class="bx-card__meta">
+								<span class="bx-mono">{ fmt.Sprintf("%d × %d", m.Width, m.Height) }</span>
+								<span> · </span>
+								<span>{ m.Mode }</span>
+							</p>
+						</li>
+					}
+				</ul>
+			}
+		</div>
 	}
 }
 
@@ -62,6 +85,8 @@ templ SandboxGamePage(p SandboxGameProps) {
 		Title:     "Sandbox: " + p.Map.Name,
 		Surface:   "sandbox-game",
 		BodyClass: "bx-game-body bx-sandbox-body",
+		// Auth-style: full-bleed game, no shell chrome.
+		HideTopNav: true,
 	}) {
 		<main class="bx-game-shell" id="bx-game-host"
 			data-bx-map-id={ formatInt64(p.Map.ID) }
@@ -79,41 +104,38 @@ templ SandboxGamePage(p SandboxGameProps) {
 			</noscript>
 		</main>
 
-		// Designer HUD overlay (PLAN.md §131). The runtime ops
-		// (Freeze/Step/Spawn/...) target the sandbox instance via
-		// DesignerCommand opcodes. Cmd-K opens the shared palette
-		// (the game/loop's CommandBus) filtered to designer.*
-		// commands. The Inspector + Spawn palette stubs are wired
-		// to the bus and surface the same descriptor-driven form
-		// rendering used elsewhere; full per-component editor lands
-		// when the runtime exposes a "selected entity" hook to the
-		// HUD.
 		<aside class="bx-sandbox-hud" id="bx-sandbox-hud" aria-label="Sandbox HUD">
 			<header class="bx-row bx-row--apart" style="gap: var(--bx-s2);">
-				<span class="bx-badge bx-badge--info" data-copy-slot="sandbox.hud.title">Sandbox</span>
-				<span class="bx-small bx-mono" data-bx-instance-display>{ p.InstanceID }</span>
-				<span class="bx-small bx-muted" data-bx-state-badge>connecting</span>
-				<span class="bx-small bx-muted" data-bx-tick></span>
+				<span class="bx-badge bx-badge--accent" data-copy-slot="sandbox.hud.title">SANDBOX</span>
+				<span class="bx-mono bx-small" data-bx-instance-display>{ p.InstanceID }</span>
+				<a href="/design/maps" class="bx-btn bx-btn--ghost bx-btn--small" title="Exit sandbox">Exit</a>
 			</header>
 
+			<div class="bx-row bx-small">
+				<span class="bx-muted">Map</span>
+				<span style="color: var(--bx-fg-0);">{ p.Map.Name }</span>
+				<span style="margin-left: auto;" data-bx-state-badge class="bx-muted">connecting</span>
+				<span class="bx-muted" data-bx-tick></span>
+			</div>
+
 			<section class="bx-sandbox-hud__row">
-				<button type="button" class="bx-btn bx-btn--ghost bx-small" data-bx-sandbox-op="freeze"
+				<button type="button" class="bx-btn bx-btn--small" data-bx-sandbox-op="freeze"
 					title="Freeze the simulation"
 					data-copy-slot="sandbox.hud.freeze">Freeze</button>
-				<button type="button" class="bx-btn bx-btn--ghost bx-small" data-bx-sandbox-op="step"
+				<button type="button" class="bx-btn bx-btn--small" data-bx-sandbox-op="step"
 					title="Advance one tick (frozen only)"
 					data-copy-slot="sandbox.hud.step">Step</button>
-				<button type="button" class="bx-btn bx-btn--ghost bx-small" data-bx-sandbox-op="godmode"
+				<button type="button" class="bx-btn bx-btn--small" data-bx-sandbox-op="godmode"
 					title="Toggle damage / interaction immunity"
 					data-copy-slot="sandbox.hud.godmode">Godmode</button>
-				<button type="button" class="bx-btn bx-btn--ghost bx-small" data-bx-sandbox-op="spawn"
+				<button type="button" class="bx-btn bx-btn--small" data-bx-sandbox-op="spawn"
 					title="Open the spawn palette"
 					data-copy-slot="sandbox.hud.spawn">Spawn…</button>
 			</section>
 
 			<details>
 				<summary class="bx-small bx-muted" data-copy-slot="sandbox.hud.inspector">
-					Inspector (selected entity)
+					Inspector
 				</summary>
 				<div class="bx-stack-tight" data-bx-inspector>
 					<p class="bx-small bx-muted" data-copy-slot="sandbox.hud.inspector.empty">
@@ -123,7 +145,7 @@ templ SandboxGamePage(p SandboxGameProps) {
 			</details>
 
 			<footer class="bx-small bx-muted" data-copy-slot="sandbox.hud.cmdk">
-				Cmd/Ctrl-K opens the designer command palette.
+				⌘K opens the designer command palette.
 			</footer>
 		</aside>
 

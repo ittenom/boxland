@@ -12,65 +12,87 @@ templ LoginPage(p LoginProps) {
 	@Layout(LayoutProps{
 		Title:      titleFor(p.Mode),
 		Surface:    "designer-auth",
+		Variant:    "auth",
 		HideTopNav: true,
 	}) {
-		<section class="bx-panel" style="max-width: 400px; margin: var(--bx-s7) auto;">
-			<h1 data-copy-slot={ "auth." + p.Mode + ".title" }>{ titleFor(p.Mode) }</h1>
-			<p class="bx-muted" data-copy-slot={ "auth." + p.Mode + ".lede" }>
-				Lorem ipsum dolor sit amet, consectetur adipiscing elit.
-			</p>
-			if p.FormError != "" {
-				<div class="bx-toast bx-toast--error" role="alert">{ p.FormError }</div>
-			}
-			<form method="post" class="bx-stack" action={ templ.URL(actionFor(p.Mode)) }>
-				@CSRFInput()
-				<div class="bx-field">
-					<label for="email" class="bx-label" data-copy-slot="auth.email">Email</label>
-					<input
-						class="bx-input"
-						id="email"
-						name="email"
-						type="email"
-						autocomplete="email"
-						required
-						value={ p.Email }
-					/>
+		<section class="bx-auth">
+			<div class="bx-auth__card">
+				<div class="bx-auth__hero">
+					@Wordmark("bx-wordmark--lg")
+					<p class="bx-auth__lede" data-copy-slot={ "auth." + p.Mode + ".lede" }>
+						{ ledeFor(p.Mode) }
+					</p>
 				</div>
-				<div class="bx-field">
-					<label for="password" class="bx-label" data-copy-slot="auth.password">Password</label>
-					<input
-						class="bx-input"
-						id="password"
-						name="password"
-						type="password"
-						if p.Mode == "signup" { autocomplete="new-password" minlength="8" } else { autocomplete="current-password" }
-						required
-					/>
-				</div>
-				<div class="bx-row bx-row--apart">
-					if p.Mode == "login" {
-						<a href="/design/signup" class="bx-small" data-copy-slot="auth.create-account">
-							Create account
-						</a>
-					} else {
-						<a href="/design/login" class="bx-small" data-copy-slot="auth.have-account">
-							Have an account?
-						</a>
-					}
-					<button type="submit" class="bx-btn bx-btn--primary" data-copy-slot={ "auth." + p.Mode + ".submit" }>
+
+				<h1 style="text-align: center; font-size: 16px; margin-bottom: var(--bx-s4);" data-copy-slot={ "auth." + p.Mode + ".title" }>{ titleFor(p.Mode) }</h1>
+
+				if p.FormError != "" {
+					<div class="bx-toast bx-toast--error" role="alert" style="margin-bottom: var(--bx-s3);">
+						{ p.FormError }
+					</div>
+				}
+
+				<form method="post" class="bx-stack" action={ templ.URL(actionFor(p.Mode)) }>
+					@CSRFInput()
+					<div class="bx-field">
+						<label for="email" class="bx-label" data-copy-slot="auth.email">Email</label>
+						<input
+							class="bx-input"
+							id="email"
+							name="email"
+							type="email"
+							autocomplete="email"
+							required
+							value={ p.Email }
+							autofocus
+						/>
+					</div>
+					<div class="bx-field">
+						<label for="password" class="bx-label" data-copy-slot="auth.password">Password</label>
+						<input
+							class="bx-input"
+							id="password"
+							name="password"
+							type="password"
+							if p.Mode == "signup" { autocomplete="new-password" minlength="8" } else { autocomplete="current-password" }
+							required
+						/>
+						if p.Mode == "signup" {
+							<p class="bx-help" data-copy-slot="auth.password.help">8 characters minimum.</p>
+						}
+					</div>
+					<button type="submit" class="bx-btn bx-btn--primary" style="width: 100%;" data-copy-slot={ "auth." + p.Mode + ".submit" }>
 						{ submitLabelFor(p.Mode) }
 					</button>
-				</div>
-			</form>
+					<div class="bx-row" style="justify-content: center; margin-top: var(--bx-s2);">
+						if p.Mode == "login" {
+							<a href="/design/signup" class="bx-small" data-copy-slot="auth.create-account">
+								Need an account? Sign up.
+							</a>
+						} else {
+							<a href="/design/login" class="bx-small" data-copy-slot="auth.have-account">
+								Have an account? Log in.
+							</a>
+						}
+					</div>
+				</form>
+			</div>
 		</section>
 	}
 }
 
 func titleFor(mode string) string {
 	if mode == "signup" {
-		return "Create designer account"
+		return "Create your designer account"
 	}
-	return "Designer login"
+	return "Welcome back"
+}
+
+func ledeFor(mode string) string {
+	if mode == "signup" {
+		return "Spin up a world. Bring your assets, ship in minutes."
+	}
+	return "The 2D MMORPG design console."
 }
 
 func actionFor(mode string) string {

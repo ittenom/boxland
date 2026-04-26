@@ -289,17 +289,51 @@ func postLogout(d Deps) http.HandlerFunc {
 
 // ---- Shell home ----
 
-// getShellHome serves the post-login landing page. Other /design/* surfaces
-// (assets, entities, ...) get their own routes as they land; this is the
-// catch-all for /design/ and /design/{anything-not-mapped}.
+// getShellHome serves the post-login Workspace Home — the design
+// console's front door. Aggregates project-level health stats so the
+// designer always lands somewhere actionable. Other /design/* surfaces
+// (assets, entities, ...) get their own routes; this also catches
+// /design/{anything-not-mapped} and shows the home dashboard.
 func getShellHome(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		dr := CurrentDesigner(r.Context())
-		renderHTML(w, r, views.ShellHome(views.ShellProps{Designer: dr}))
+		layout := BuildChrome(r, d)
+		layout.Title = "Workspace"
+		layout.Surface = "shell-home"
+		layout.ActiveKind = "home"
+		layout.Variant = "no-rail"
+		// The home dashboard's "rail" content is the build-steps grid
+		// in the body, so we drop the right rail entirely.
+
+		// Cheap project-health stats. The full implementation will
+		// pull these from purpose-built queries; for now we derive
+		// from the existing tree data so the page is useful right
+		// away without new infrastructure.
+		props := views.ShellProps{Layout: layout}
+		props.EntitiesNoSpr = countEntityWarns(layout.Tree.Entities)
+		// Orphans / EmptyMaps stay 0 until those connection lookups
+		// land in the next chunk.
+		renderHTML(w, r, views.ShellHome(props))
 	}
 }
 
+// countEntityWarns returns the number of entity-tree items flagged with a
+// warning string ("no sprite", etc.). Cheap derive from the chrome's
+// already-loaded tree so the home dashboard doesn't issue extra queries.
+func countEntityWarns(s views.IndexSection) int {
+	n := 0
+	for _, it := range s.Items {
+		if it.Warn != "" {
+			n++
+		}
+	}
+	return n
+}
+
 // getSandboxIndex renders the sandbox map picker. PLAN.md §131.
+//
+// In the design console, sandbox is also launchable inline from any map
+// card on /design/maps — this index page remains as the dedicated entry
+// point and cross-map test runner.
 func getSandboxIndex(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		items, err := d.Maps.List(r.Context(), "")
@@ -307,7 +341,16 @@ func getSandboxIndex(d Deps) http.HandlerFunc {
 			http.Error(w, "list maps: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		renderHTML(w, r, views.SandboxIndex(views.SandboxIndexProps{Items: items}))
+		layout := BuildChrome(r, d)
+		layout.Title = "Sandbox"
+		layout.Surface = "sandbox-picker"
+		layout.ActiveKind = "sandbox"
+		layout.Variant = "no-rail"
+		layout.Crumbs = []views.Crumb{{Label: "Sandbox"}}
+		renderHTML(w, r, views.SandboxIndex(views.SandboxIndexProps{
+			Layout: layout,
+			Items:  items,
+		}))
 	}
 }
 
@@ -363,13 +406,18 @@ func resolveSandboxWSURL(r *http.Request) string {
 // getSettingsPage renders the Settings page. Client TS module hydrates
 // it from /design/settings/me + drives the live preview, rebinder, etc.
 func getSettingsPage(d Deps) http.HandlerFunc {
-	_ = d
 	return func(w http.ResponseWriter, r *http.Request) {
+		layout := BuildChrome(r, d)
+		layout.Title = "Settings"
+		layout.Surface = "settings"
+		layout.ActiveKind = "settings"
+		layout.Variant = "no-rail"
+		layout.Crumbs = []views.Crumb{{Label: "Settings"}}
 		renderHTML(w, r, views.SettingsPage(views.SettingsProps{
-			Realm:      "designer",
-			LoadURL:    "/design/settings/me",
-			SaveURL:    "/design/settings/me",
-			HideTopNav: false,
+			Layout:  layout,
+			Realm:   "designer",
+			LoadURL: "/design/settings/me",
+			SaveURL: "/design/settings/me",
 		}))
 	}
 }
@@ -417,7 +465,14 @@ func getAssetsList(d Deps) http.HandlerFunc {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
+		layout := BuildChrome(r, d)
+		layout.Title = "Assets"
+		layout.Surface = "asset-manager"
+		layout.ActiveKind = "asset"
+		layout.Variant = "no-rail"
+		layout.Crumbs = []views.Crumb{{Label: "Assets"}}
 		renderHTML(w, r, views.AssetsList(views.AssetsListProps{
+			Layout:     layout,
 			Items:      items,
 			ActiveKind: string(opts.Kind),
 			Search:     opts.Search,
@@ -427,7 +482,8 @@ func getAssetsList(d Deps) http.HandlerFunc {
 }
 
 // getAssetsGrid returns just the inner grid HTML for HTMX swaps from the
-// search/filter form.
+// search/filter form. No chrome data is sent — just the work area's
+// grid contents.
 func getAssetsGrid(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		opts := assetListOptsFromQuery(r)
@@ -623,7 +679,14 @@ func getEntitiesList(d Deps) http.HandlerFunc {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
+		layout := BuildChrome(r, d)
+		layout.Title = "Entities"
+		layout.Surface = "entity-manager"
+		layout.ActiveKind = "entity"
+		layout.Variant = "no-rail"
+		layout.Crumbs = []views.Crumb{{Label: "Entities"}}
 		renderHTML(w, r, views.EntitiesList(views.EntitiesListProps{
+			Layout: layout,
 			Items:  items,
 			Search: opts.Search,
 		}))
@@ -1088,7 +1151,16 @@ func getSocketsList(d Deps) http.HandlerFunc {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		renderHTML(w, r, views.SocketsList(views.SocketsListProps{Items: items}))
+		layout := BuildChrome(r, d)
+		layout.Title = "Sockets"
+		layout.Surface = "edge-sockets"
+		layout.ActiveKind = "socket"
+		layout.Variant = "no-rail"
+		layout.Crumbs = []views.Crumb{{Label: "Sockets"}}
+		renderHTML(w, r, views.SocketsList(views.SocketsListProps{
+			Layout: layout,
+			Items:  items,
+		}))
 	}
 }
 
@@ -1167,7 +1239,16 @@ func getTileGroupsList(d Deps) http.HandlerFunc {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		renderHTML(w, r, views.TileGroupsList(views.TileGroupsListProps{Items: items}))
+		layout := BuildChrome(r, d)
+		layout.Title = "Tile groups"
+		layout.Surface = "tile-groups"
+		layout.ActiveKind = "group"
+		layout.Variant = "no-rail"
+		layout.Crumbs = []views.Crumb{{Label: "Tile groups"}}
+		renderHTML(w, r, views.TileGroupsList(views.TileGroupsListProps{
+			Layout: layout,
+			Items:  items,
+		}))
 	}
 }
 
@@ -1290,7 +1371,17 @@ func getMapsList(d Deps) http.HandlerFunc {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		renderHTML(w, r, views.MapsList(views.MapsListProps{Items: items, Search: search}))
+		layout := BuildChrome(r, d)
+		layout.Title = "Maps"
+		layout.Surface = "maps"
+		layout.ActiveKind = "map"
+		layout.Variant = "no-rail"
+		layout.Crumbs = []views.Crumb{{Label: "Maps"}}
+		renderHTML(w, r, views.MapsList(views.MapsListProps{
+			Layout: layout,
+			Items:  items,
+			Search: search,
+		}))
 	}
 }
 
@@ -1419,10 +1510,24 @@ func getMapmakerPage(d Deps) http.HandlerFunc {
 		ets, err := d.Entities.List(r.Context(), entities.ListOpts{Limit: 100})
 		if err == nil {
 			for _, et := range ets {
-				palette = append(palette, views.PaletteEntry{ID: et.ID, Name: et.Name})
+				entry := views.PaletteEntry{ID: et.ID, Name: et.Name}
+				if et.SpriteAssetID != nil && d.Assets != nil {
+					if a, err := d.Assets.FindByID(r.Context(), *et.SpriteAssetID); err == nil {
+						entry.SpriteURL = d.ObjectStore.PublicURL(a.ContentAddressedPath)
+					}
+				}
+				palette = append(palette, entry)
 			}
 		}
+		layout := BuildChrome(r, d)
+		layout.Title = "Mapmaker · " + m.Name
+		layout.Surface = "mapmaker"
+		layout.ActiveKind = "map"
+		layout.ActiveID = m.ID
+		layout.Variant = "bleed"
+		layout.BodyClass = "bx-mapmaker-body"
 		renderHTML(w, r, views.MapmakerPage(views.MapmakerProps{
+			Layout:             layout,
 			Map:                *m,
 			Layers:             layers,
 			PaletteEntityTypes: palette,

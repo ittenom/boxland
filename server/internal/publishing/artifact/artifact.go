@@ -298,6 +298,18 @@ func (p *Pipeline) Run(ctx context.Context, publishedBy int64) ([]PublishOutcome
 	return outcomes, nil
 }
 
+// CountDrafts returns the number of pending drafts. Used by the chrome's
+// "drafts" badge so the designer always knows how much they have queued
+// for the next Push-to-Live, without paying the cost of a full Preview.
+func (p *Pipeline) CountDrafts(ctx context.Context) (int, error) {
+	var n int
+	err := p.pool.QueryRow(ctx, `SELECT count(*) FROM drafts`).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count drafts: %w", err)
+	}
+	return n, nil
+}
+
 // ---- internals ----
 
 func (p *Pipeline) loadDrafts(ctx context.Context) ([]DraftRow, error) {

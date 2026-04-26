@@ -1,42 +1,175 @@
 package views
 
 import (
-	"boxland/server/internal/auth/designer"
+	"fmt"
 )
 
-// ShellProps drives the post-login landing page (the "home" of the design
-// tools). Real per-surface pages live in views/assets.templ etc.; this is
-// just the welcome stub for end-to-end auth verification.
+// ShellProps drives the post-login Workspace Home — the design console's
+// front door. Acts as a project-level dashboard: counts, drafts pending,
+// orphans, and contextual "next steps" linking out to the work surfaces.
 type ShellProps struct {
-	Designer *designer.Designer
+	Layout LayoutProps
+
+	// Per-project health stats computed by the handler.
+	Orphans         int    // assets used by zero entities
+	EntitiesNoSpr   int    // entity types missing a sprite
+	EmptyMaps       int    // maps with zero placed entities
+	UnsavedSeconds  int    // seconds since last successful save (0 = none)
+
+	// Recent activity (top 4 entries).
+	Recent []ActivityEntry
+}
+
+// ActivityEntry is one row in the home dashboard's "recent activity" list.
+type ActivityEntry struct {
+	When  string // "2m ago"
+	What  string // "Edited goblin"
+	Where string // "Entities / goblin"
+	Href  string
 }
 
 templ ShellHome(p ShellProps) {
-	@Layout(LayoutProps{
-		Title:   "Boxland design tools",
-		Surface: "shell",
-	}) {
-		<section class="bx-panel">
-			<h1 data-copy-slot="shell.title">Welcome to Boxland</h1>
-			<p data-copy-slot="shell.lede">
-				Lorem ipsum dolor sit amet, consectetur adipiscing elit. Use the
-				navigation above to manage assets, entities, maps, and the live
-				sandbox. Press <kbd>Ctrl</kbd>+<kbd>K</kbd> to open the command
-				palette.
-			</p>
-			if p.Designer != nil {
-				<p class="bx-muted">
-					Logged in as <strong>{ p.Designer.Email }</strong>
-					&nbsp;
-					<span class="bx-badge bx-badge--accent">{ string(p.Designer.Role) }</span>
-				</p>
+	@Layout(p.Layout) {
+		<div class="bx-work__strip">
+			<span class="bx-work__chip">
+				<strong>{ formatIntPad(p.Layout.Project.AssetCount) }</strong> assets
+			</span>
+			<span class="bx-work__chip">
+				<strong>{ formatIntPad(p.Layout.Project.EntityCount) }</strong> entities
+			</span>
+			<span class="bx-work__chip">
+				<strong>{ formatIntPad(p.Layout.Project.MapCount) }</strong> maps
+			</span>
+			<span class="bx-work__chip">
+				<strong>{ formatIntPad(p.Layout.Project.SocketCount) }</strong> sockets
+			</span>
+			<span class="bx-work__chip">
+				<strong>{ formatIntPad(p.Layout.Project.GroupCount) }</strong> tile groups
+			</span>
+		</div>
+
+		<div class="bx-work__body bx-stack">
+			<header class="bx-row bx-row--apart">
+				<div>
+					<h1 data-copy-slot="home.title">Workspace</h1>
+					<p class="bx-muted bx-small" data-copy-slot="home.lede">
+						Pick up where you left off, or jump straight to a step.
+					</p>
+				</div>
+				<div class="bx-row">
+					<a href="/design/assets" class="bx-btn">+ Asset</a>
+					<a href="/design/entities" class="bx-btn">+ Entity</a>
+					<a href="/design/maps" class="bx-btn bx-btn--primary">+ Map</a>
+				</div>
+			</header>
+
+			// Health row: surface anything that needs attention.
+			if p.Orphans+p.EntitiesNoSpr+p.EmptyMaps > 0 {
+				<section class="bx-panel">
+					<h3 class="bx-panel__title" data-copy-slot="home.attention">Needs attention</h3>
+					<ul class="bx-list">
+						if p.Orphans > 0 {
+							<li class="bx-row bx-row--apart">
+								<span>
+									<span class="bx-badge bx-badge--warn">orphan</span>
+									{ fmt.Sprintf("%d asset(s) aren't used by any entity yet", p.Orphans) }
+								</span>
+								<a href="/design/assets?filter=orphan" class="bx-btn bx-btn--small">Review</a>
+							</li>
+						}
+						if p.EntitiesNoSpr > 0 {
+							<li class="bx-row bx-row--apart">
+								<span>
+									<span class="bx-badge bx-badge--warn">no sprite</span>
+									{ fmt.Sprintf("%d entity type(s) have no sprite assigned", p.EntitiesNoSpr) }
+								</span>
+								<a href="/design/entities?filter=no-sprite" class="bx-btn bx-btn--small">Review</a>
+							</li>
+						}
+						if p.EmptyMaps > 0 {
+							<li class="bx-row bx-row--apart">
+								<span>
+									<span class="bx-badge bx-badge--warn">empty</span>
+									{ fmt.Sprintf("%d map(s) have no entities placed", p.EmptyMaps) }
+								</span>
+								<a href="/design/maps?filter=empty" class="bx-btn bx-btn--small">Review</a>
+							</li>
+						}
+					</ul>
+				</section>
 			}
-			<form method="post" action="/design/logout" class="bx-row bx-row--end">
-				@CSRFInput()
-				<button type="submit" class="bx-btn bx-btn--ghost" data-copy-slot="shell.logout">
-					Log out
-				</button>
-			</form>
-		</section>
+
+			// The five-step quick-jump grid. Implicit pipeline.
+			<section>
+				<h3 data-copy-slot="home.steps">Build steps</h3>
+				<div class="bx-grid bx-grid--auto">
+					@stepCard("asset",  "1", "Assets",      "Upload sprites, tiles, and audio.",   p.Layout.Project.AssetCount,  "/design/assets")
+					@stepCard("entity", "2", "Entities",    "Define behavior and components.",     p.Layout.Project.EntityCount, "/design/entities")
+					@stepCard("map",    "3", "Maps",        "Lay out the world.",                  p.Layout.Project.MapCount,    "/design/maps")
+					@stepCard("kind",   "4", "Sandbox",     "Test against drafts.",                0,                            "/design/sandbox")
+					@stepCard("draft",  "5", "Push to live","Promote drafts to live.",             p.Layout.Project.DraftCount,  "")
+				</div>
+			</section>
+
+			// Recent activity (when the data is there)
+			if len(p.Recent) > 0 {
+				<section>
+					<h3 data-copy-slot="home.recent">Recent</h3>
+					<ul class="bx-list">
+						for _, r := range p.Recent {
+							<li class="bx-row bx-row--apart">
+								<a href={ templ.SafeURL(r.Href) }>{ r.What }</a>
+								<span class="bx-small bx-muted">{ r.Where } · { r.When }</span>
+							</li>
+						}
+					</ul>
+				</section>
+			}
+		</div>
 	}
+}
+
+// stepCard is one tile in the build-steps grid. Type drives the dot color
+// and the count formatting (drafts get a warning tint when > 0).
+templ stepCard(kind, num, title, desc string, count int, href string) {
+	if href == "" {
+		<button
+			type="button"
+			class="bx-asset-card"
+			hx-get="/design/publish/preview"
+			hx-target="#publish-modal-host"
+			hx-swap="innerHTML"
+			style="text-align:left; cursor:pointer;"
+		>
+			@stepCardBody(kind, num, title, desc, count, true)
+		</button>
+	} else {
+		<a class="bx-asset-card" href={ templ.SafeURL(href) }>
+			@stepCardBody(kind, num, title, desc, count, false)
+		</a>
+	}
+}
+
+templ stepCardBody(kind, num, title, desc string, count int, isPush bool) {
+	<div class="bx-asset-card__body">
+		<div class="bx-row" style="align-items: baseline;">
+			<span class="bx-small bx-muted">{ num }</span>
+			<strong>{ title }</strong>
+			<span class="bx-row" style="margin-left:auto;">
+				if isPush && count > 0 {
+					<span class="bx-badge bx-badge--warn">{ formatIntPad(count) } draft{ pluralize(count) }</span>
+				} else if count > 0 {
+					<span class="bx-badge">{ formatIntPad(count) }</span>
+				}
+			</span>
+		</div>
+		<p class="bx-small bx-muted" style="margin-top:6px;">{ desc }</p>
+	</div>
+}
+
+func pluralize(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }

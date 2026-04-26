@@ -15,5 +15,5 @@ package static
 
 import "embed"
 
-//go:embed all:css all:fonts all:js all:vendor all:icons all:web
+//go:embed all:css all:fonts all:img all:js all:vendor all:icons all:web
 var FS embed.FS

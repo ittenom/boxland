@@ -2,6 +2,28 @@ package views
 
 import "fmt"
 
+// Wordmark emits the Boxland wordmark as a CSS-mask span. Coloring is
+// driven by `currentColor`, so wrapping the span in a colored context
+// (chrome accent, dark/light theme) recolors the wordmark for free.
+//
+// The actual SVG ships at /static/img/boxland.svg (chunky pixel-grid;
+// pure path data). Keeping it as a background-mask asset means the
+// 60kB SVG is fetched once and cached, not inlined on every page.
+templ Wordmark(extraClass string) {
+	<span
+		class={ wordmarkClass(extraClass) }
+		role="img"
+		aria-label="Boxland"
+	></span>
+}
+
+func wordmarkClass(extra string) string {
+	if extra == "" {
+		return "bx-wordmark"
+	}
+	return "bx-wordmark " + extra
+}
+
 // Icon names mirror server/static/icons/gen.go's IconNames slice.
 // Keep both lists aligned. Lookup is by name; an unknown name renders the
 // 0,0 cell so we get an obvious visual error instead of broken HTML.

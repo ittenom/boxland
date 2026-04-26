@@ -6,42 +6,71 @@ import (
 	"boxland/server/internal/assets"
 )
 
-// AssetsListProps drives the Asset Manager landing page.
+// AssetsListProps drives the Asset Manager list page. The page lives
+// inside the design console shell (via Layout); all surfaces below are
+// content for the work area.
 type AssetsListProps struct {
-	Items       []assets.Asset
-	ActiveKind  string // "" / "sprite" / "tile" / "audio"
-	Search      string
-	PublicURL   func(string) string // assets.Service.ObjectStore.PublicURL or fixture
+	Layout     LayoutProps
+	Items      []assets.Asset
+	ActiveKind string                 // "" / "sprite" / "tile" / "audio"
+	Search     string
+	PublicURL  func(string) string    // assets.Service.ObjectStore.PublicURL or test fixture
+
+	// UsageByID is an optional map of asset id → number of entities
+	// referencing this asset. Empty map = "not loaded yet" and the
+	// usage badge falls back to a neutral state. The handler populates
+	// this when it can (cheap query); orphans get visual demotion.
+	UsageByID map[int64]int
 }
 
 templ AssetsList(p AssetsListProps) {
-	@Layout(LayoutProps{
-		Title:   "Assets",
-		Surface: "asset-manager",
-	}) {
-		<section class="bx-stack bx-asset-manager">
+	@Layout(p.Layout) {
+		<div class="bx-work__strip">
+			<span class="bx-work__chip">
+				<span class="bx-dot bx-dot--asset"></span>
+				<strong>{ formatIntPad(len(p.Items)) }</strong> assets total
+			</span>
+			<span class="bx-work__chip">
+				<strong>{ formatIntPad(countByKind(p.Items, "sprite")) }</strong> sprites
+			</span>
+			<span class="bx-work__chip">
+				<strong>{ formatIntPad(countByKind(p.Items, "tile")) }</strong> tiles
+			</span>
+			<span class="bx-work__chip">
+				<strong>{ formatIntPad(countByKind(p.Items, "audio")) }</strong> audio
+			</span>
+			<span class="bx-work__chip bx-work__chip--muted">
+				upload PNG, WAV, OGG, or MP3
+			</span>
+		</div>
+
+		<div class="bx-work__body bx-stack">
 			<header class="bx-row bx-row--apart">
-				<h1 data-copy-slot="assets.title">Assets</h1>
+				<div>
+					<h1 data-copy-slot="assets.title">Assets</h1>
+					<p class="bx-muted bx-small" data-copy-slot="assets.lede">
+						Sprites, tiles, and audio. Each one becomes a building block for an entity.
+					</p>
+				</div>
 				<div class="bx-row">
 					<button
 						type="button"
 						class="bx-btn bx-btn--primary"
 						data-copy-slot="assets.upload"
 						data-bx-action="open-upload"
-					>
-						Upload
-					</button>
+						hx-get="/design/assets/upload"
+						hx-target="#modal-host"
+						hx-swap="innerHTML"
+					>+ Upload</button>
 				</div>
 			</header>
 
 			@AssetsToolbar(p)
 
-			<div id="assets-grid" class="bx-grid bx-grid--auto" hx-target="this" hx-swap="outerHTML">
-				@AssetsGrid(p)
-			</div>
-		</section>
+			@AssetsGrid(p)
+		</div>
 
-		<div id="modal-host" data-copy-slot="assets.upload-host"></div>
+		<div id="modal-host"></div>
 	}
 }
 
@@ -52,14 +81,14 @@ templ AssetsToolbar(p AssetsListProps) {
 		class="bx-row"
 		hx-get="/design/assets/grid"
 		hx-target="#assets-grid"
-		hx-swap="outerHTML"
+		hx-swap="innerHTML"
 		hx-trigger="input from:input changed delay:200ms, change from:select"
 	>
 		<input
 			type="search"
 			name="q"
 			value={ p.Search }
-			placeholder="Lorem ipsum search…"
+			placeholder="Search by name or tag"
 			class="bx-input"
 			style="max-width: 280px;"
 			data-copy-slot="assets.search.placeholder"
@@ -73,66 +102,158 @@ templ AssetsToolbar(p AssetsListProps) {
 	</form>
 }
 
-// AssetsGrid is the swappable inner of #assets-grid.
+// AssetsGrid is the swappable inner content of #assets-grid. Always
+// emits the wrapping id so HTMX outerHTML swaps target the same node
+// even when the grid empties out.
 templ AssetsGrid(p AssetsListProps) {
-	<div id="assets-grid" class="bx-grid bx-grid--auto" hx-target="this" hx-swap="outerHTML">
-		if len(p.Items) == 0 {
+	if len(p.Items) == 0 {
+		<div id="assets-grid" class="bx-panel" style="text-align:center;">
 			<p class="bx-muted" data-copy-slot="assets.empty">
-				Lorem ipsum dolor sit amet. No assets match the current filter — try
-				uploading or clearing the search.
+				No assets match these filters.
 			</p>
-		}
-		for _, a := range p.Items {
-			@AssetCard(a, p.PublicURL)
-		}
-	</div>
+			<p class="bx-small bx-muted" style="margin-top: var(--bx-s2);">
+				Drop a PNG / WAV / OGG / MP3 to get started.
+			</p>
+		</div>
+	} else {
+		<div id="assets-grid" class="bx-asset-grid">
+			for _, a := range p.Items {
+				@AssetCard(a, p.PublicURL, p.UsageByID)
+			}
+		</div>
+	}
 }
 
-// AssetCard is one tile in the grid. Click → loads the detail panel as a
-// modal via HTMX.
-templ AssetCard(a assets.Asset, publicURL func(string) string) {
+// AssetCard is one tile in the grid. Click → loads the detail modal via
+// HTMX. Each card carries its preview, kind, and a "used by N" badge so
+// orphans are visible at a glance.
+templ AssetCard(a assets.Asset, publicURL func(string) string, usage map[int64]int) {
 	<a
-		class="bx-asset-card bx-panel"
+		id={ assetCardID(a.ID) }
+		class={ assetCardClass(a, usage) }
 		href={ templ.URL(fmt.Sprintf("/design/assets/%d", a.ID)) }
 		hx-get={ fmt.Sprintf("/design/assets/%d", a.ID) }
 		hx-target="#modal-host"
 		hx-swap="innerHTML"
 		hx-trigger="click"
+		title={ assetCardTitle(a, usage) }
 	>
-		<div class="bx-asset-card__thumb">
+		<div class="bx-asset-card__thumb bx-pixel">
 			if a.Kind == assets.KindAudio {
-				@Icon("audio")
+				<canvas
+					class="bx-waveform"
+					data-bx-waveform-mini={ assetURL(a, publicURL) }
+					data-bins="48"
+					width="120" height="60"
+					style="height: 60%; width: 80%;"
+					aria-hidden="true"
+				></canvas>
+				<span class="bx-asset-card__pip bx-asset-card__pip--audio">audio</span>
 			} else if publicURL != nil {
 				<img
-					src={ publicURL(a.ContentAddressedPath) }
+					src={ assetURL(a, publicURL) }
 					alt={ a.Name }
 					loading="lazy"
 				/>
+				if a.Kind == assets.KindTile {
+					<span class="bx-asset-card__pip bx-asset-card__pip--tile">tile</span>
+				} else {
+					<span class="bx-asset-card__pip">sprite</span>
+				}
 			}
 		</div>
-		<div class="bx-asset-card__meta">
-			<strong>{ a.Name }</strong>
-			<div class="bx-row">
-				<span class={ "bx-badge bx-badge--" + kindBadgeClass(string(a.Kind)) }>
-					{ string(a.Kind) }
-				</span>
-				for _, t := range a.Tags {
-					<span class="bx-badge">{ t }</span>
+		<div class="bx-asset-card__body">
+			<div class="bx-asset-card__name">{ a.Name }</div>
+			<div class="bx-asset-card__meta">
+				<span class="bx-mono">{ a.OriginalFormat }</span>
+				<span class="bx-muted">·</span>
+				@usageBadge(a.ID, usage)
+				for _, t := range firstNTags(a.Tags, 1) {
+					<span class="bx-muted">·</span>
+					<span>{ t }</span>
 				}
 			</div>
 		</div>
 	</a>
 }
 
+templ usageBadge(id int64, usage map[int64]int) {
+	if usage == nil {
+		<span class="bx-muted">—</span>
+	} else if n, ok := usage[id]; ok && n > 0 {
+		<span style="color: var(--bx-info);">used by { formatIntPad(n) }</span>
+	} else {
+		<span style="color: var(--bx-danger);">orphan</span>
+	}
+}
+
+// ---- helpers ----------------------------------------------------------
+
+func assetCardID(id int64) string {
+	return fmt.Sprintf("asset-%d", id)
+}
+
+func assetCardClass(a assets.Asset, usage map[int64]int) string {
+	if usage != nil {
+		if n, ok := usage[a.ID]; ok && n == 0 {
+			return "bx-asset-card bx-asset-card--orphan"
+		}
+	}
+	return "bx-asset-card"
+}
+
+func assetCardTitle(a assets.Asset, usage map[int64]int) string {
+	if usage == nil {
+		return a.Name
+	}
+	if n, ok := usage[a.ID]; ok {
+		return fmt.Sprintf("%s — used by %d entit%s", a.Name, n, plural(n, "y", "ies"))
+	}
+	return a.Name
+}
+
+func assetURL(a assets.Asset, publicURL func(string) string) string {
+	if publicURL == nil {
+		return ""
+	}
+	return publicURL(a.ContentAddressedPath)
+}
+
+func countByKind(items []assets.Asset, kind string) int {
+	n := 0
+	for _, a := range items {
+		if string(a.Kind) == kind {
+			n++
+		}
+	}
+	return n
+}
+
+func firstNTags(tags []string, n int) []string {
+	if len(tags) <= n {
+		return tags
+	}
+	return tags[:n]
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+// kindBadgeClass maps an asset kind to a badge color for legacy callers.
+// Kept for API compatibility with code paths that still reference it.
 func kindBadgeClass(kind string) string {
 	switch kind {
 	case "sprite":
 		return "info"
 	case "tile":
-		return "success"
+		return "accent"
 	case "audio":
 		return "warn"
 	default:
-		return "accent"
+		return ""
 	}
 }

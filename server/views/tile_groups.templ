@@ -9,23 +9,30 @@ import (
 
 // TileGroupsListProps drives /design/tile-groups.
 type TileGroupsListProps struct {
-	Items []entities.TileGroup
+	Layout LayoutProps
+	Items  []entities.TileGroup
 }
 
 templ TileGroupsList(p TileGroupsListProps) {
-	@Layout(LayoutProps{
-		Title:   "Tile groups",
-		Surface: "tile-groups",
-	}) {
-		<section class="bx-stack" style="max-width: 720px;">
-			<header class="bx-row bx-row--apart">
+	@Layout(p.Layout) {
+		<div class="bx-work__strip">
+			<span class="bx-work__chip">
+				<span class="bx-dot bx-dot--group"></span>
+				<strong>{ formatIntPad(len(p.Items)) }</strong> tile groups
+			</span>
+			<span class="bx-work__chip bx-work__chip--muted">
+				stamp N×M templates onto a map in one stroke
+			</span>
+		</div>
+
+		<div class="bx-work__body bx-stack" style="max-width: 720px;">
+			<header>
 				<h1 data-copy-slot="tilegroups.title">Tile groups</h1>
+				<p class="bx-muted bx-small" data-copy-slot="tilegroups.lede">
+					An N×M template the Mapmaker treats as a single brush stroke. Useful for
+					doorways, fountains, decor patterns.
+				</p>
 			</header>
-			<p class="bx-muted" data-copy-slot="tilegroups.lede">
-				Lorem ipsum dolor sit amet. A tile group is an N×M template that
-				the Mapmaker treats as a single brush stroke; the runtime spawns
-				it as N×M individual tiles.
-			</p>
 
 			<section class="bx-panel">
 				<h2 class="bx-panel__title" data-copy-slot="tilegroups.new">New tile group</h2>
@@ -35,52 +42,54 @@ templ TileGroupsList(p TileGroupsListProps) {
 					hx-swap="outerHTML"
 					class="bx-row"
 				>
-					<input class="bx-input" name="name" placeholder="e.g. doorway" required maxlength="64"/>
+					<input class="bx-input" name="name" placeholder="e.g. doorway" required maxlength="64" style="max-width: 200px;"/>
 					<input class="bx-input" name="width"  type="number" min="1" max="16" value="3" style="width:80px;" aria-label="width"/>
+					<span class="bx-muted">×</span>
 					<input class="bx-input" name="height" type="number" min="1" max="16" value="2" style="width:80px;" aria-label="height"/>
 					<button type="submit" class="bx-btn bx-btn--primary" data-copy-slot="tilegroups.new.submit">Create</button>
 				</form>
 			</section>
 
 			@TileGroupsGrid(p)
-		</section>
+		</div>
 
 		<div id="modal-host"></div>
 	}
 }
 
 templ TileGroupsGrid(p TileGroupsListProps) {
-	<table id="tile-groups-grid" class="bx-table">
-		<thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
-		<tbody>
-			if len(p.Items) == 0 {
-				<tr><td colspan="3" class="bx-muted" data-copy-slot="tilegroups.empty">
-					Lorem ipsum dolor sit amet. No tile groups yet.
-				</td></tr>
-			}
-			for _, g := range p.Items {
-				<tr>
-					<td>
-						<a
-							href={ templ.URL(fmt.Sprintf("/design/tile-groups/%d", g.ID)) }
-							hx-get={ fmt.Sprintf("/design/tile-groups/%d", g.ID) }
-							hx-target="#modal-host" hx-swap="innerHTML"
-						>{ g.Name }</a>
-					</td>
-					<td class="bx-small bx-muted">{ fmt.Sprintf("%d × %d", g.Width, g.Height) }</td>
-					<td>
-						<button
-							type="button"
-							class="bx-btn bx-btn--ghost bx-small bx-btn--danger"
-							hx-delete={ fmt.Sprintf("/design/tile-groups/%d", g.ID) }
-							hx-target="#tile-groups-grid" hx-swap="outerHTML"
-							hx-confirm="Delete this tile group?"
-						>Delete</button>
-					</td>
-				</tr>
-			}
-		</tbody>
-	</table>
+	if len(p.Items) == 0 {
+		<div id="tile-groups-grid" class="bx-panel" style="text-align:center;">
+			<p class="bx-muted" data-copy-slot="tilegroups.empty">No tile groups yet.</p>
+		</div>
+	} else {
+		<table id="tile-groups-grid" class="bx-table">
+			<thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
+			<tbody>
+				for _, g := range p.Items {
+					<tr>
+						<td>
+							<a
+								href={ templ.URL(fmt.Sprintf("/design/tile-groups/%d", g.ID)) }
+								hx-get={ fmt.Sprintf("/design/tile-groups/%d", g.ID) }
+								hx-target="#modal-host" hx-swap="innerHTML"
+							>{ g.Name }</a>
+						</td>
+						<td class="bx-mono bx-small bx-muted">{ fmt.Sprintf("%d × %d", g.Width, g.Height) }</td>
+						<td>
+							<button
+								type="button"
+								class="bx-btn bx-btn--ghost bx-btn--small bx-btn--danger"
+								hx-delete={ fmt.Sprintf("/design/tile-groups/%d", g.ID) }
+								hx-target="#tile-groups-grid" hx-swap="outerHTML"
+								hx-confirm="Delete this tile group?"
+							>Delete</button>
+						</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	}
 }
 
 // TileGroupDetailProps drives the per-group editor modal.
@@ -94,7 +103,7 @@ templ TileGroupDetail(p TileGroupDetailProps) {
 		<div class="bx-modal" style="width: min(560px, 95vw);">
 			<header class="bx-modal__header">
 				<h2 data-copy-slot="tilegroups.detail.title">{ p.Group.Name }</h2>
-				<button type="button" class="bx-btn bx-btn--ghost"
+				<button type="button" class="bx-btn bx-btn--ghost bx-btn--small"
 				        hx-on:click="this.closest('.bx-modal-backdrop').remove()" aria-label="Close">Esc</button>
 			</header>
 			<div class="bx-modal__body bx-stack">
@@ -106,7 +115,7 @@ templ TileGroupDetail(p TileGroupDetailProps) {
 				>
 					<div class="bx-row">
 						<label class="bx-label" for="active-entity-id" data-copy-slot="tilegroups.detail.active">
-							Active entity-type id (paste)
+							Active entity-type id
 						</label>
 						<input id="active-entity-id" type="number" min="0" value="0" class="bx-input" style="max-width:120px"
 						       data-bx-active-entity placeholder="0 = clear"/>
