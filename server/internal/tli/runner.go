@@ -28,11 +28,15 @@ type runOutputMsg struct {
 	lines []string
 }
 
-// runDoneMsg fires once when the subprocess exits.
+// runDoneMsg fires once when the subprocess exits. tail is populated
+// for interactive jobs (where the captured-pipe runner doesn't run);
+// non-interactive jobs leave it nil since their output already lives
+// in the runner's rolling buffer accessible via Tail().
 type runDoneMsg struct {
 	jobID   string
 	err     error
 	elapsed time.Duration
+	tail    []string
 }
 
 // runStartFailedMsg surfaces a failure to even spawn the subprocess.
@@ -206,4 +210,83 @@ func (r *runner) Started() time.Time {
 		return time.Time{}
 	}
 	return r.started
+}
+
+// captureBuffer is a goroutine-safe rolling window over an interactive
+// job's combined stdout+stderr. Bubbletea's tea.ExecProcess hands the
+// terminal to the child outright (so the user sees output live), but
+// it then redraws the TUI on resume — wiping the trailing output and
+// any error message. We tee the child's stdout+stderr through this
+// buffer so the TLI can re-render the last few lines as a failure
+// card after exit.
+type captureBuffer struct {
+	mu    sync.Mutex
+	lines []string
+	max   int
+	pend  []byte // partial line carried across writes
+}
+
+func newCaptureBuffer(maxLines int) *captureBuffer {
+	if maxLines <= 0 {
+		maxLines = tailMaxLines
+	}
+	return &captureBuffer{max: maxLines}
+}
+
+// Write splits incoming bytes into lines and appends to the rolling
+// window. Writes that don't end on a newline are buffered until the
+// next write completes the line. Implements io.Writer so it composes
+// cleanly inside io.MultiWriter(os.Stdout, captureBuffer).
+func (b *captureBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	combined := append(b.pend, p...)
+	for {
+		i := indexNewline(combined)
+		if i < 0 {
+			b.pend = combined
+			break
+		}
+		line := string(combined[:i])
+		// Strip trailing \r so CRLF-mode terminals on Windows don't
+		// leave dangling carriage returns inside the captured tail.
+		line = trimCR(line)
+		b.lines = append(b.lines, line)
+		if len(b.lines) > b.max {
+			b.lines = b.lines[len(b.lines)-b.max:]
+		}
+		combined = combined[i+1:]
+	}
+	return len(p), nil
+}
+
+// Lines returns a snapshot of the current rolling window plus any
+// partial line currently being assembled. Safe to call from another
+// goroutine; the result is detached.
+func (b *captureBuffer) Lines() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make([]string, 0, len(b.lines)+1)
+	out = append(out, b.lines...)
+	if len(b.pend) > 0 {
+		out = append(out, trimCR(string(b.pend)))
+	}
+	return out
+}
+
+// indexNewline returns the index of the next '\n' or -1.
+func indexNewline(p []byte) int {
+	for i, c := range p {
+		if c == '\n' {
+			return i
+		}
+	}
+	return -1
+}
+
+func trimCR(s string) string {
+	if len(s) > 0 && s[len(s)-1] == '\r' {
+		return s[:len(s)-1]
+	}
+	return s
 }

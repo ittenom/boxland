@@ -21,7 +21,7 @@ Boxland is a designer-friendly MMORPG engine that makes it easy to turn on your 
 go run ./server/cmd/boxland
 ```
 
-Pick **Install** from the menu to add any missing system dependencies (Node.js, Docker Desktop), then **Design** to get started on your new world.
+Pick **Check Installation** from the menu to add any missing system dependencies (Node.js, Docker Desktop) and refresh generated artifacts. Once that's done, **Design** moves to the top of the menu — pick it to get started on your new world.
 
 ## System requirements
 

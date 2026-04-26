@@ -65,6 +65,14 @@ func checks(repoRoot string) []check {
 	}
 }
 
+// RequiredCmds is the canonical list of executables `boxland install`
+// insists on finding before it can run. Both the CLI's install flow
+// and the TLI's "is the install complete?" decision read from this
+// list, so renames stay in lockstep.
+func RequiredCmds() []string {
+	return []string{"docker", "go", "node", "npm", "sqlc", "flatc"}
+}
+
 // dirHasExt reports whether path exists and (when ext is non-empty)
 // contains at least one non-directory entry with that suffix.
 func dirHasExt(path, ext string) bool {

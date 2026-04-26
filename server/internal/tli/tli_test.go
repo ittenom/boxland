@@ -182,16 +182,22 @@ func TestInteractiveItemUsesExecProcess(t *testing.T) {
 // clears currentIndefinite and posts a status toast.
 func TestRunDoneClearsSpotlight(t *testing.T) {
 	m := readyModel(t)
-	m.jobs["Install"] = &job{id: "Install", it: itemNamed(t, "Install"), started: time.Now().Add(-1500 * time.Millisecond)}
+	check := itemNamed(t, checkInstallationTitle)
+	m.jobs[check.title] = &job{id: check.title, it: check,
+		started: time.Now().Add(-1500 * time.Millisecond)}
 
-	m, _ = step(t, m, runDoneMsg{jobID: "Install", elapsed: 1500 * time.Millisecond})
-	if _, still := m.jobs["Install"]; still {
+	m, _ = step(t, m, runDoneMsg{jobID: check.title, elapsed: 1500 * time.Millisecond})
+	if _, still := m.jobs[check.title]; still {
 		t.Error("job map should not contain finished job")
 	}
 
 	out := m.list.View()
-	if !strings.Contains(out, "Install completed") {
-		t.Errorf("status toast missing in list view; got:\n%s", out)
+	// The status bar sometimes truncates the toast on narrow widths
+	// — assert on a stable prefix (the success mark + the start of
+	// the title) instead of the full "Check Installation completed"
+	// string.
+	if !strings.Contains(out, "✓") || !strings.Contains(out, "Check Installation") {
+		t.Errorf("status toast missing success mark or title in list view; got:\n%s", out)
 	}
 }
 
@@ -417,6 +423,11 @@ func TestQuickJobLinesArePrefixed(t *testing.T) {
 	}
 }
 
+// firstRunIntroSnippet is a stable substring of the first-run card's
+// intro paragraph. Centralised so tests don't break every time we
+// tweak the copy.
+const firstRunIntroSnippet = "installation check before you can design"
+
 // TestFirstRunCardRendersWhenMissing confirms the friendly card
 // appears in place of the menu when setup hasn't been run, and it
 // names every missing item.
@@ -426,8 +437,8 @@ func TestFirstRunCardRendersWhenMissing(t *testing.T) {
 	m.firstRunDone = false
 
 	out := m.View()
-	if !strings.Contains(out, "Boxland needs to install required software first") {
-		t.Errorf("first-run card missing intro line; got:\n%s", out)
+	if !strings.Contains(out, firstRunIntroSnippet) {
+		t.Errorf("first-run card missing intro snippet; got:\n%s", out)
 	}
 	for _, name := range m.firstRunMissing {
 		if !strings.Contains(out, name) {
@@ -441,7 +452,7 @@ func TestFirstRunCardRendersWhenMissing(t *testing.T) {
 }
 
 // TestFirstRunCardHidesAfterDismiss — Tab dismisses the card without
-// running setup, returning the user to the normal menu.
+// running the install, returning the user to the normal menu.
 func TestFirstRunCardHidesAfterDismiss(t *testing.T) {
 	m := readyModel(t)
 	m.firstRunMissing = []string{"fonts"}
@@ -452,7 +463,7 @@ func TestFirstRunCardHidesAfterDismiss(t *testing.T) {
 		t.Fatal("Tab must dismiss the first-run card")
 	}
 	out := m.View()
-	if strings.Contains(out, "Boxland needs to install required software first") {
+	if strings.Contains(out, firstRunIntroSnippet) {
 		t.Errorf("card still visible after Tab; got:\n%s", out)
 	}
 }
@@ -469,20 +480,20 @@ func TestFirstRunCardQuitsOnQ(t *testing.T) {
 	}
 }
 
-// TestFirstRunCardLaunchesSetupOnS — pressing S kicks off the Setup
-// item via the regular job machinery.
-func TestFirstRunCardLaunchesSetupOnS(t *testing.T) {
+// TestFirstRunCardLaunchesCheckOnS — pressing S kicks off the Check
+// Installation item via the regular job machinery.
+func TestFirstRunCardLaunchesCheckOnS(t *testing.T) {
 	m := readyModel(t)
 	m.firstRunMissing = []string{"fonts"}
 	m.firstRunDone = false
 
-	// Replace the Setup item with a trivial command so we don't
-	// actually invoke node/templ/sqlc/flatc in the test.
+	// Replace the Check Installation item with a trivial command so
+	// we don't actually invoke brew/winget/sqlc/flatc in the test.
 	items := m.list.Items()
 	for i, raw := range items {
-		if it, ok := raw.(item); ok && it.title == "Setup" {
-			items[i] = item{title: "Setup", badge: "prepare",
-				desc: "test stub", cmd: []string{"go", "version"}}
+		if it, ok := raw.(item); ok && it.title == checkInstallationTitle {
+			it.cmd = []string{"go", "version"}
+			items[i] = it
 			break
 		}
 	}
@@ -492,27 +503,225 @@ func TestFirstRunCardLaunchesSetupOnS(t *testing.T) {
 	if !m.firstRunDone {
 		t.Error("S press must hide the first-run card")
 	}
-	if _, ok := m.jobs["Setup"]; !ok {
-		t.Fatal("S press must register a Setup job")
+	if _, ok := m.jobs[checkInstallationTitle]; !ok {
+		t.Fatalf("S press must register a %s job", checkInstallationTitle)
 	}
-	m = drainToCompletion(t, m, "Setup")
+	m = drainToCompletion(t, m, checkInstallationTitle)
 }
 
-// TestSetupItemPresent — the new menu entry is wired in.
-func TestSetupItemPresent(t *testing.T) {
+// TestDesignFirstWhenInstallComplete — once the install is complete,
+// Design moves to position 0 (the daily-driver entry point) and is
+// the featured row. Check Installation drops to position 1, available
+// for re-running after a `git pull` but no longer the focal point.
+func TestDesignFirstWhenInstallComplete(t *testing.T) {
+	items := itemsForState(true)
+	if len(items) < 2 {
+		t.Fatalf("expected at least 2 items, got %d", len(items))
+	}
+	if items[0].title != "Design" {
+		t.Errorf("position 0: want Design, got %q", items[0].title)
+	}
+	if !items[0].featured {
+		t.Error("Design should be featured when install is complete")
+	}
+	if items[1].title != checkInstallationTitle {
+		t.Errorf("position 1: want %q, got %q",
+			checkInstallationTitle, items[1].title)
+	}
+	if items[1].featured {
+		t.Errorf("%s should not be featured once install is complete",
+			checkInstallationTitle)
+	}
+}
+
+// TestCheckFirstWhenIncomplete — fresh clone (or post-pull with stale
+// generators) gets the install-check at position 0, featured, with
+// Design dimmed in the second slot.
+func TestCheckFirstWhenIncomplete(t *testing.T) {
+	items := itemsForState(false)
+	if items[0].title != checkInstallationTitle {
+		t.Errorf("position 0: want %q, got %q",
+			checkInstallationTitle, items[0].title)
+	}
+	if !items[0].featured {
+		t.Errorf("%s should be featured when install is incomplete",
+			checkInstallationTitle)
+	}
+	if items[1].title != "Design" {
+		t.Errorf("position 1: want Design, got %q", items[1].title)
+	}
+	if items[1].featured {
+		t.Error("Design should not be featured until install is complete")
+	}
+}
+
+// TestCheckInstallationItemPresent — the merged menu entry is wired in.
+func TestCheckInstallationItemPresent(t *testing.T) {
 	found := false
 	for _, it := range defaultItems() {
-		if it.title == "Setup" {
+		if it.title == checkInstallationTitle {
 			found = true
-			if it.badge != "prepare" {
-				t.Errorf("Setup badge = %q, want %q", it.badge, "prepare")
+			if it.badge != "setup" {
+				t.Errorf("%s badge = %q, want %q",
+					checkInstallationTitle, it.badge, "setup")
+			}
+			if !it.interactive {
+				t.Errorf("%s should be interactive (brew/sudo prompts)",
+					checkInstallationTitle)
+			}
+			if got := strings.Join(it.cmd, " "); got != "boxland install" {
+				t.Errorf("%s cmd = %q, want %q",
+					checkInstallationTitle, got, "boxland install")
 			}
 		}
 	}
 	if !found {
-		t.Error("defaultItems() must include a Setup entry")
+		t.Errorf("defaultItems() must include a %q entry", checkInstallationTitle)
+	}
+	// Belt-and-braces: the old separate Install / Setup entries must
+	// not still be present after the merge.
+	for _, it := range defaultItems() {
+		if it.title == "Install" {
+			t.Errorf("legacy Install item still in defaultItems()")
+		}
+		if it.title == "Setup" {
+			t.Errorf("legacy Setup item still in defaultItems()")
+		}
 	}
 }
+
+// TestFailureCardShownOnInteractiveFailure — when an interactive job
+// exits non-zero with captured tail, the TLI raises a failure card
+// instead of letting bubbletea's tea.ExecProcess wipe the trailing
+// output unseen.
+func TestFailureCardShownOnInteractiveFailure(t *testing.T) {
+	m := readyModel(t)
+	it := item{title: "Install", badge: "setup", interactive: true,
+		cmd: []string{"go", "version"}}
+	m.jobs["Install"] = &job{id: "Install", it: it,
+		capture: newCaptureBuffer(50)}
+
+	m, _ = step(t, m, runDoneMsg{
+		jobID:   "Install",
+		err:     errStub("exit status 1"),
+		elapsed: 3500 * time.Millisecond,
+		tail:    []string{"npm: command not found", "exit status 127"},
+	})
+	if m.failedJob == nil {
+		t.Fatal("expected failedJob to be set after interactive failure with tail")
+	}
+	out := m.View()
+	if !strings.Contains(out, "Install failed") {
+		t.Errorf("failure card missing title; got:\n%s", out)
+	}
+	if !strings.Contains(out, "npm: command not found") {
+		t.Errorf("failure card missing tail line; got:\n%s", out)
+	}
+}
+
+// TestFailureCardSkippedWhenTailEmpty — empty tail falls back to the
+// regular toast (the binary couldn't even start, so there's nothing
+// useful to show). Avoids rendering an empty card.
+func TestFailureCardSkippedWhenTailEmpty(t *testing.T) {
+	m := readyModel(t)
+	it := item{title: "Install", badge: "setup", interactive: true,
+		cmd: []string{"nonsuch"}}
+	m.jobs["Install"] = &job{id: "Install", it: it}
+
+	m, _ = step(t, m, runDoneMsg{
+		jobID:   "Install",
+		err:     errStub("fork/exec: not found"),
+		elapsed: 50 * time.Millisecond,
+	})
+	if m.failedJob != nil {
+		t.Errorf("empty tail should not raise the failure card; got %+v", m.failedJob)
+	}
+}
+
+// TestFailureCardDismissedByEnter — pressing any non-quit key clears
+// the card and returns to the menu.
+func TestFailureCardDismissedByEnter(t *testing.T) {
+	m := readyModel(t)
+	m.failedJob = &failedJobView{
+		title: "Install", err: errStub("exit 1"),
+		elapsed: 1 * time.Second,
+		tail:    []string{"line 1", "line 2"},
+	}
+
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.failedJob != nil {
+		t.Error("Enter should dismiss the failure card")
+	}
+}
+
+// TestFailureCardNotShownForNonInteractive — the captured-pipe runner
+// already exposes its rolling tail in the logs pane, so we do NOT
+// also raise the modal failure card for non-interactive jobs (would
+// be a redundant interruption).
+func TestFailureCardNotShownForNonInteractive(t *testing.T) {
+	m := readyModel(t)
+	it := item{title: "Migrate", badge: "database",
+		cmd: []string{"boxland", "migrate", "up"}}
+	m.jobs["Migrate"] = &job{id: "Migrate", it: it}
+
+	m, _ = step(t, m, runDoneMsg{
+		jobID: "Migrate", err: errStub("exit 1"),
+		elapsed: 100 * time.Millisecond,
+		tail:    []string{"would never reach this path", "but just in case"},
+	})
+	if m.failedJob != nil {
+		t.Error("non-interactive failures must not raise the failure card")
+	}
+}
+
+// TestCaptureBufferSplitsLines — the rolling buffer splits writes on
+// newlines and preserves a partial trailing line until the next
+// write completes it.
+func TestCaptureBufferSplitsLines(t *testing.T) {
+	b := newCaptureBuffer(10)
+	b.Write([]byte("hello\nwor"))
+	b.Write([]byte("ld\nfoo"))
+	got := b.Lines()
+	want := []string{"hello", "world", "foo"}
+	if len(got) != len(want) {
+		t.Fatalf("Lines len = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("Lines[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestCaptureBufferTrimsCR — Windows-style CRLF should not leave a
+// dangling \r at the end of each captured line.
+func TestCaptureBufferTrimsCR(t *testing.T) {
+	b := newCaptureBuffer(5)
+	b.Write([]byte("hello\r\nworld\r\n"))
+	got := b.Lines()
+	if len(got) != 2 || got[0] != "hello" || got[1] != "world" {
+		t.Errorf("CRLF not stripped; got %q", got)
+	}
+}
+
+// TestCaptureBufferRollsWhenOverMax — once the rolling window fills
+// up, oldest lines are evicted from the front.
+func TestCaptureBufferRollsWhenOverMax(t *testing.T) {
+	b := newCaptureBuffer(3)
+	for i := 0; i < 10; i++ {
+		b.Write([]byte("line\n"))
+	}
+	got := b.Lines()
+	if len(got) != 3 {
+		t.Fatalf("expected 3 lines after rollover, got %d", len(got))
+	}
+}
+
+// errStub is a tiny stand-in for errors.New that doesn't pull in the
+// errors package just for tests that need an error.Error() value.
+type errStub string
+
+func (e errStub) Error() string { return string(e) }
 
 // TestFormatElapsed verifies the M:SS.t / H:MM:SS rendering for both
 // buckets.

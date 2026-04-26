@@ -80,7 +80,8 @@ func (i item) FilterValue() string {
 type job struct {
 	id          string
 	it          item
-	runner      *runner // nil for jobs run via tea.ExecProcess
+	runner      *runner        // nil for jobs run via tea.ExecProcess
+	capture     *captureBuffer // non-nil for interactive jobs (tee'd output)
 	started     time.Time
 	cancelArmed bool
 	listening   bool // server detected as accepting connections
@@ -117,6 +118,23 @@ type model struct {
 	// or dismissed the card (pressing Tab/Enter to bypass).
 	firstRunMissing []string
 	firstRunDone    bool
+
+	// Failure card. When an interactive job exits non-zero, we render
+	// a card showing the last lines of its captured output until the
+	// user presses Enter. This works around bubbletea's tea.ExecProcess
+	// wiping the terminal on resume — without the card, the only sign
+	// of failure is a 6-second status-bar toast and the actual error
+	// is irretrievable.
+	failedJob *failedJobView
+}
+
+// failedJobView holds just enough about a failed interactive job to
+// render a useful post-mortem card.
+type failedJobView struct {
+	title   string
+	err     error
+	elapsed time.Duration
+	tail    []string
 }
 
 // ANSI 256-color palette. We avoid truecolor so the TLI looks consistent
@@ -144,17 +162,21 @@ var (
 
 	ruleStyle = lipgloss.NewStyle().Foreground(cSubtle)
 
-	// Per-item field column widths.
-	nameWidth  = 10
-	badgeWidth = 13
+	// Per-item title column width. Sized to fit the widest title we
+	// render ("Check Installation" = 18) plus 1 cell of breathing
+	// room, so descriptions line up across rows.
+	nameWidth = 19
 
-	nameUnsel   = lipgloss.NewStyle().Width(nameWidth).Bold(true).Foreground(cCyan)
-	nameSel     = lipgloss.NewStyle().Width(nameWidth).Bold(true).Foreground(cPink)
-	nameFeat    = lipgloss.NewStyle().Width(nameWidth).Bold(true).Foreground(cYellow)
-	nameFeatSel = lipgloss.NewStyle().Width(nameWidth).Bold(true).Foreground(cYellow).Underline(true)
-
-	badgeStyle     = lipgloss.NewStyle().Width(badgeWidth).Foreground(cPurple)
-	badgeFeatStyle = lipgloss.NewStyle().Width(badgeWidth).Foreground(cYellow).Bold(true)
+	nameUnsel = lipgloss.NewStyle().Width(nameWidth).Bold(true).Foreground(cCyan)
+	nameSel   = lipgloss.NewStyle().Width(nameWidth).Bold(true).Foreground(cPink)
+	nameFeat  = lipgloss.NewStyle().Width(nameWidth).Bold(true).Foreground(cYellow)
+	// nameFeatSel intentionally does NOT add Underline() on top of
+	// the yellow+bold treatment. lipgloss's underline pass splits
+	// styled text containing spaces into per-character ANSI runs
+	// (same bug we hit on the OSC-8 hyperlink in services pinning),
+	// which makes the title unsearchable in tests and bloats output
+	// ~50x. The pink ▎ chevron already indicates selection clearly.
+	nameFeatSel = lipgloss.NewStyle().Width(nameWidth).Bold(true).Foreground(cYellow)
 
 	descStyle = lipgloss.NewStyle().Foreground(cMuted)
 	cmdStyle  = lipgloss.NewStyle().Foreground(cGreen)
@@ -222,21 +244,15 @@ func (delegate) Render(w io.Writer, m list.Model, index int, listItem list.Item)
 	}
 	name := nstyle.Render(it.title)
 
-	bstyle := badgeStyle
-	if it.featured {
-		bstyle = badgeFeatStyle
-	}
-	badge := bstyle.Render(padOrTruncate(it.badge, badgeWidth))
-
 	gap := " "
-	used := lipgloss.Width(gutter) + lipgloss.Width(name) + lipgloss.Width(badge) + lipgloss.Width(gap)
+	used := lipgloss.Width(gutter) + lipgloss.Width(name) + lipgloss.Width(gap)
 	descWidth := m.Width() - used
 	if descWidth < 20 {
 		descWidth = 20
 	}
 	desc := descStyle.Render(truncate(it.desc, descWidth))
 
-	headerRow := gutter + name + badge + gap + desc
+	headerRow := gutter + name + gap + desc
 	indent := strings.Repeat(" ", used)
 	// Clip the command row to the list width so a long backup path
 	// doesn't blow out the layout when the menu sits beside the logs
@@ -250,11 +266,56 @@ func (delegate) Render(w io.Writer, m list.Model, index int, listItem list.Item)
 	fmt.Fprint(w, headerRow+"\n"+cmdRow)
 }
 
+// checkInstallationItem is the one item that combines what used to be
+// Install and Setup. Running it shells out to `boxland install`, which
+// already chains brew bootstrap → requirement checks (Docker, Go,
+// Node, npm, sqlc, flatc) → npm install → setup (regenerate fonts/
+// templ/sqlc/flatc) → build the boxland CLI. So one menu item, one
+// subcommand, every step covered.
+//
+// It stays interactive=true because the brew/winget/sudo/UAC prompts
+// underneath need TTY pass-through.
+const checkInstallationTitle = "Check Installation"
+
+func checkInstallationItem(featured bool) item {
+	return item{
+		title:       checkInstallationTitle,
+		badge:       "setup",
+		desc:        "Install or refresh everything Boxland needs (deps, codegen, fonts).",
+		cmd:         []string{"boxland", "install"},
+		interactive: true,
+		featured:    featured,
+	}
+}
+
+func designItem(featured bool) item {
+	return item{
+		title:      "Design",
+		badge:      "quick start",
+		desc:       "Dependencies, migrations, web build, staging, then serve Boxland.",
+		cmd:        []string{"boxland", "design"},
+		featured:   featured,
+		indefinite: true,
+	}
+}
+
+// defaultItems is the live menu, with ordering driven by whether the
+// install is complete on the current working tree.
 func defaultItems() []item {
-	return []item{
-		{title: "Install", badge: "setup", desc: "Install/check Docker, Go, and Node; tries platform package managers before links.", cmd: []string{"boxland", "install"}, interactive: true},
-		{title: "Setup", badge: "prepare", desc: "Refresh generated artifacts (fonts, templ, codegen); safe to re-run after a pull.", cmd: []string{"boxland", "setup"}},
-		{title: "Design", badge: "quick start", desc: "Dependencies, migrations, web build, staging, then serve Boxland.", cmd: []string{"boxland", "design"}, featured: true, indefinite: true},
+	return itemsForState(isInstallComplete())
+}
+
+// itemsForState builds the menu with adaptive ordering: when the
+// install is complete, Design slots into position 0 (the user's
+// daily entry point); when it's incomplete, Check Installation goes
+// first and gets the featured/yellow treatment so the eye catches
+// it. Split out from defaultItems so tests can assert layout against
+// both states without mocking the filesystem.
+func itemsForState(installComplete bool) []item {
+	check := checkInstallationItem(!installComplete)
+	design := designItem(installComplete)
+
+	rest := []item{
 		{title: "Serve", badge: "server", desc: "Run the Go server only.", cmd: []string{"boxland", "serve"}, indefinite: true},
 		{title: "Up", badge: "docker", desc: "Start Postgres, Redis, Mailpit, and MinIO with Docker Compose.", cmd: []string{"boxland", "up"}},
 		{title: "Down", badge: "docker", desc: "Stop Docker dependencies.", cmd: []string{"boxland", "down"}},
@@ -263,6 +324,40 @@ func defaultItems() []item {
 		{title: "Restore", badge: "restore", desc: "Restore from ./backups/latest.tar.gz. Destructive; CLI asks you to pass --yes.", cmd: []string{"boxland", "backup", "import", filepath.Join("backups", "latest.tar.gz")}, interactive: true},
 		{title: "Test", badge: "quality", desc: "Run Go, web, scripts, and realm isolation tests.", cmd: []string{"boxland", "test"}},
 	}
+
+	if installComplete {
+		// Daily-driver layout: Design first, then the install check
+		// stays available for re-running after a `git pull`.
+		return append([]item{design, check}, rest...)
+	}
+	// Fresh-clone layout: install first, design dimmed below.
+	return append([]item{check, design}, rest...)
+}
+
+// isInstallComplete decides which menu layout to render. We treat
+// installation as complete only when *both*:
+//
+//   - every required tool is on PATH (so `boxland install` would
+//     not need to run any package-manager step), and
+//   - setup.Need() reports no missing build artifacts.
+//
+// Either condition alone is insufficient: a user can have Docker on
+// PATH but a missing templ output dir from a fresh `git pull`, and
+// we still want the install card to fire.
+func isInstallComplete() bool {
+	wd, err := os.Getwd()
+	if err != nil {
+		return false
+	}
+	if missing := setup.Need(wd); len(missing) > 0 {
+		return false
+	}
+	for _, c := range setup.RequiredCmds() {
+		if _, err := exec.LookPath(c); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func defaultBackupPath() string {
@@ -319,39 +414,13 @@ func newModel() model {
 	}
 	// Inspect the working tree once at startup. Cwd is the canonical
 	// repo root in our docs ("run from the boxland/ directory"), so
-	// we don't try to walk up looking for a marker.
+	// we don't try to walk up looking for a marker. The featured-row
+	// highlight is handled by defaultItems()'s adaptive ordering, so
+	// no further work is needed here.
 	if wd, err := os.Getwd(); err == nil {
 		m.firstRunMissing = setup.Need(wd)
-		// Highlight Setup if anything's missing so the user's eye
-		// catches the right item even after they dismiss the card.
-		if len(m.firstRunMissing) > 0 {
-			highlightSetupItem(&m)
-		}
 	}
 	return m
-}
-
-// highlightSetupItem swaps the "Setup" item's featured flag on so it
-// renders in the same yellow color as the Design quick-start, signalling
-// "this is the one to run first".
-func highlightSetupItem(m *model) {
-	items := m.list.Items()
-	changed := false
-	for i, raw := range items {
-		it, ok := raw.(item)
-		if !ok || it.title != "Setup" {
-			continue
-		}
-		if !it.featured {
-			it.featured = true
-			items[i] = it
-			changed = true
-		}
-		break
-	}
-	if changed {
-		m.list.SetItems(items)
-	}
 }
 
 // headerHeight is the number of lines the logo + tagline + rule occupies.
@@ -381,16 +450,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case runDoneMsg:
-		// When Setup finishes (success or failure), refresh the
-		// first-run state so the friendly card disappears if the user
-		// is now ready to design.
-		if msg.jobID == "Setup" {
+		// When Check Installation finishes (success or failure),
+		// refresh the first-run state so the friendly card disappears
+		// if the user is now ready to design — and rebuild the menu
+		// so Design slots into position 0 (its featured "daily
+		// driver" home) when the install is complete.
+		if msg.jobID == checkInstallationTitle {
 			if wd, err := os.Getwd(); err == nil {
 				m.firstRunMissing = setup.Need(wd)
 				if len(m.firstRunMissing) == 0 {
 					m.firstRunDone = true
 				}
 			}
+			m.refreshMenuItems()
 		}
 		return m.handleRunDone(msg)
 
@@ -399,22 +471,38 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		// First-run card intercepts everything except quit. The user's
-		// only real choices are: install required software (S) or quit.
+		// only real choices are: check installation (S) or quit.
 		if m.showFirstRun() {
 			switch {
 			case key.Matches(msg, key.NewBinding(key.WithKeys("ctrl+c", "q", "esc"))):
 				return m, tea.Quit
 			case key.Matches(msg, key.NewBinding(key.WithKeys("s", "S", "enter"))):
-				return m.startSetup()
+				return m.startCheckInstallation()
 			case key.Matches(msg, key.NewBinding(key.WithKeys("tab"))):
 				// Power-user escape hatch: dismiss the card and use
 				// the menu directly. We don't clear firstRunMissing
-				// (the Setup item stays highlighted) — just hide the
-				// card.
+				// (the Check Installation item stays featured) — just
+				// hide the card.
 				m.firstRunDone = true
 				return m, nil
 			}
 			return m, nil
+		}
+
+		// Failure card: any key dismisses it and returns to the menu.
+		// Quit shortcuts (ctrl+c/q/esc) still quit; everything else
+		// just clears the card so the user can re-try.
+		if m.failedJob != nil {
+			switch {
+			case key.Matches(msg, key.NewBinding(key.WithKeys("ctrl+c"))):
+				return m, tea.Quit
+			case key.Matches(msg, key.NewBinding(key.WithKeys("q", "esc"))):
+				m.failedJob = nil
+				return m, tea.Quit
+			default:
+				m.failedJob = nil
+				return m, nil
+			}
 		}
 
 		// Don't intercept keys while the list's filter input is active.
@@ -481,36 +569,47 @@ func (m model) showFirstRun() bool {
 	return len(m.firstRunMissing) > 0 && !m.firstRunDone
 }
 
-// startSetup launches the Setup item from the first-run card. It
-// reuses the same job machinery the menu uses, so output streams into
-// the logs pane and the user can watch progress.
-func (m model) startSetup() (tea.Model, tea.Cmd) {
-	// Find the Setup item in the live menu so we honour any future
-	// changes to its cmd shape.
-	for _, raw := range m.list.Items() {
-		it, ok := raw.(item)
-		if !ok || it.title != "Setup" {
-			continue
-		}
-		// Selecting + dispatching mirrors what Enter would do, with
-		// the small twist that we hide the card right away so the
-		// logs pane has room to breathe.
-		m.firstRunDone = true
-		m.list.Select(itemIndex(m.list.Items(), "Setup"))
-		return m.startSelected()
+// startCheckInstallation launches the Check Installation item from
+// the first-run card. It reuses the same job machinery the menu
+// uses, so output streams into the logs pane and the user can watch
+// progress (and the failure card surfaces any captured errors).
+func (m model) startCheckInstallation() (tea.Model, tea.Cmd) {
+	idx := itemIndex(m.list.Items(), checkInstallationTitle)
+	if idx < 0 {
+		return m, nil
 	}
-	return m, nil
+	// Hide the card right away so the logs pane has room to breathe,
+	// then dispatch as if the user had pressed Enter on the menu row.
+	m.firstRunDone = true
+	m.list.Select(idx)
+	return m.startSelected()
 }
 
-// itemIndex returns the position of the named item in the slice, or 0
-// if not found.
+// itemIndex returns the position of the named item in the slice, or
+// -1 when not found. Callers must guard against a missing item; we
+// don't silently return 0 because that would dispatch the wrong row.
 func itemIndex(items []list.Item, title string) int {
 	for i, raw := range items {
 		if it, ok := raw.(item); ok && it.title == title {
 			return i
 		}
 	}
-	return 0
+	return -1
+}
+
+// refreshMenuItems rebuilds the list from defaultItems(), which
+// re-evaluates isInstallComplete() and may swap Design and Check
+// Installation. Called after Check Installation finishes so the
+// "daily driver" layout snaps into place without needing a TLI
+// restart.
+func (m *model) refreshMenuItems() {
+	items := defaultItems()
+	li := make([]list.Item, len(items))
+	for i, it := range items {
+		li[i] = it
+	}
+	m.list.SetItems(li)
+	m.list.Select(0)
 }
 
 // toggleFocus flips between menu and logs panes. Logs focus is a no-op
@@ -577,11 +676,28 @@ func (m model) startSelected() (tea.Model, tea.Cmd) {
 	if it.interactive {
 		// Hand the terminal over directly; bubbletea suspends the TUI
 		// for the duration of the subprocess and resumes after.
-		j := &job{id: it.title, it: it, started: time.Now()}
+		//
+		// We tee the child's stdout/stderr through a rolling capture
+		// buffer so a failure card can re-show the last lines after
+		// bubbletea wipes the screen on resume. Pre-assigning the
+		// fields here is preserved by tea.ExecProcess (it only
+		// overrides them when nil — see bubbletea/exec.go's
+		// SetStdout/SetStderr).
+		j := &job{id: it.title, it: it, started: time.Now(), capture: newCaptureBuffer(tailMaxLines)}
 		m.jobs[it.title] = j
+		// Re-apply size so the menu shrinks to make room for the
+		// logs pane when the TUI redraws after exec returns.
+		m.applySize(m.width, m.height)
 		c := exec.Command(bin, args...)
+		c.Stdout = io.MultiWriter(os.Stdout, j.capture)
+		c.Stderr = io.MultiWriter(os.Stderr, j.capture)
 		execCmd := tea.ExecProcess(c, func(err error) tea.Msg {
-			return runDoneMsg{jobID: it.title, err: err, elapsed: time.Since(j.started)}
+			return runDoneMsg{
+				jobID:   it.title,
+				err:     err,
+				elapsed: time.Since(j.started),
+				tail:    j.capture.Lines(),
+			}
 		})
 		return m, execCmd
 	}
@@ -592,6 +708,10 @@ func (m model) startSelected() (tea.Model, tea.Cmd) {
 	}
 	j := &job{id: it.title, it: it, runner: r, started: time.Now()}
 	m.jobs[it.title] = j
+
+	// Now that hasJobs() reflects the new job, re-apply size so the
+	// menu shrinks to make room for the logs pane.
+	m.applySize(m.width, m.height)
 
 	var extra []tea.Cmd
 	if it.indefinite {
@@ -663,6 +783,19 @@ func (m model) handleRunDone(msg runDoneMsg) (tea.Model, tea.Cmd) {
 		err = nil
 	}
 
+	// Failed interactive jobs get the failure card treatment. We only
+	// trigger it when there's actually captured output to show; an
+	// empty tail (e.g. the binary couldn't even start) falls back to
+	// the toast.
+	if err != nil && j.it.interactive && len(msg.tail) > 0 {
+		m.failedJob = &failedJobView{
+			title:   j.it.title,
+			err:     err,
+			elapsed: msg.elapsed,
+			tail:    msg.tail,
+		}
+	}
+
 	toast := summaryToast(j.it, err, msg.elapsed)
 	cmds := []tea.Cmd{m.list.NewStatusMessage(toast)}
 
@@ -675,6 +808,10 @@ func (m model) handleRunDone(msg runDoneMsg) (tea.Model, tea.Cmd) {
 			m.focus = focusMenu
 		}
 	}
+
+	// Re-apply size so the menu re-expands now that hasJobs() may
+	// have flipped to false (or the surviving job set changed).
+	m.applySize(m.width, m.height)
 
 	return m, tea.Batch(cmds...)
 }
@@ -700,10 +837,12 @@ func (m *model) applySize(w, h int) {
 		bodyHeight = 10
 	}
 
-	// Two-column body when the terminal is wide enough; otherwise the
-	// list takes the whole width and the logs pane drops below it.
+	// Menu pane sizing. When a long-running job is live we need to
+	// share horizontal space with the logs pane, so we clamp to
+	// menuPaneWidth on wide terminals. When nothing's running the
+	// list gets the full width, which lets descriptions breathe.
 	listWidth := contentWidth
-	if contentWidth >= menuPaneWidth+30 {
+	if m.hasJobs() && contentWidth >= menuPaneWidth+30 {
 		listWidth = menuPaneWidth
 	}
 	m.list.SetSize(listWidth, bodyHeight)
@@ -735,7 +874,10 @@ func (m model) View() string {
 	}
 
 	body := m.viewBody()
-	if m.showFirstRun() && !m.hasJobs() {
+	switch {
+	case m.failedJob != nil:
+		body = m.renderFailureCard()
+	case m.showFirstRun() && !m.hasJobs():
 		body = m.renderFirstRunCard()
 	}
 	footer := m.renderFooter(m.header.Width)
@@ -758,8 +900,8 @@ func (m model) renderFirstRunCard() string {
 	}
 
 	titleLine := bubbleTitleStyle.Render("Welcome to Boxland")
-	intro := descStyle.Render("Boxland needs to install required software first. " +
-		"Press S to do it now (~30s), or q to quit.")
+	intro := descStyle.Render("Boxland needs a quick installation check before you can design. " +
+		"Press S to run it now, or q to quit.")
 
 	missingHeader := footerLabel.Render("Still required:")
 	rows := make([]string, 0, len(m.firstRunMissing))
@@ -767,7 +909,7 @@ func (m model) renderFirstRunCard() string {
 		rows = append(rows, "  "+statusErr.Render("•")+" "+descStyle.Render(name))
 	}
 
-	hint := footerKey.Render("S") + footerLabel.Render(" install required software   ") +
+	hint := footerKey.Render("S") + footerLabel.Render(" check installation   ") +
 		footerKey.Render("q") + footerLabel.Render(" quit")
 
 	parts := []string{titleLine, "", intro, "", missingHeader}
@@ -780,6 +922,57 @@ func (m model) renderFirstRunCard() string {
 
 	// Centre the card inside the body width so it doesn't hug the
 	// left margin on wide terminals.
+	pad := (width - lipgloss.Width(card)) / 2
+	if pad < 0 {
+		pad = 0
+	}
+	leftPad := strings.Repeat(" ", pad)
+	lines := strings.Split(card, "\n")
+	for i, ln := range lines {
+		lines[i] = leftPad + ln
+	}
+	return strings.Join(lines, "\n")
+}
+
+// renderFailureCard shows the captured tail of a failed interactive
+// job so the user can read the error after bubbletea wipes the
+// terminal on tea.ExecProcess resume.
+//
+// The card is intentionally generous on size: the user's reading,
+// not navigating. We show up to 40 trailing lines and leave the
+// menu hidden until they press a key — that's safer than racing the
+// TUI redraw to flash the error.
+func (m model) renderFailureCard() string {
+	if m.failedJob == nil {
+		return ""
+	}
+	width := m.header.Width
+	cardWidth := width
+	if cardWidth > 100 {
+		cardWidth = 100
+	}
+
+	fj := m.failedJob
+	titleLine := statusErr.Render("✗ ") + bubbleTitleStyle.Render(fj.title+" failed")
+	subtitle := footerLabel.Render(fmt.Sprintf("after %s · %s",
+		formatElapsed(fj.elapsed), errMessage(fj.err)))
+
+	tail := fj.tail
+	const maxLines = 40
+	if len(tail) > maxLines {
+		tail = tail[len(tail)-maxLines:]
+	}
+	body := tailStyle.Render(strings.Join(tail, "\n"))
+
+	hint := footerKey.Render("Enter") + footerLabel.Render(" return to menu   ") +
+		footerKey.Render("q") + footerLabel.Render(" quit")
+
+	parts := []string{titleLine, subtitle, "", body, "", hint}
+
+	card := bubbleStyleFocused.
+		Width(cardWidth).
+		Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
+
 	pad := (width - lipgloss.Width(card)) / 2
 	if pad < 0 {
 		pad = 0
@@ -850,11 +1043,7 @@ func (m model) renderLogsTitle() string {
 	if j.it.featured {
 		nameStyle = nameFeat
 	}
-	bstyle := badgeStyle
-	if j.it.featured {
-		bstyle = badgeFeatStyle
-	}
-	left := chevSel.Render("◆ ") + nameStyle.Render(j.it.title) + bstyle.Render(j.it.badge)
+	left := chevSel.Render("◆ ") + nameStyle.Render(j.it.title)
 	right := stopwatchStyle.Render(formatElapsed(m.stopwatch.Elapsed()))
 	return alignBetween(left, right, m.tail.Width)
 }

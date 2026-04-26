@@ -139,10 +139,12 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "usage: boxland [install|setup|design|up|down|logs|serve|migrate [up|down|version]|backup export|import|test|version]")
 }
 
-func runInstall() error {
-	fmt.Println("Boxland install checks")
-	fmt.Println()
-	reqs := []installRequirement{
+// installRequirements is the canonical list of system tools `boxland
+// install` checks for. Extracted out of runInstall() so tests can
+// assert it stays in sync with setup.RequiredCmds() (which the TLI
+// reads to decide whether the install is complete).
+func installRequirements() []installRequirement {
+	return []installRequirement{
 		{Name: "Docker Desktop", Cmd: "docker", VersionArgs: []string{"--version"}, URL: "https://www.docker.com/products/docker-desktop/", Packages: map[string]string{"winget": "Docker.DockerDesktop", "choco": "docker-desktop", "brew": "--cask docker", "apt": "docker.io docker-compose-plugin", "dnf": "docker docker-compose-plugin", "pacman": "docker docker-compose"}},
 		{Name: "Go", Cmd: "go", VersionArgs: []string{"version"}, URL: "https://go.dev/dl/", Packages: map[string]string{"winget": "GoLang.Go", "choco": "golang", "brew": "go", "apt": "golang-go", "dnf": "golang", "pacman": "go"}},
 		{Name: "Node.js", Cmd: "node", VersionArgs: []string{"--version"}, URL: "https://nodejs.org/", Packages: map[string]string{"winget": "OpenJS.NodeJS.LTS", "choco": "nodejs-lts", "brew": "node", "apt": "nodejs npm", "dnf": "nodejs npm", "pacman": "nodejs npm"}},
@@ -155,10 +157,39 @@ func runInstall() error {
 		{Name: "sqlc", Cmd: "sqlc", VersionArgs: []string{"version"}, URL: "https://docs.sqlc.dev/en/stable/overview/install.html", Packages: map[string]string{"winget": "sqlc-dev.sqlc", "brew": "sqlc", "pacman": "sqlc"}},
 		{Name: "flatc", Cmd: "flatc", VersionArgs: []string{"--version"}, URL: "https://flatbuffers.dev/flatbuffers_guide_building.html", Packages: map[string]string{"winget": "Google.FlatBuffers", "choco": "flatc", "brew": "flatbuffers", "apt": "flatbuffers-compiler", "dnf": "flatbuffers-compiler", "pacman": "flatbuffers"}},
 	}
+}
+
+func runInstall() error {
+	fmt.Println("Boxland install checks")
+	fmt.Println()
+	// On macOS, Homebrew is the *only* package manager we know about.
+	// If it's missing, every brew-using requirement below would fail
+	// instantly. Bootstrap brew first so the rest of Install can use
+	// it. (Windows has winget/choco fallbacks; Linux has apt/dnf/
+	// pacman — neither needs this.)
+	if err := ensureBrewOnMac(); err != nil {
+		return err
+	}
+	reqs := installRequirements()
+	// Walk every requirement and collect the unresolved ones rather
+	// than aborting on the first failure. This way one Install run
+	// surfaces every missing dependency, instead of forcing the user
+	// to discover them one re-run at a time.
+	var unresolved []string
 	for _, r := range reqs {
 		if err := ensureRequirement(r); err != nil {
-			return err
+			unresolved = append(unresolved, r.Name)
 		}
+	}
+	if len(unresolved) > 0 {
+		// Stop here. Anything below this point (npm install, go
+		// build, setup) assumes the tools above are on PATH; without
+		// them, the next step would explode with a confusing
+		// "executable file not found" before the user has had time
+		// to read why.
+		return fmt.Errorf("install incomplete: %s could not be installed automatically. "+
+			"Follow the printed links above, then re-run Install.",
+			strings.Join(unresolved, ", "))
 	}
 	fmt.Println()
 	fmt.Println("Installing web dependencies...")
@@ -202,6 +233,19 @@ type installRequirement struct {
 	Packages    map[string]string
 }
 
+// ensureRequirement returns nil when r is on PATH (already installed
+// or just successfully installed by a package manager). It returns a
+// non-nil error in two cases that callers must treat as fatal:
+//
+//   - no package manager available for the platform that handles r;
+//   - every available package-manager attempt failed and r is still
+//     not on PATH.
+//
+// Both cases still print a friendly URL the user can follow manually,
+// but they no longer pretend the install step succeeded — that's the
+// bug that let later steps (npm install, go build) explode with a
+// cryptic "executable file not found" before the user could see
+// what was actually missing.
 func ensureRequirement(r installRequirement) error {
 	if path, err := exec.LookPath(r.Cmd); err == nil {
 		fmt.Printf("✓ %-15s %s\n", r.Name, path)
@@ -212,7 +256,7 @@ func ensureRequirement(r installRequirement) error {
 	attempts := installAttempts(r)
 	if len(attempts) == 0 {
 		fmt.Printf("  No supported package manager found. Install from %s\n", hyperlink(r.URL, r.URL))
-		return nil
+		return fmt.Errorf("%s: no package manager available", r.Name)
 	}
 	for _, a := range attempts {
 		fmt.Printf("  Trying: %s\n", strings.Join(a, " "))
@@ -226,7 +270,7 @@ func ensureRequirement(r installRequirement) error {
 		}
 	}
 	fmt.Printf("  Could not install automatically. Install from %s\n", hyperlink(r.URL, r.URL))
-	return nil
+	return fmt.Errorf("%s: not installed after package-manager attempts", r.Name)
 }
 
 func installAttempts(r installRequirement) [][]string {
@@ -274,6 +318,82 @@ func installCommand(pm, pkg string) []string {
 	default:
 		return []string{pm, "install", pkg}
 	}
+}
+
+// ensureBrewOnMac installs Homebrew on macOS when it's missing. On any
+// other OS it's a no-op (Linux has apt/dnf/pacman; Windows has
+// winget/choco). Returns a non-nil error if brew is required but the
+// install fails — callers must treat this as fatal because the rest
+// of the requirements loop relies on `brew` being on PATH.
+//
+// Implementation notes:
+//
+//   - We invoke the official non-interactive installer
+//     (NONINTERACTIVE=1 ... install.sh) per Homebrew's documented
+//     unattended path. The user will still be prompted for their
+//     macOS admin password by sudo when brew sets up its prefix; we
+//     run inside the TLI's interactive job slot, so the prompt
+//     reaches the user's terminal.
+//
+//   - Newly-installed brew is at /opt/homebrew/bin (Apple Silicon)
+//     or /usr/local/bin (Intel). Neither lives in the parent
+//     process's PATH yet, so we prependPath the right one before
+//     returning.
+func ensureBrewOnMac() error {
+	if goruntime.GOOS != "darwin" {
+		return nil
+	}
+	if _, err := exec.LookPath("brew"); err == nil {
+		return nil // already installed; nothing to do
+	}
+	fmt.Println("Homebrew is the macOS package manager Boxland uses to install")
+	fmt.Println("the rest of its dependencies. Installing it now from brew.sh.")
+	fmt.Println("(You may be prompted for your admin password.)")
+	fmt.Println()
+
+	cmd := exec.Command("/bin/bash", "-c",
+		`curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | NONINTERACTIVE=1 /bin/bash`)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("Homebrew install failed: %w. Install manually from https://brew.sh and re-run Install.", err)
+	}
+
+	// Add the canonical brew bin to the in-process PATH so subsequent
+	// exec.LookPath("brew") (and the per-requirement install attempts)
+	// can find it without the user having to restart their shell.
+	for _, dir := range []string{"/opt/homebrew/bin", "/usr/local/bin"} {
+		if _, err := os.Stat(filepath.Join(dir, "brew")); err == nil {
+			prependPath(dir)
+			break
+		}
+	}
+
+	if _, err := exec.LookPath("brew"); err != nil {
+		return fmt.Errorf("Homebrew installed but `brew` is not on PATH. Restart your shell and re-run Install.")
+	}
+	fmt.Println()
+	fmt.Println("✓ Homebrew installed.")
+	fmt.Println()
+	return nil
+}
+
+// prependPath puts dir at the front of the in-process PATH env var so
+// freshly-installed binaries become discoverable mid-run. Idempotent:
+// if dir is already on PATH, it's a no-op.
+func prependPath(dir string) {
+	cur := os.Getenv("PATH")
+	for _, existing := range strings.Split(cur, string(os.PathListSeparator)) {
+		if existing == dir {
+			return
+		}
+	}
+	if cur == "" {
+		_ = os.Setenv("PATH", dir)
+		return
+	}
+	_ = os.Setenv("PATH", dir+string(os.PathListSeparator)+cur)
 }
 
 func executableName(base string) string {
