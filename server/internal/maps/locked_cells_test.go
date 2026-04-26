@@ -262,36 +262,14 @@ func TestPreview_MergesLockAnchors(t *testing.T) {
 	}
 }
 
-func TestPreview_PixelAlgorithmFallsBackWithoutLoader(t *testing.T) {
-	pool := openTestPool(t)
-	defer pool.Close()
-	ctx := context.Background()
-	designerID, baseEtID := resetDB(t, pool)
-	ents := entities.New(pool, components.Default())
-	svc := maps.New(pool) // no SetPixelLoader
-	mapID, _, _, _ := procFixture(t, ctx, designerID, baseEtID, ents, svc, maps.GenAlgorithmPixelWFC)
-
-	res, err := svc.GenerateProceduralPreview(ctx, maps.ProceduralPreviewInput{
-		MapID: mapID, Width: 4, Height: 4, Seed: 1,
-	})
-	if err != nil {
-		t.Fatalf("preview: %v", err)
-	}
-	// Loader missing → falls back to socket.
-	if res.Algorithm != maps.GenAlgorithmSocket {
-		t.Errorf("expected fallback to socket, got %q", res.Algorithm)
-	}
-}
-
-func TestPreview_PixelAlgorithmUsesLoader(t *testing.T) {
+func TestPreview_OverlappingFallsBackWithoutSamplePatch(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
 	ctx := context.Background()
 	designerID, baseEtID := resetDB(t, pool)
 	ents := entities.New(pool, components.Default())
 	svc := maps.New(pool)
-	svc.SetPixelLoader(stubPixelLoader{})
-	mapID, _, _, _ := procFixture(t, ctx, designerID, baseEtID, ents, svc, maps.GenAlgorithmPixelWFC)
+	mapID, _, _, _ := procFixture(t, ctx, designerID, baseEtID, ents, svc, maps.GenAlgorithmOverlapping)
 
 	res, err := svc.GenerateProceduralPreview(ctx, maps.ProceduralPreviewInput{
 		MapID: mapID, Width: 4, Height: 4, Seed: 1,
@@ -299,29 +277,72 @@ func TestPreview_PixelAlgorithmUsesLoader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("preview: %v", err)
 	}
-	if res.Algorithm != maps.GenAlgorithmPixelWFC {
-		t.Errorf("algorithm = %q, want pixel_wfc", res.Algorithm)
-	}
-	if res.Region == nil || len(res.Region.Cells) != 16 {
-		t.Errorf("region empty/wrong size: %+v", res.Region)
+	// No sample patch defined → falls back to socket so the designer
+	// still sees output (with a slog warning, see runProcedural).
+	if res.Algorithm != maps.GenAlgorithmSocket {
+		t.Errorf("expected fallback to socket, got %q", res.Algorithm)
 	}
 }
 
-// stubPixelLoader returns a single-colour fingerprint per entity type so
-// every tile is "compatible enough" with every other tile. Lets the
-// pixel-WFC service path execute end-to-end without hitting object
-// storage.
-type stubPixelLoader struct{}
+func TestPreview_OverlappingUsesSamplePatch(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	designerID, baseEtID := resetDB(t, pool)
+	ents := entities.New(pool, components.Default())
+	svc := maps.New(pool)
+	mapID, et1, et2, layerID := procFixture(t, ctx, designerID, baseEtID, ents, svc, maps.GenAlgorithmOverlapping)
 
-func (stubPixelLoader) FingerprintFor(_ context.Context, entityTypeID int64) ([4]wfc.EdgeFingerprint, error) {
-	var fp [4]wfc.EdgeFingerprint
-	c := uint8(entityTypeID & 0xff)
-	for e := 0; e < 4; e++ {
-		for s := 0; s < wfc.EdgeSamples; s++ {
-			fp[e][s] = [3]uint8{c, c, c}
+	// Paint a tiny stripe sample in the base layer (cols alternate
+	// et1/et2). The sample patch row points at this 4x4 region.
+	for y := int32(0); y < 4; y++ {
+		for x := int32(0); x < 4; x++ {
+			et := et1
+			if x%2 == 1 {
+				et = et2
+			}
+			if _, err := pool.Exec(ctx, `
+				INSERT INTO map_tiles (map_id, layer_id, x, y, entity_type_id)
+				VALUES ($1, $2, $3, $4, $5)
+			`, mapID, layerID, x, y, et); err != nil {
+				t.Fatalf("paint sample cell (%d,%d): %v", x, y, err)
+			}
 		}
 	}
-	return fp, nil
+	if err := svc.UpsertSamplePatch(ctx, maps.SamplePatchInput{
+		MapID: mapID, LayerID: layerID, X: 0, Y: 0, Width: 4, Height: 4,
+	}); err != nil {
+		t.Fatalf("upsert sample patch: %v", err)
+	}
+
+	res, err := svc.GenerateProceduralPreview(ctx, maps.ProceduralPreviewInput{
+		MapID: mapID, Width: 6, Height: 6, Seed: 1,
+	})
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	if res.Algorithm != maps.GenAlgorithmOverlapping {
+		t.Errorf("algorithm = %q, want %q", res.Algorithm, maps.GenAlgorithmOverlapping)
+	}
+	if res.PatternCount < 2 {
+		t.Errorf("PatternCount = %d, want >= 2 for stripe sample", res.PatternCount)
+	}
+	if res.Region == nil || len(res.Region.Cells) != 36 {
+		t.Errorf("region empty/wrong size: %+v", res.Region)
+	}
+	// The output should preserve the stripe — every horizontal
+	// neighbour pair must differ.
+	w := int(res.Region.Width)
+	for y := 0; y < int(res.Region.Height); y++ {
+		for x := 0; x < w-1; x++ {
+			a := res.Region.Cells[y*w+x].EntityType
+			b := res.Region.Cells[y*w+x+1].EntityType
+			if a == b {
+				t.Errorf("stripe broken at (%d,%d): both = %d", x, y, a)
+			}
+		}
+	}
+	_ = wfc.EntityTypeID(et1) // keep wfc import live alongside other tests
 }
 
 func TestSetGenAlgorithm_RoundTrips(t *testing.T) {
@@ -339,12 +360,12 @@ func TestSetGenAlgorithm_RoundTrips(t *testing.T) {
 	if m.GenAlgorithm != maps.GenAlgorithmSocket {
 		t.Errorf("default = %q, want socket", m.GenAlgorithm)
 	}
-	if err := svc.SetGenAlgorithm(ctx, m.ID, maps.GenAlgorithmPixelWFC); err != nil {
+	if err := svc.SetGenAlgorithm(ctx, m.ID, maps.GenAlgorithmOverlapping); err != nil {
 		t.Fatalf("SetGenAlgorithm: %v", err)
 	}
 	got, _ := svc.FindByID(ctx, m.ID)
-	if got.GenAlgorithm != maps.GenAlgorithmPixelWFC {
-		t.Errorf("after set = %q, want pixel_wfc", got.GenAlgorithm)
+	if got.GenAlgorithm != maps.GenAlgorithmOverlapping {
+		t.Errorf("after set = %q, want overlapping", got.GenAlgorithm)
 	}
 
 	if err := svc.SetGenAlgorithm(ctx, m.ID, "weird"); err == nil {

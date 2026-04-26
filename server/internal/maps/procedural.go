@@ -22,22 +22,6 @@ import (
 	"boxland/server/internal/maps/wfc"
 )
 
-// TilePixelLoader is the maps service's view of "give me edge fingerprints
-// for one tile-kind entity type." Implemented by the designer wiring
-// against assets.Service + persistence.ObjectStore so the maps package
-// stays free of asset-pipeline dependencies. Nil is acceptable: pixel-WFC
-// then falls back to socket-mode for that map and logs a warning.
-type TilePixelLoader interface {
-	// FingerprintFor returns the four-edge fingerprint for the tile
-	// stored on entity-type `entityTypeID`. The implementation owns its
-	// own cache; callers may invoke this once per generation per tile.
-	FingerprintFor(ctx context.Context, entityTypeID int64) ([4]wfc.EdgeFingerprint, error)
-}
-
-// SetPixelLoader installs the dependency. cmd/boxland calls this once at
-// boot; tests can pass nil to keep socket mode the only working option.
-func (s *Service) SetPixelLoader(l TilePixelLoader) { s.pixelLoader = l }
-
 // ProceduralPreviewInput drives GenerateProceduralPreview.
 type ProceduralPreviewInput struct {
 	// MapID is required so the service can load the map's gen_algorithm
@@ -60,12 +44,11 @@ type ProceduralPreviewInput struct {
 	Anchors []wfc.Cell
 
 	// MaxReseeds caps WFC retry attempts per call. 0 = WFC default.
-	// Ignored by the pixel-WFC engine (which never reseeds).
 	MaxReseeds int
 
 	// AlgorithmOverride lets the caller force a specific engine
 	// regardless of the map's stored gen_algorithm. Empty = use the
-	// stored value. Useful for "preview as pixel WFC before I commit
+	// stored value. Useful for "preview as overlapping before I commit
 	// to switching" UX.
 	AlgorithmOverride string
 }
@@ -80,15 +63,21 @@ type ProceduralPreviewResult struct {
 	TileSetSize int
 
 	// Algorithm is the engine that actually ran. Echoed so the UI can
-	// confirm the pixel-mode override took effect (or warn that the
-	// fallback to socket fired because no pixel loader was wired).
+	// confirm an algorithm override took effect (or warn that the
+	// overlapping-mode fallback to socket fired because no sample patch
+	// was defined).
 	Algorithm string
 
-	// Fallbacks counts cells the pixel engine had to fill from its
-	// nearest-neighbour fallback because propagation pruned them empty.
-	// Always 0 for socket mode. The Mapmaker shows it as an "increase
-	// tile variety" hint when non-zero.
+	// Fallbacks is reserved: legacy pixel-WFC populated it; current
+	// engines always set it to 0. Kept on the wire so the JS client
+	// doesn't need a coordinated update.
 	Fallbacks int
+
+	// PatternCount is populated by the overlapping engine: how many
+	// distinct NxN patterns were extracted from the sample. The UI
+	// uses this to surface "your sample only produced N patterns —
+	// try painting more variety."
+	PatternCount int
 }
 
 // Errors. Stable for HTTP handler mapping.
@@ -156,15 +145,16 @@ func (s *Service) MaterializeProcedural(ctx context.Context, in MaterializeProce
 	}
 	anchors := lockedCellsToAnchors(locks)
 
-	region, algorithm, _, err := s.runProcedural(ctx, m, in.Seed, anchors, "")
+	res, err := s.runProcedural(ctx, m, in.Seed, anchors, "")
 	if err != nil {
 		// PLAN.md §139: failures get a structured slog entry with
 		// seed + map id so the designer can reproduce the failure.
 		slog.Warn("wfc materialize failed",
-			"map_id", m.ID, "seed", in.Seed, "algorithm", algorithm,
+			"map_id", m.ID, "seed", in.Seed, "algorithm", res.Algorithm,
 			"width", m.Width, "height", m.Height, "err", err)
 		return nil, err
 	}
+	region := res.Region
 
 	// Persist.
 	tx, err := s.Pool.BeginTx(ctx, pgx.TxOptions{})
@@ -247,11 +237,11 @@ func (s *Service) GenerateTransientRegion(ctx context.Context, mapID int64, seed
 		return nil, fmt.Errorf("load locked cells: %w", err)
 	}
 	anchors := lockedCellsToAnchors(locks)
-	region, _, _, err := s.runProcedural(ctx, m, seed, anchors, "")
+	res, err := s.runProcedural(ctx, m, seed, anchors, "")
 	if err != nil {
 		return nil, err
 	}
-	return region, nil
+	return res.Region, nil
 }
 
 // GenerateProceduralPreview builds the configured engine's tileset from
@@ -321,7 +311,7 @@ func (s *Service) GenerateProceduralPreview(ctx context.Context, in ProceduralPr
 	gen.Width = in.Width
 	gen.Height = in.Height
 
-	region, algorithm, fallbacks, err := s.runProcedural(ctx, &gen, in.Seed, allAnchors, in.AlgorithmOverride)
+	res, err := s.runProcedural(ctx, &gen, in.Seed, allAnchors, in.AlgorithmOverride)
 	if err != nil {
 		return nil, err
 	}
@@ -331,10 +321,11 @@ func (s *Service) GenerateProceduralPreview(ctx context.Context, in ProceduralPr
 		return nil, err
 	}
 	return &ProceduralPreviewResult{
-		Region:      region,
-		TileSetSize: tileCount,
-		Algorithm:   algorithm,
-		Fallbacks:   fallbacks,
+		Region:       res.Region,
+		TileSetSize:  tileCount,
+		Algorithm:    res.Algorithm,
+		Fallbacks:    res.Fallbacks,
+		PatternCount: res.PatternCount,
 	}, nil
 }
 
@@ -367,16 +358,27 @@ func (s *Service) countProceduralTiles(ctx context.Context) (int, error) {
 	return len(procSet.tiles), nil
 }
 
+// proceduralRunResult is the internal shape returned by runProcedural.
+// We use a named struct (rather than four positional returns) so adding
+// future engine-specific fields — pattern count today, biome metadata
+// later — doesn't fan out to every caller.
+type proceduralRunResult struct {
+	Region       *wfc.Region
+	Algorithm    string
+	Fallbacks    int // reserved; current engines always set 0
+	PatternCount int // populated by overlapping engine; 0 otherwise
+}
+
 // runProcedural dispatches by m.GenAlgorithm (or the override) and runs
 // the right engine. Returns the expanded region, the algorithm that ran,
-// the fallback count (pixel only), and any error.
+// and any engine-specific metadata (pattern count, etc).
 func (s *Service) runProcedural(
 	ctx context.Context,
 	m *Map,
 	seed uint64,
 	anchors []wfc.Cell,
 	override string,
-) (*wfc.Region, string, int, error) {
+) (proceduralRunResult, error) {
 	algo := override
 	if algo == "" {
 		algo = m.GenAlgorithm
@@ -387,143 +389,95 @@ func (s *Service) runProcedural(
 
 	procSet, err := s.loadTileSetForProcedural(ctx)
 	if err != nil {
-		return nil, algo, 0, err
+		return proceduralRunResult{Algorithm: algo}, err
 	}
 	if len(procSet.tiles) == 0 {
-		return nil, algo, 0, ErrNoTileKinds
+		return proceduralRunResult{Algorithm: algo}, ErrNoTileKinds
+	}
+
+	// Per-map non-local constraints. Loaded once and forwarded to
+	// whichever engine fires below. Skipped for synthetic maps (no
+	// id) because there's no row to read.
+	var constraints []wfc.Constraint
+	if m.ID > 0 {
+		constraints, err = s.loadMapConstraints(ctx, m.ID)
+		if err != nil {
+			return proceduralRunResult{Algorithm: algo}, fmt.Errorf("load constraints: %w", err)
+		}
 	}
 
 	switch algo {
-	case GenAlgorithmPixelWFC:
-		if s.pixelLoader == nil {
-			slog.Warn("pixel-WFC requested but no pixel loader wired; falling back to socket",
+	case GenAlgorithmOverlapping:
+		// Overlapping engine reads its sample patch from
+		// map_sample_patches; if no patch is defined (or it's empty),
+		// degrade to socket so the designer still gets *something*.
+		if m.ID == 0 {
+			// Synthetic Map (no DB row) — overlapping requires a real
+			// map id to look up its patch. Degrade silently.
+			slog.Debug("overlapping requested for synthetic map; falling back to socket")
+			algo = GenAlgorithmSocket
+			break
+		}
+		sample, serr := s.LoadSamplePatchTiles(ctx, m.ID)
+		if errors.Is(serr, ErrNoSamplePatch) {
+			slog.Warn("overlapping requested but no sample patch defined; falling back to socket",
 				"map_id", m.ID)
 			algo = GenAlgorithmSocket
 			break
 		}
-		pixelTiles, perr := s.buildPixelTiles(ctx, procSet)
-		if perr != nil {
-			return nil, algo, 0, fmt.Errorf("build pixel tiles: %w", perr)
+		if serr != nil {
+			return proceduralRunResult{Algorithm: algo}, fmt.Errorf("load sample patch: %w", serr)
 		}
-		if len(pixelTiles) == 0 {
-			// Every tile failed to produce a fingerprint; degrade.
-			slog.Warn("no pixel tiles produced; falling back to socket", "map_id", m.ID)
+		if !sampleHasContent(sample) {
+			slog.Warn("overlapping sample patch is empty (no painted tiles); falling back to socket",
+				"map_id", m.ID)
 			algo = GenAlgorithmSocket
 			break
 		}
-		res, gerr := wfc.GeneratePixel(wfc.NewPixelTileSet(pixelTiles, wfc.PixelTileSetOptions{}), wfc.GenerateOptions{
-			Width:   m.Width,
-			Height:  m.Height,
-			Seed:    seed,
-			Anchors: wfc.Anchors{Cells: anchors},
+		ores, gerr := wfc.GenerateOverlapping(wfc.OverlappingOptions{
+			Sample:      sample,
+			Width:       m.Width,
+			Height:      m.Height,
+			Seed:        seed,
+			Anchors:     wfc.Anchors{Cells: anchors},
+			Constraints: constraints,
 		})
 		if gerr != nil {
-			return nil, algo, 0, fmt.Errorf("pixel wfc: %w", gerr)
+			return proceduralRunResult{Algorithm: algo}, fmt.Errorf("overlapping wfc: %w", gerr)
 		}
-		region := expandProceduralGroups(res.Region, procSet.groups)
-		return region, algo, res.Fallbacks, nil
+		region := expandProceduralGroups(ores.Region, procSet.groups)
+		return proceduralRunResult{
+			Region:       region,
+			Algorithm:    algo,
+			PatternCount: ores.PatternCount,
+		}, nil
 	}
 
 	// Socket path (default + fallback).
 	region, gerr := wfc.Generate(wfc.NewTileSet(procSet.tiles), wfc.GenerateOptions{
-		Width:   m.Width,
-		Height:  m.Height,
-		Seed:    seed,
-		Anchors: wfc.Anchors{Cells: anchors},
+		Width:       m.Width,
+		Height:      m.Height,
+		Seed:        seed,
+		Anchors:     wfc.Anchors{Cells: anchors},
+		Constraints: constraints,
 	})
 	if gerr != nil {
-		return nil, algo, 0, fmt.Errorf("wfc generate: %w", gerr)
+		return proceduralRunResult{Algorithm: algo}, fmt.Errorf("wfc generate: %w", gerr)
 	}
 	region = expandProceduralGroups(region, procSet.groups)
-	return region, algo, 0, nil
+	return proceduralRunResult{Region: region, Algorithm: algo}, nil
 }
 
-// buildPixelTiles loads edge fingerprints for every tile in `procSet`.
-// Tiles missing a fingerprint (e.g. their sprite asset is gone) get
-// silently dropped — they were unpaintable anyway.
-//
-// Tile groups participate by averaging their member tiles' edge
-// fingerprints (so a 2x2 group's south edge is the mean of its bottom-
-// row members' south edges). Groups whose member tiles all lack
-// fingerprints are also dropped.
-func (s *Service) buildPixelTiles(ctx context.Context, procSet *proceduralTileSet) ([]wfc.PixelTile, error) {
-	out := make([]wfc.PixelTile, 0, len(procSet.tiles))
-	// Tiles with positive entity-type IDs are real entity types we can
-	// fingerprint. Synthetic group ids are negative; for those we
-	// composite member fingerprints.
-	memberFingerprints := make(map[wfc.EntityTypeID][4]wfc.EdgeFingerprint, len(procSet.tiles))
-	for _, t := range procSet.tiles {
-		if t.EntityType <= 0 {
-			continue
+// sampleHasContent reports whether the patch has at least one non-zero
+// (non-wildcard) cell. An all-zero patch tells the overlapping engine
+// nothing useful — every NxN window is wildcards-only.
+func sampleHasContent(s wfc.SamplePatch) bool {
+	for _, et := range s.Tiles {
+		if et != 0 {
+			return true
 		}
-		fp, err := s.pixelLoader.FingerprintFor(ctx, int64(t.EntityType))
-		if err != nil {
-			slog.Debug("pixel fingerprint unavailable; skipping tile",
-				"entity_type_id", t.EntityType, "err", err)
-			continue
-		}
-		memberFingerprints[t.EntityType] = fp
-		out = append(out, wfc.PixelTile{
-			EntityType:  t.EntityType,
-			Fingerprint: fp,
-			Weight:      t.Weight,
-		})
 	}
-	for _, t := range procSet.tiles {
-		if t.EntityType >= 0 {
-			continue
-		}
-		g, ok := procSet.groups[t.EntityType]
-		if !ok {
-			continue
-		}
-		fp, ok := compositeGroupFingerprint(g, memberFingerprints)
-		if !ok {
-			continue
-		}
-		out = append(out, wfc.PixelTile{
-			EntityType:  t.EntityType,
-			Fingerprint: fp,
-			Weight:      t.Weight,
-		})
-	}
-	return out, nil
-}
-
-// compositeGroupFingerprint averages the edge fingerprints of a group's
-// boundary cells. Returns false if no boundary cell on any edge has a
-// fingerprint (group entirely composed of fingerprint-less tiles).
-func compositeGroupFingerprint(g proceduralGroup, members map[wfc.EntityTypeID][4]wfc.EdgeFingerprint) ([4]wfc.EdgeFingerprint, bool) {
-	var out [4]wfc.EdgeFingerprint
-	hasAny := false
-	for edge := wfc.Edge(0); edge < 4; edge++ {
-		var parts []wfc.EdgeFingerprint
-		for r := int32(0); r < g.Height; r++ {
-			for c := int32(0); c < g.Width; c++ {
-				if (edge == wfc.EdgeN && r != 0) ||
-					(edge == wfc.EdgeS && r != g.Height-1) ||
-					(edge == wfc.EdgeW && c != 0) ||
-					(edge == wfc.EdgeE && c != g.Width-1) {
-					continue
-				}
-				et := g.Layout[r][c]
-				if et == 0 {
-					continue
-				}
-				fp, ok := members[et]
-				if !ok {
-					continue
-				}
-				parts = append(parts, fp[edge])
-			}
-		}
-		if len(parts) == 0 {
-			continue
-		}
-		out[edge] = wfc.CompositeFingerprint(parts)
-		hasAny = true
-	}
-	return out, hasAny
+	return false
 }
 
 // lockedCellsToAnchors converts a slice of LockedCell to the WFC anchor

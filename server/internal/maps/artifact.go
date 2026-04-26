@@ -94,10 +94,10 @@ func (MapDraft) Descriptor() []configurable.FieldDescriptor {
 		},
 		{
 			Key: "gen_algorithm", Label: "Generation algorithm", Kind: configurable.KindEnum,
-			Help: "Procedural maps only. Socket = strict edge-socket WFC (best for collision/pathing). Pixel WFC = sample-based, no socket setup (best for flat decorative tiles).",
+			Help: "Procedural maps only. Socket = strict edge-socket WFC (best for collision/pathing). Overlapping = learns from a small sample patch you paint (best for organic decorative maps).",
 			Options: []configurable.EnumOption{
 				{Value: GenAlgorithmSocket, Label: "Socket (precise; needs edge sockets)"},
-				{Value: GenAlgorithmPixelWFC, Label: "Pixel WFC (auto from tile pixels)"},
+				{Value: GenAlgorithmOverlapping, Label: "Overlapping (learns from a sample patch)"},
 			},
 		},
 		{

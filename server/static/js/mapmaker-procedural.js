@@ -62,6 +62,14 @@
       return panel.getAttribute("data-bx-gen-algorithm") || "socket";
     }
 
+    function algoLabel(value) {
+      switch (value) {
+        case "overlapping": return "Overlapping";
+        case "socket":      return "Socket";
+        default:            return value || "Socket";
+      }
+    }
+
     async function setAlgorithm(value) {
       if (value === currentAlgorithm()) return;
       try {
@@ -85,7 +93,8 @@
             if (input) input.checked = !!on;
           });
         }
-        showStatus(`Algorithm set to ${value === "pixel_wfc" ? "Pixel WFC" : "Socket"}.`);
+        showStatus(`Algorithm set to ${algoLabel(value)}.`);
+        updateSampleUI();
       } catch (err) {
         showError(String(err && err.message ? err.message : err));
       }
@@ -128,8 +137,14 @@
           return;
         }
         const region = await resp.json();
-        const algoLabel = region.algorithm === "pixel_wfc" ? "Pixel WFC" : "Socket";
-        let msg = `Generated ${region.width}×${region.height} via ${algoLabel} (${region.tileset_size} tiles)`;
+        let msg = `Generated ${region.width}×${region.height} via ${algoLabel(region.algorithm)} (${region.tileset_size} tiles`;
+        if (region.pattern_count > 0) {
+          msg += `, ${region.pattern_count} patterns`;
+        }
+        msg += `)`;
+        if (currentAlgorithm() === "overlapping" && region.algorithm === "socket") {
+          msg += " — overlapping fell back to socket (paint a sample patch first)";
+        }
         if (region.fallbacks > 0) {
           msg += ` — ${region.fallbacks} fallback cells (add tile variety for tighter matches)`;
         }
@@ -208,6 +223,237 @@
         }
       });
     }
+
+    // ---- Sample-patch: source rectangle for the overlapping engine ----
+    //
+    // The overlapping engine reads its NxN learning sample from a small
+    // rectangle of the map's tile layer. The designer picks that rect
+    // here (numeric inputs; a future enhancement adds drag-to-select on
+    // the canvas via a `bx:request-sample-patch` custom event).
+
+    const sampleSection   = panel.querySelector("[data-bx-sample-patch]");
+    const sampleStatus    = panel.querySelector("[data-bx-sample-status]");
+    const sampleXInput    = panel.querySelector("[data-bx-sample-x]");
+    const sampleYInput    = panel.querySelector("[data-bx-sample-y]");
+    const sampleWInput    = panel.querySelector("[data-bx-sample-w]");
+    const sampleHInput    = panel.querySelector("[data-bx-sample-h]");
+    const sampleNInput    = panel.querySelector("[data-bx-sample-n]");
+    const sampleSaveBtn   = panel.querySelector("[data-bx-sample-save]");
+    const sampleClearBtn  = panel.querySelector("[data-bx-sample-clear]");
+
+    function updateSampleUI() {
+      if (!sampleSection) return;
+      const wantsSample = currentAlgorithm() === "overlapping";
+      sampleSection.style.display = wantsSample ? "" : "none";
+    }
+
+    function showSampleStatus(text) {
+      if (sampleStatus) sampleStatus.textContent = text || "";
+    }
+
+    async function loadSamplePatch() {
+      if (!sampleSection) return;
+      try {
+        const resp = await fetch(`/design/maps/${mapId}/sample-patch`);
+        if (resp.status === 204) {
+          showSampleStatus("No sample patch defined — overlapping will fall back to socket.");
+          return;
+        }
+        if (!resp.ok) return;
+        const p = await resp.json();
+        if (sampleXInput) sampleXInput.value = String(p.x);
+        if (sampleYInput) sampleYInput.value = String(p.y);
+        if (sampleWInput) sampleWInput.value = String(p.width);
+        if (sampleHInput) sampleHInput.value = String(p.height);
+        if (sampleNInput) sampleNInput.value = String(p.pattern_n || 2);
+        showSampleStatus(`Sample: ${p.width}×${p.height} at (${p.x}, ${p.y}), N=${p.pattern_n}.`);
+      } catch (err) {
+        // Non-fatal — designer can still set a fresh patch.
+      }
+    }
+
+    if (sampleSaveBtn) {
+      sampleSaveBtn.addEventListener("click", async () => {
+        const layerSelect = document.querySelector("[data-bx-layer-select-tile]");
+        // Fall back to "1" so the panel still works on older mapmaker
+        // builds; the server validates that the layer belongs to the map.
+        const layerId = Number((layerSelect && layerSelect.value) || panel.getAttribute("data-bx-default-layer-id") || 0);
+        const body = {
+          layer_id: layerId,
+          x: Number(sampleXInput && sampleXInput.value) || 0,
+          y: Number(sampleYInput && sampleYInput.value) || 0,
+          width:  Number(sampleWInput && sampleWInput.value)  || 8,
+          height: Number(sampleHInput && sampleHInput.value)  || 8,
+          pattern_n: Number(sampleNInput && sampleNInput.value) || 2,
+        };
+        showSampleStatus("Saving…");
+        try {
+          const resp = await fetch(`/design/maps/${mapId}/sample-patch`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+            body: JSON.stringify(body),
+          });
+          if (!resp.ok) {
+            const text = await resp.text();
+            showSampleStatus(text.trim() || `HTTP ${resp.status}`);
+            return;
+          }
+          showSampleStatus(`Sample: ${body.width}×${body.height} at (${body.x}, ${body.y}), N=${body.pattern_n}.`);
+        } catch (err) {
+          showSampleStatus(String(err && err.message ? err.message : err));
+        }
+      });
+    }
+    if (sampleClearBtn) {
+      sampleClearBtn.addEventListener("click", async () => {
+        if (!confirm("Remove the sample patch? Overlapping will fall back to socket until a new one is set.")) return;
+        try {
+          const resp = await fetch(`/design/maps/${mapId}/sample-patch`, {
+            method: "DELETE",
+            headers: { "X-CSRF-Token": csrfToken() },
+          });
+          if (!resp.ok) return;
+          showSampleStatus("No sample patch defined — overlapping will fall back to socket.");
+        } catch (err) {
+          showSampleStatus(String(err && err.message ? err.message : err));
+        }
+      });
+    }
+
+    updateSampleUI();
+    loadSamplePatch();
+
+    // ---- Constraints (border / path) ----
+    //
+    // Per-map non-local constraints persisted via /constraints. List
+    // current rules; let the designer add/remove. Every change goes
+    // straight to the server — there's no "draft" buffer because the
+    // procedural panel as a whole is preview-driven (changes take
+    // effect on the next Generate).
+
+    const constraintList   = panel.querySelector("[data-bx-constraints-list]");
+    const constraintStatus = panel.querySelector("[data-bx-constraint-status]");
+    const constraintKind   = panel.querySelector("[data-bx-constraint-kind]");
+    const constraintEt     = panel.querySelector("[data-bx-constraint-et]");
+    const constraintEdges  = panel.querySelector("[data-bx-constraint-edges]");
+    const constraintEdgesWrap = panel.querySelector("[data-bx-constraint-edges-wrap]");
+    const constraintAddBtn = panel.querySelector("[data-bx-constraint-add]");
+
+    function showConstraintStatus(text) {
+      if (constraintStatus) constraintStatus.textContent = text || "";
+    }
+
+    function constraintLabel(c) {
+      if (c.kind === "border") {
+        let edges = "all";
+        try {
+          const p = c.params ? JSON.parse(c.params) : {};
+          if (Array.isArray(p.edges) && p.edges.length) edges = p.edges.join(",");
+          return `Border tile ${p.entity_type_id || "?"} on ${edges}` + (p.restrict ? " (restrict)" : "");
+        } catch (_) { return "Border (parse error)"; }
+      }
+      if (c.kind === "path") {
+        try {
+          const p = c.params ? JSON.parse(c.params) : {};
+          const ids = (p.entity_type_ids || []).join(",") || "any non-zero";
+          return `Path connectivity for tile(s): ${ids}`;
+        } catch (_) { return "Path (parse error)"; }
+      }
+      return c.kind;
+    }
+
+    async function loadConstraints() {
+      if (!constraintList) return;
+      try {
+        const resp = await fetch(`/design/maps/${mapId}/constraints`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        constraintList.innerHTML = "";
+        const items = data.items || [];
+        if (items.length === 0) {
+          showConstraintStatus("No constraints. The map is generated from sockets / sample only.");
+          return;
+        }
+        showConstraintStatus("");
+        items.forEach((c) => {
+          const li = document.createElement("li");
+          li.className = "bx-row";
+          li.style.gap = "8px";
+          li.style.alignItems = "center";
+          const span = document.createElement("span");
+          span.className = "bx-small";
+          span.textContent = constraintLabel(c);
+          li.appendChild(span);
+          const del = document.createElement("button");
+          del.type = "button";
+          del.className = "bx-btn bx-btn--ghost bx-btn--small";
+          del.textContent = "Remove";
+          del.addEventListener("click", async () => {
+            try {
+              const r = await fetch(`/design/maps/${mapId}/constraints/${c.id}`, {
+                method: "DELETE",
+                headers: { "X-CSRF-Token": csrfToken() },
+              });
+              if (!r.ok) {
+                showConstraintStatus(`HTTP ${r.status}`);
+                return;
+              }
+              loadConstraints();
+            } catch (err) {
+              showConstraintStatus(String(err && err.message ? err.message : err));
+            }
+          });
+          li.appendChild(del);
+          constraintList.appendChild(li);
+        });
+      } catch (err) {
+        showConstraintStatus(String(err && err.message ? err.message : err));
+      }
+    }
+
+    function updateConstraintFormVisibility() {
+      if (!constraintKind || !constraintEdgesWrap) return;
+      constraintEdgesWrap.style.display = constraintKind.value === "border" ? "" : "none";
+    }
+    if (constraintKind) {
+      constraintKind.addEventListener("change", updateConstraintFormVisibility);
+    }
+
+    if (constraintAddBtn) {
+      constraintAddBtn.addEventListener("click", async () => {
+        const kind = constraintKind ? constraintKind.value : "border";
+        const et = Number(constraintEt && constraintEt.value);
+        if (!et || et <= 0) {
+          showConstraintStatus("Enter the entity-type ID this constraint targets.");
+          return;
+        }
+        let params;
+        if (kind === "border") {
+          params = { entity_type_id: et, edges: [constraintEdges ? constraintEdges.value : "all"] };
+        } else {
+          params = { entity_type_ids: [et] };
+        }
+        try {
+          const resp = await fetch(`/design/maps/${mapId}/constraints`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+            body: JSON.stringify({ kind, params }),
+          });
+          if (!resp.ok) {
+            const text = await resp.text();
+            showConstraintStatus(text.trim() || `HTTP ${resp.status}`);
+            return;
+          }
+          if (constraintEt) constraintEt.value = "";
+          loadConstraints();
+        } catch (err) {
+          showConstraintStatus(String(err && err.message ? err.message : err));
+        }
+      });
+    }
+
+    updateConstraintFormVisibility();
+    loadConstraints();
 
     const commitBtn = panel.querySelector("[data-bx-proc-commit]");
     if (commitBtn) {

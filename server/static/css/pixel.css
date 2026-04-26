@@ -1886,7 +1886,7 @@ body[data-bx-spectator="1"] [data-bx-camera-mode][data-bx-camera-mode="free-cam"
 
 
 /* ---------------------------------------------------------------- */
-/* Segmented picker (procedural-mode algorithm: Socket vs Pixel WFC) */
+/* Segmented picker (procedural-mode algorithm: Socket vs Overlapping) */
 /* ---------------------------------------------------------------- */
 .bx-segmented {
     display: inline-flex;

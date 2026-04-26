@@ -198,6 +198,12 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /design/maps/{id}/locks", auth(getMapLocks(d)))
 	mux.Handle("POST /design/maps/{id}/locks", auth(postMapLocks(d)))
 	mux.Handle("DELETE /design/maps/{id}/locks", auth(deleteMapLocks(d)))
+	mux.Handle("GET /design/maps/{id}/sample-patch", auth(getMapSamplePatch(d)))
+	mux.Handle("POST /design/maps/{id}/sample-patch", auth(postMapSamplePatch(d)))
+	mux.Handle("DELETE /design/maps/{id}/sample-patch", auth(deleteMapSamplePatch(d)))
+	mux.Handle("GET /design/maps/{id}/constraints", auth(getMapConstraints(d)))
+	mux.Handle("POST /design/maps/{id}/constraints", auth(postMapConstraint(d)))
+	mux.Handle("DELETE /design/maps/{id}/constraints/{cid}", auth(deleteMapConstraint(d)))
 	mux.Handle("DELETE /design/maps/{id}", auth(deleteMap(d)))
 	mux.Handle("GET /design/maps/{id}/settings", auth(getMapSettingsModal(d)))
 	mux.Handle("POST /design/maps/{id}/draft", auth(postMapDraft(d)))
@@ -2668,7 +2674,7 @@ type previewRequest struct {
 	Width      int32  `json:"width,omitempty"`
 	Height     int32  `json:"height,omitempty"`
 	MaxReseeds int    `json:"max_reseeds,omitempty"`
-	// Algorithm override: pass "socket" or "pixel_wfc" to preview a
+	// Algorithm override: pass "socket" or "overlapping" to preview a
 	// different engine without flipping the map's stored value.
 	Algorithm string `json:"algorithm,omitempty"`
 	Anchors   []struct {
@@ -2681,12 +2687,13 @@ type previewRequest struct {
 // previewResponse mirrors wfc.Region but uses snake_case keys for the
 // JS client. Cells are flat row-major to keep the payload small.
 type previewResponse struct {
-	Width       int32             `json:"width"`
-	Height      int32             `json:"height"`
-	TileSetSize int               `json:"tileset_size"`
-	Algorithm   string            `json:"algorithm"`
-	Fallbacks   int               `json:"fallbacks"`
-	Cells       []previewCellJSON `json:"cells"`
+	Width        int32             `json:"width"`
+	Height       int32             `json:"height"`
+	TileSetSize  int               `json:"tileset_size"`
+	Algorithm    string            `json:"algorithm"`
+	Fallbacks    int               `json:"fallbacks"`
+	PatternCount int               `json:"pattern_count"`
+	Cells        []previewCellJSON `json:"cells"`
 }
 
 type previewCellJSON struct {
@@ -2761,12 +2768,13 @@ func postMapPreview(d Deps) http.HandlerFunc {
 		}
 
 		out := previewResponse{
-			Width:       res.Region.Width,
-			Height:      res.Region.Height,
-			TileSetSize: res.TileSetSize,
-			Algorithm:   res.Algorithm,
-			Fallbacks:   res.Fallbacks,
-			Cells:       make([]previewCellJSON, 0, len(res.Region.Cells)),
+			Width:        res.Region.Width,
+			Height:       res.Region.Height,
+			TileSetSize:  res.TileSetSize,
+			Algorithm:    res.Algorithm,
+			Fallbacks:    res.Fallbacks,
+			PatternCount: res.PatternCount,
+			Cells:        make([]previewCellJSON, 0, len(res.Region.Cells)),
 		}
 		for _, c := range res.Region.Cells {
 			out.Cells = append(out.Cells, previewCellJSON{
@@ -3009,6 +3017,189 @@ func deleteMapLocks(d Deps) http.HandlerFunc {
 		}
 		if err := d.Maps.UnlockCells(r.Context(), id, req.LayerID, req.Points); err != nil {
 			slog.Error("unlock cells", "err", err, "map_id", id, "n", len(req.Points))
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// ---- Procedural: sample-patch (overlapping-model WFC source) ----
+
+// samplePatchJSON mirrors maps.SamplePatch for the wire.
+type samplePatchJSON struct {
+	MapID    int64 `json:"map_id"`
+	LayerID  int64 `json:"layer_id"`
+	X        int32 `json:"x"`
+	Y        int32 `json:"y"`
+	Width    int32 `json:"width"`
+	Height   int32 `json:"height"`
+	PatternN int16 `json:"pattern_n"`
+}
+
+func getMapSamplePatch(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := pathID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		p, err := d.Maps.SamplePatchByMap(r.Context(), id)
+		if err != nil {
+			if errors.Is(err, mapsservice.ErrNoSamplePatch) {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			slog.Error("get sample patch", "err", err, "map_id", id)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(w).Encode(samplePatchJSON{
+			MapID:    p.MapID,
+			LayerID:  p.LayerID,
+			X:        p.X,
+			Y:        p.Y,
+			Width:    p.Width,
+			Height:   p.Height,
+			PatternN: p.PatternN,
+		})
+	}
+}
+
+func postMapSamplePatch(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := pathID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		var req samplePatchJSON
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := d.Maps.UpsertSamplePatch(r.Context(), mapsservice.SamplePatchInput{
+			MapID:    id,
+			LayerID:  req.LayerID,
+			X:        req.X,
+			Y:        req.Y,
+			Width:    req.Width,
+			Height:   req.Height,
+			PatternN: req.PatternN,
+		}); err != nil {
+			if errors.Is(err, mapsservice.ErrSamplePatchInvalid) {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			slog.Error("upsert sample patch", "err", err, "map_id", id)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func deleteMapSamplePatch(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := pathID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := d.Maps.DeleteSamplePatch(r.Context(), id); err != nil {
+			slog.Error("delete sample patch", "err", err, "map_id", id)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// ---- Procedural: non-local constraints (border / path / future) ----
+
+// constraintsResponse mirrors mapsservice.MapConstraint on the wire.
+type constraintsResponse struct {
+	MapID int64                  `json:"map_id"`
+	Items []mapsservice.MapConstraint `json:"items"`
+}
+
+func getMapConstraints(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := pathID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		items, err := d.Maps.MapConstraints(r.Context(), id)
+		if err != nil {
+			slog.Error("list constraints", "err", err, "map_id", id)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		if items == nil {
+			items = []mapsservice.MapConstraint{}
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(w).Encode(constraintsResponse{MapID: id, Items: items})
+	}
+}
+
+// addConstraintRequest mirrors mapsservice.AddMapConstraintInput minus
+// the map id (which comes from the path).
+type addConstraintRequest struct {
+	Kind   string          `json:"kind"`
+	Params json.RawMessage `json:"params"`
+}
+
+type addConstraintResponse struct {
+	ID int64 `json:"id"`
+}
+
+func postMapConstraint(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := pathID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		var req addConstraintRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		newID, err := d.Maps.AddMapConstraint(r.Context(), mapsservice.AddMapConstraintInput{
+			MapID: id, Kind: req.Kind, Params: req.Params,
+		})
+		if err != nil {
+			if errors.Is(err, mapsservice.ErrConstraintInvalid) {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			slog.Error("add constraint", "err", err, "map_id", id)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(w).Encode(addConstraintResponse{ID: newID})
+	}
+}
+
+func deleteMapConstraint(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := pathID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		cidStr := r.PathValue("cid")
+		var cid int64
+		if _, err := fmt.Sscan(cidStr, &cid); err != nil || cid <= 0 {
+			http.Error(w, "invalid constraint id", http.StatusBadRequest)
+			return
+		}
+		if err := d.Maps.DeleteMapConstraint(r.Context(), id, cid); err != nil {
+			slog.Error("delete constraint", "err", err, "map_id", id, "cid", cid)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}

@@ -24,6 +24,16 @@ type GenerateOptions struct {
 	// MaxReseeds is how many times Generate retries with a derived seed
 	// before giving up. 0 = use the package default.
 	MaxReseeds int
+
+	// Constraints are non-local properties the engine must satisfy.
+	// They run twice per pass:
+	//   * ApplyInitial before search to pin/restrict cells (BorderConstraint).
+	//   * Verify after a successful collapse; failure triggers a reseed
+	//     (PathConstraint).
+	// Order matters: constraints earlier in the slice apply their pins
+	// first and "win" at conflicting coordinates. Anchors still take
+	// precedence over both.
+	Constraints []Constraint
 }
 
 // Errors returned by Generate.
@@ -60,11 +70,43 @@ func Generate(ts *TileSet, opts GenerateOptions) (*Region, error) {
 		opts.MaxReseeds = defaultMaxReseeds
 	}
 
+	// Pre-merge constraint pins/restricts into the option set the inner
+	// pass will see. Pins become anchors (alongside caller-supplied
+	// ones); restricts go in a private slice consulted at cell-init.
+	// Constraints run once here — they're stateless from the engine's
+	// perspective so we don't need to re-invoke ApplyInitial per attempt.
+	ctrl := runConstraintsInit(opts.Width, opts.Height, opts.Constraints)
+	mergedOpts := opts
+	if pins := ctrl.Pins(); len(pins) > 0 {
+		// Anchors-from-constraints append AFTER caller anchors so a
+		// caller's explicit anchor at the same cell wins (caller anchors
+		// are appended first; the propagator's "first one wins" loop
+		// handles dupes — we filter explicit duplicates here for
+		// determinism).
+		seen := make(map[[2]int32]struct{}, len(opts.Anchors.Cells))
+		merged := make([]Cell, 0, len(opts.Anchors.Cells)+len(pins))
+		for _, a := range opts.Anchors.Cells {
+			seen[[2]int32{a.X, a.Y}] = struct{}{}
+			merged = append(merged, a)
+		}
+		for _, p := range pins {
+			if _, dup := seen[[2]int32{p.X, p.Y}]; dup {
+				continue
+			}
+			merged = append(merged, p)
+		}
+		mergedOpts.Anchors = Anchors{Cells: merged}
+	}
+	restricts := ctrl.Restricts()
+
 	currentSeed := opts.Seed
 	for attempt := 0; attempt <= opts.MaxReseeds; attempt++ {
-		region, err := tryGenerate(ts, opts, currentSeed)
+		region, err := tryGenerate(ts, mergedOpts, currentSeed, restricts)
 		if err == nil {
-			return region, nil
+			if failed := verifyAll(region, opts.Constraints); failed < 0 {
+				return region, nil
+			}
+			// Constraint failure: treat as contradiction, reseed.
 		}
 		// Reseed deterministically: derive next from current via splitmix64
 		// so the retry sequence is itself reproducible.
@@ -87,7 +129,12 @@ type wfcCell struct {
 
 var errBudgetExhausted = errors.New("wfc: budget exhausted")
 
-func tryGenerate(ts *TileSet, opts GenerateOptions, seed uint64) (*Region, error) {
+// tryGenerate is one WFC pass. `restricts` is the constraint-derived
+// per-cell domain filter; nil = no restricts. The function applies them
+// after the all-options init but before anchor propagation so cells
+// that are both anchored and restricted reduce to the anchor's tile
+// (or contradict, which triggers a reseed).
+func tryGenerate(ts *TileSet, opts GenerateOptions, seed uint64, restricts []constraintRestrict) (*Region, error) {
 	rng := rand.New(rand.NewPCG(seed, seed^0xa5a5a5a5))
 
 	w, h := int(opts.Width), int(opts.Height)
@@ -101,6 +148,46 @@ func tryGenerate(ts *TileSet, opts GenerateOptions, seed uint64) (*Region, error
 		copy(opt, allOpts)
 		cells[i].options = opt
 		recomputeWeights(&cells[i], ts)
+	}
+
+	// Apply constraint-derived restricts. For each restrict we filter
+	// the cell's option set to tiles whose EntityType is in the allowed
+	// list. Empty result = contradiction → reseed. Then propagate so
+	// neighbours pick up the restriction immediately (otherwise the
+	// first lowest-entropy pass could pick a tile incompatible with a
+	// restricted neighbour).
+	if len(restricts) > 0 {
+		touched := make([]int, 0, len(restricts))
+		for _, r := range restricts {
+			if r.x < 0 || r.y < 0 || int(r.x) >= w || int(r.y) >= h {
+				continue
+			}
+			ci := int(r.y)*w + int(r.x)
+			if cells[ci].collapsed {
+				continue
+			}
+			allowed := make(map[EntityTypeID]struct{}, len(r.allowed))
+			for _, et := range r.allowed {
+				allowed[et] = struct{}{}
+			}
+			filtered := cells[ci].options[:0]
+			for _, idx := range cells[ci].options {
+				if _, ok := allowed[ts.Tile(idx).EntityType]; ok {
+					filtered = append(filtered, idx)
+				}
+			}
+			cells[ci].options = filtered
+			if len(cells[ci].options) == 0 {
+				return nil, errBudgetExhausted
+			}
+			recomputeWeights(&cells[ci], ts)
+			touched = append(touched, ci)
+		}
+		for _, ci := range touched {
+			if !propagateFrom(cells, ts, w, h, ci%w, ci/w) {
+				return nil, errBudgetExhausted
+			}
+		}
 	}
 
 	// Apply anchors first. If an anchor cell references an entity type

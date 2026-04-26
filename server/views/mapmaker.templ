@@ -316,9 +316,9 @@ templ MapmakerToolbar(p MapmakerProps) {
 // canvas as a ghost layer.
 //
 // The algorithm picker lets designers pick between socket-driven WFC
-// (precise, needs edge sockets — best for collision/pathing) and
-// pixel-WFC (auto from tile pixels, no socket setup — best for flat
-// decorative tiles).
+// (precise, needs edge sockets — best for collision/pathing) and the
+// overlapping-model WFC (learns from a designer-painted sample patch —
+// best for organic decorative maps).
 //
 // The lock-cell panel exposes the count of designer-locked cells; the
 // "Lock" tool in the left-hand toolbar paints/clears them. Locked cells
@@ -336,8 +336,77 @@ templ MapmakerProceduralPanel(p MapmakerProps) {
 				<legend class="bx-small bx-muted" data-copy-slot="mapmaker.proc.algorithm.title">Algorithm</legend>
 				<div class="bx-segmented" role="radiogroup" aria-label="Generation algorithm" data-bx-proc-algorithm>
 					@procAlgorithmOption(p.Map, "socket", "Socket", "Strict edge sockets, perfect for collisions and pathable areas.")
-					@procAlgorithmOption(p.Map, "pixel_wfc", "Pixel WFC", "Auto-derived from tile pixels — no socket setup needed; best for flat decorative tiles.")
+					@procAlgorithmOption(p.Map, "overlapping", "Overlapping", "Paint a small sample patch; the generator learns its style and fills the rest.")
 				</div>
+			</fieldset>
+
+			<fieldset
+				class="bx-stack-tight"
+				style="border:1px dashed var(--bx-line, rgba(255,255,255,0.12)); padding: var(--bx-s2); margin:0; border-radius: 6px;"
+				data-bx-sample-patch
+				data-bx-default-layer-id={ defaultTileLayerIDAttr(p) }
+			>
+				<legend class="bx-small bx-muted" data-copy-slot="mapmaker.proc.sample.title">Sample patch</legend>
+				<p class="bx-small bx-muted" data-copy-slot="mapmaker.proc.sample.help">
+					Paint a 2×2 to 32×32 area on the base layer, then save its rectangle here. The generator learns from those cells.
+				</p>
+				<div class="bx-row" style="gap: var(--bx-s1); flex-wrap: wrap;">
+					<label class="bx-small bx-row" style="gap:4px;">x
+						<input type="number" class="bx-input bx-small" data-bx-sample-x value="0" min="0" style="width:64px;"/>
+					</label>
+					<label class="bx-small bx-row" style="gap:4px;">y
+						<input type="number" class="bx-input bx-small" data-bx-sample-y value="0" min="0" style="width:64px;"/>
+					</label>
+					<label class="bx-small bx-row" style="gap:4px;">w
+						<input type="number" class="bx-input bx-small" data-bx-sample-w value="8" min="2" max="32" style="width:64px;"/>
+					</label>
+					<label class="bx-small bx-row" style="gap:4px;">h
+						<input type="number" class="bx-input bx-small" data-bx-sample-h value="8" min="2" max="32" style="width:64px;"/>
+					</label>
+					<label class="bx-small bx-row" style="gap:4px;" title="Pattern size N. 2 = relaxed, 3 = strict.">N
+						<select class="bx-input bx-small" data-bx-sample-n style="width:60px;">
+							<option value="2">2</option>
+							<option value="3">3</option>
+						</select>
+					</label>
+				</div>
+				<div class="bx-row" style="gap: var(--bx-s1);">
+					<button type="button" class="bx-btn bx-btn--primary bx-btn--small" data-bx-sample-save data-copy-slot="mapmaker.proc.sample.save">Save sample</button>
+					<button type="button" class="bx-btn bx-btn--ghost bx-btn--small" data-bx-sample-clear data-copy-slot="mapmaker.proc.sample.clear">Remove</button>
+				</div>
+				<p class="bx-small bx-muted" data-bx-sample-status aria-live="polite"></p>
+			</fieldset>
+
+			<fieldset
+				class="bx-stack-tight"
+				style="border:1px dashed var(--bx-line, rgba(255,255,255,0.12)); padding: var(--bx-s2); margin:0; border-radius: 6px;"
+				data-bx-constraints
+			>
+				<legend class="bx-small bx-muted" data-copy-slot="mapmaker.proc.constraints.title">Constraints</legend>
+				<p class="bx-small bx-muted" data-copy-slot="mapmaker.proc.constraints.help">
+					Border = pin chosen tile to map edges. Path = require all of one tile to stay 4-connected.
+				</p>
+				<ul class="bx-stack-tight" data-bx-constraints-list style="list-style:none;padding:0;margin:0;"></ul>
+				<div class="bx-row" style="gap: var(--bx-s1); flex-wrap: wrap;">
+					<select class="bx-input bx-small" data-bx-constraint-kind style="width:96px;">
+						<option value="border">Border</option>
+						<option value="path">Path</option>
+					</select>
+					<label class="bx-small bx-row" style="gap:4px;" title="Entity-type ID this constraint targets.">tile id
+						<input type="number" class="bx-input bx-small" data-bx-constraint-et value="" min="1" style="width:80px;"/>
+					</label>
+					<label class="bx-small bx-row" style="gap:4px;" data-bx-constraint-edges-wrap title="Which edges to pin (border only).">edges
+						<select class="bx-input bx-small" data-bx-constraint-edges style="width:84px;">
+							<option value="all">all</option>
+							<option value="top">top</option>
+							<option value="bottom">bottom</option>
+							<option value="left">left</option>
+							<option value="right">right</option>
+						</select>
+					</label>
+					<button type="button" class="bx-btn bx-btn--primary bx-btn--small" data-bx-constraint-add data-copy-slot="mapmaker.proc.constraints.add">Add</button>
+				</div>
+				<p class="bx-small bx-muted" data-bx-constraint-status aria-live="polite"></p>
 			</fieldset>
 
 			<label class="bx-row" style="gap: 8px;">
@@ -457,6 +526,19 @@ func lockedCountLabel(n int) string {
 		return "1 cell locked"
 	}
 	return fmt.Sprintf("%d cells locked", n)
+}
+
+// defaultTileLayerIDAttr returns the id of the lowest-ord tile layer as
+// a string for the sample-patch panel to fall back on when the layer
+// picker isn't wired (the panel POSTs this id when no other source is
+// available; see mapmaker-procedural.js). "" when no tile layer exists.
+func defaultTileLayerIDAttr(p MapmakerProps) string {
+	for _, l := range p.Layers {
+		if l.Kind == "tile" {
+			return fmt.Sprintf("%d", l.ID)
+		}
+	}
+	return ""
 }
 
 // MapPublicBadgeProps drives the public/private toggle badge in the

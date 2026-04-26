@@ -41,7 +41,6 @@ import (
 	"boxland/server/internal/hud"
 	"boxland/server/internal/logging"
 	mapsservice "boxland/server/internal/maps"
-	"boxland/server/internal/maps/pixelloader"
 	"boxland/server/internal/persistence"
 	"boxland/server/internal/playerweb"
 	"boxland/server/internal/publishing/artifact"
@@ -695,11 +694,6 @@ func runServe() error {
 	componentRegistry := components.Default()
 	entitySvc := entities.New(pgPool, componentRegistry)
 	mapsSvc := mapsservice.New(pgPool)
-	// Pixel-WFC engine needs to fetch + decode tile sprite frames and
-	// cache their edge fingerprints. The loader is shared between the
-	// designer preview/materialize paths and the runtime transient
-	// regen path, so the LRU stays warm across realms.
-	mapsSvc.SetPixelLoader(pixelloader.New(pgPool, assetSvc, objStore))
 	settingsSvc := settings.New(pgPool)
 	charactersSvc := characters.New(pgPool)
 	// Bake-on-publish needs the object store + asset service. Two-step

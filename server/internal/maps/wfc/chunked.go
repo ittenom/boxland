@@ -31,6 +31,31 @@ type ChunkedOptions struct {
 	// Generate call. 0 = use package defaults.
 	BacktrackBudget int
 	MaxReseeds      int
+
+	// BiomeCount enables the coarse biome pre-pass. When > 1 the
+	// engine assigns each chunk a biome label via value noise (see
+	// biome.go) and filters that chunk's tileset through BiomePalette.
+	// 0 / 1 disables biome filtering entirely; the engine behaves
+	// identically to before.
+	BiomeCount int
+
+	// BiomeFrequency controls the smoothness of biome regions. 0 = use
+	// package default. See BiomeMapOptions.Frequency.
+	BiomeFrequency float64
+
+	// BiomePalette returns the entity types allowed in biome `b`. The
+	// engine never calls this with b outside [0, BiomeCount). Returning
+	// nil or an empty slice means "use the full tileset for this
+	// biome" (graceful degradation when an under-authored biome would
+	// otherwise produce zero tiles).
+	BiomePalette func(b int) []EntityTypeID
+
+	// Constraints are forwarded to each per-chunk Generate call. They
+	// apply at chunk-local coordinates (NOT world coordinates). For
+	// world-wide constraints like "the entire map's borders are water",
+	// the caller is responsible for translating into per-chunk anchors
+	// or per-chunk constraints (a future helper might automate this).
+	Constraints []Constraint
 }
 
 // GenerateChunked tiles WFC across (CountX * CountY) chunks, returning
@@ -84,6 +109,22 @@ func GenerateChunked(ts *TileSet, opts ChunkedOptions) (*Region, error) {
 		resolved[i] = make([]*Region, opts.CountX)
 	}
 
+	// Optional biome pre-pass. Built once, consulted per-chunk to
+	// filter the tileset down to biome-tagged tiles. Cheap (one
+	// value-noise sample per chunk) so we always run it when enabled
+	// rather than memoising.
+	var biomeMap *BiomeMap
+	useBiomes := opts.BiomeCount > 1 && opts.BiomePalette != nil
+	if useBiomes {
+		biomeMap = GenerateBiomeMap(BiomeMapOptions{
+			CountX:     opts.CountX,
+			CountY:     opts.CountY,
+			BiomeCount: opts.BiomeCount,
+			Seed:       opts.Seed,
+			Frequency:  opts.BiomeFrequency,
+		})
+	}
+
 	for cy := int32(0); cy < opts.CountY; cy++ {
 		for cx := int32(0); cx < opts.CountX; cx++ {
 			anchors := Anchors{Cells: append([]Cell(nil), bucketed[chunkKey{cx, cy}]...)}
@@ -116,13 +157,26 @@ func GenerateChunked(ts *TileSet, opts ChunkedOptions) (*Region, error) {
 				uint64(cy)*0x9E3779B97F4A7C15 +
 				uint64(cx)*0xC6BC279692B5C323)
 
-			region, err := Generate(ts, GenerateOptions{
+			// Per-chunk tileset: full tileset by default, biome-filtered
+			// when the biome pre-pass is enabled. FilterTilesByBiome
+			// returns the original tileset on empty filter (so under-
+			// authored biomes degrade to "any tile" rather than failing).
+			chunkTS := ts
+			if useBiomes {
+				biome := biomeMap.At(cx, cy)
+				if biome >= 0 {
+					chunkTS = FilterTilesByBiome(ts, opts.BiomePalette(biome))
+				}
+			}
+
+			region, err := Generate(chunkTS, GenerateOptions{
 				Width:           opts.ChunkW,
 				Height:          opts.ChunkH,
 				Seed:            chunkSeed,
 				Anchors:         anchors,
 				BacktrackBudget: opts.BacktrackBudget,
 				MaxReseeds:      opts.MaxReseeds,
+				Constraints:     opts.Constraints,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("wfc: chunk (%d,%d): %w", cx, cy, err)

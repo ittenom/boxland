@@ -34,7 +34,8 @@ type Map struct {
 	Mode                 string          `db:"mode"                                  json:"mode"`
 	// GenAlgorithm only matters when Mode == "procedural". Picks between
 	// the strict "socket" engine (edge-socket WFC with backtracking) and
-	// the relaxed "pixel_wfc" engine (sample-based, no socket setup).
+	// the new "overlapping" engine (sample-patch driven, no per-tile
+	// socket setup needed).
 	// Stored even when Mode == "authored" so flipping back and forth
 	// preserves the designer's preference. See migration 0036.
 	GenAlgorithm         string          `db:"gen_algorithm"                         json:"gen_algorithm"`
@@ -97,13 +98,6 @@ var (
 type Service struct {
 	Pool *pgxpool.Pool
 	Repo *repo.Repo[Map]
-
-	// pixelLoader is the optional dependency for pixel-WFC mode. Wired
-	// at boot via SetPixelLoader; nil keeps the maps package free of
-	// asset-pipeline imports. When nil, pixel-mode generations fall
-	// back to a socket-style "exact match only" pass and emit a slog
-	// warning so ops can spot the misconfiguration.
-	pixelLoader TilePixelLoader
 }
 
 // New constructs a Service.
@@ -120,7 +114,7 @@ type CreateInput struct {
 	InstancingMode  string
 	PersistenceMode string
 	Mode            string // "authored" | "procedural"
-	GenAlgorithm    string // "socket" (default) | "pixel_wfc"; only meaningful when Mode == "procedural"
+	GenAlgorithm    string // "socket" (default) | "overlapping"; only meaningful when Mode == "procedural"
 	Seed            *int64
 	SpectatorPolicy string
 	CreatedBy       int64
@@ -440,16 +434,24 @@ func (s *Service) PlaceLightingCells(ctx context.Context, cells []LightingCell) 
 // ---- helpers ----
 
 // Generation-algorithm constants used by procedural maps. Mirrors the
-// CHECK constraint in migration 0036; keep both in sync.
+// CHECK constraint in migrations 0036 + 0038; keep both in sync.
+//
+//   * Socket:      strict edge-socket WFC. Best for tile-perfect
+//                  collision/pathing where mismatches are unacceptable.
+//   * Overlapping: Maxim Gumin's overlapping-model WFC. Learns from a
+//                  designer-painted sample patch (map_sample_patches)
+//                  and emits only NxN windows that appeared in the
+//                  sample. Best for "draw me 64 pixels of what you
+//                  want, I'll generate 4096 of them" workflows.
 const (
-	GenAlgorithmSocket   = "socket"
-	GenAlgorithmPixelWFC = "pixel_wfc"
+	GenAlgorithmSocket      = "socket"
+	GenAlgorithmOverlapping = "overlapping"
 )
 
 // ValidGenAlgorithm reports whether v is one of the recognised values.
 func ValidGenAlgorithm(v string) bool {
 	switch v {
-	case GenAlgorithmSocket, GenAlgorithmPixelWFC:
+	case GenAlgorithmSocket, GenAlgorithmOverlapping:
 		return true
 	default:
 		return false
