@@ -14,6 +14,15 @@ import (
 
 var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 
+func itemByTitle(title string) item {
+	for _, it := range defaultItems() {
+		if it.title == title {
+			return it
+		}
+	}
+	panic("itemByTitle: no item " + title)
+}
+
 // TestPreviewMenu dumps a stripped-ANSI render of the menu (with the
 // cursor on Design) for eyeballing.
 //
@@ -41,7 +50,7 @@ func TestPreviewSplit(t *testing.T) {
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 130, Height: 50})
 	m = updated.(model)
 
-	design := defaultItems()[1]
+	design := itemByTitle("Design")
 	live := &job{id: design.title, it: design, started: time.Now()}
 	m.jobs[design.title] = live
 	m.currentIndefinite = live
@@ -72,7 +81,7 @@ func TestPreviewIdleAfterRun(t *testing.T) {
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 130, Height: 50})
 	m = updated.(model)
 
-	test := defaultItems()[8]
+	test := itemByTitle("Test")
 	m.jobs[test.title] = &job{id: test.title, it: test, started: time.Now().Add(-47 * time.Second)}
 	updated, _ = m.Update(runDoneMsg{jobID: test.title, elapsed: 47*time.Second + 300*time.Millisecond})
 	m = updated.(model)

@@ -22,12 +22,30 @@ func step(t *testing.T, m model, msg tea.Msg) (model, tea.Cmd) {
 	return mm, cmd
 }
 
-// readyModel returns a sized model that's already past the loading splash.
+// readyModel returns a sized model that's already past the loading
+// splash. Existing tests are not concerned with the first-run prompt,
+// so we clear that state here; the dedicated first-run tests below set
+// it explicitly.
 func readyModel(t *testing.T) model {
 	t.Helper()
 	m := newModel()
+	m.firstRunMissing = nil
+	m.firstRunDone = true
 	m, _ = step(t, m, tea.WindowSizeMsg{Width: 110, Height: 50})
 	return m
+}
+
+// itemNamed pulls the named entry from defaultItems(), so tests don't
+// hard-code its position (which shifts when the menu grows).
+func itemNamed(t *testing.T, title string) item {
+	t.Helper()
+	for _, it := range defaultItems() {
+		if it.title == title {
+			return it
+		}
+	}
+	t.Fatalf("defaultItems() has no %q", title)
+	return item{}
 }
 
 // drainToCompletion polls the runner of the named job until it emits
@@ -164,7 +182,7 @@ func TestInteractiveItemUsesExecProcess(t *testing.T) {
 // clears currentIndefinite and posts a status toast.
 func TestRunDoneClearsSpotlight(t *testing.T) {
 	m := readyModel(t)
-	m.jobs["Install"] = &job{id: "Install", it: defaultItems()[0], started: time.Now().Add(-1500 * time.Millisecond)}
+	m.jobs["Install"] = &job{id: "Install", it: itemNamed(t, "Install"), started: time.Now().Add(-1500 * time.Millisecond)}
 
 	m, _ = step(t, m, runDoneMsg{jobID: "Install", elapsed: 1500 * time.Millisecond})
 	if _, still := m.jobs["Install"]; still {
@@ -233,7 +251,7 @@ func TestTabSwitchesFocus(t *testing.T) {
 	}
 
 	// Pretend a job is running.
-	m.jobs["Design"] = &job{id: "Design", it: defaultItems()[1]}
+	m.jobs["Design"] = &job{id: "Design", it: itemNamed(t, "Design")}
 	m.currentIndefinite = m.jobs["Design"]
 
 	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyTab})
@@ -252,12 +270,12 @@ func TestSecondIndefiniteIsRejected(t *testing.T) {
 	m := readyModel(t)
 
 	// Inject a fake live indefinite without actually shelling out.
-	live := &job{id: "Design", it: defaultItems()[1]}
+	live := &job{id: "Design", it: itemNamed(t, "Design")}
 	m.jobs["Design"] = live
 	m.currentIndefinite = live
 
 	// Try to launch Serve (also indefinite).
-	serveItem := defaultItems()[2]
+	serveItem := itemNamed(t, "Serve")
 	if !serveItem.indefinite {
 		t.Fatal("test fixture assumption: Serve is indefinite")
 	}
@@ -277,7 +295,7 @@ func TestSecondIndefiniteIsRejected(t *testing.T) {
 func TestQuickJobRunsAlongsideIndefinite(t *testing.T) {
 	m := readyModel(t)
 
-	live := &job{id: "Design", it: defaultItems()[1]}
+	live := &job{id: "Design", it: itemNamed(t, "Design")}
 	m.jobs["Design"] = live
 	m.currentIndefinite = live
 
@@ -352,7 +370,7 @@ func TestServiceLinksPinnedAfterListening(t *testing.T) {
 	t.Setenv("BOXLAND_HTTP_ADDR", ":8080")
 	m := readyModel(t)
 
-	live := &job{id: "Design", it: defaultItems()[1]}
+	live := &job{id: "Design", it: itemNamed(t, "Design")}
 	m.jobs["Design"] = live
 	m.currentIndefinite = live
 
@@ -378,11 +396,11 @@ func TestServiceLinksPinnedAfterListening(t *testing.T) {
 // emitted what.
 func TestQuickJobLinesArePrefixed(t *testing.T) {
 	m := readyModel(t)
-	live := &job{id: "Design", it: defaultItems()[1]}
+	live := &job{id: "Design", it: itemNamed(t, "Design")}
 	m.jobs["Design"] = live
 	m.currentIndefinite = live
 
-	quick := &job{id: "Migrate", it: defaultItems()[5]}
+	quick := &job{id: "Migrate", it: itemNamed(t, "Migrate")}
 	m.jobs["Migrate"] = quick
 
 	m.appendOutput(runOutputMsg{jobID: "Migrate", lines: []string{"applying 003.sql"}})
@@ -396,6 +414,103 @@ func TestQuickJobLinesArePrefixed(t *testing.T) {
 	// Indefinite (spotlight) lines stay untagged.
 	if strings.Contains(tail, "[Design]") {
 		t.Errorf("indefinite line should not be prefixed; got %q", tail)
+	}
+}
+
+// TestFirstRunCardRendersWhenMissing confirms the friendly card
+// appears in place of the menu when setup hasn't been run, and it
+// names every missing item.
+func TestFirstRunCardRendersWhenMissing(t *testing.T) {
+	m := readyModel(t)
+	m.firstRunMissing = []string{"fonts", "templ views"}
+	m.firstRunDone = false
+
+	out := m.View()
+	if !strings.Contains(out, "Boxland needs to install required software first") {
+		t.Errorf("first-run card missing intro line; got:\n%s", out)
+	}
+	for _, name := range m.firstRunMissing {
+		if !strings.Contains(out, name) {
+			t.Errorf("first-run card missing item %q; got:\n%s", name, out)
+		}
+	}
+	// The normal menu title shouldn't be there while the card is up.
+	if strings.Contains(out, "Choose your next step") {
+		t.Errorf("menu title leaked through first-run card; got:\n%s", out)
+	}
+}
+
+// TestFirstRunCardHidesAfterDismiss — Tab dismisses the card without
+// running setup, returning the user to the normal menu.
+func TestFirstRunCardHidesAfterDismiss(t *testing.T) {
+	m := readyModel(t)
+	m.firstRunMissing = []string{"fonts"}
+	m.firstRunDone = false
+
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	if !m.firstRunDone {
+		t.Fatal("Tab must dismiss the first-run card")
+	}
+	out := m.View()
+	if strings.Contains(out, "Boxland needs to install required software first") {
+		t.Errorf("card still visible after Tab; got:\n%s", out)
+	}
+}
+
+// TestFirstRunCardQuitsOnQ — q from the card quits the TLI cleanly.
+func TestFirstRunCardQuitsOnQ(t *testing.T) {
+	m := readyModel(t)
+	m.firstRunMissing = []string{"fonts"}
+	m.firstRunDone = false
+
+	_, cmd := step(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	if cmd == nil {
+		t.Fatal("expected Quit cmd from first-run card on q")
+	}
+}
+
+// TestFirstRunCardLaunchesSetupOnS — pressing S kicks off the Setup
+// item via the regular job machinery.
+func TestFirstRunCardLaunchesSetupOnS(t *testing.T) {
+	m := readyModel(t)
+	m.firstRunMissing = []string{"fonts"}
+	m.firstRunDone = false
+
+	// Replace the Setup item with a trivial command so we don't
+	// actually invoke node/templ/sqlc/flatc in the test.
+	items := m.list.Items()
+	for i, raw := range items {
+		if it, ok := raw.(item); ok && it.title == "Setup" {
+			items[i] = item{title: "Setup", badge: "prepare",
+				desc: "test stub", cmd: []string{"go", "version"}}
+			break
+		}
+	}
+	m.list.SetItems(items)
+
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	if !m.firstRunDone {
+		t.Error("S press must hide the first-run card")
+	}
+	if _, ok := m.jobs["Setup"]; !ok {
+		t.Fatal("S press must register a Setup job")
+	}
+	m = drainToCompletion(t, m, "Setup")
+}
+
+// TestSetupItemPresent — the new menu entry is wired in.
+func TestSetupItemPresent(t *testing.T) {
+	found := false
+	for _, it := range defaultItems() {
+		if it.title == "Setup" {
+			found = true
+			if it.badge != "prepare" {
+				t.Errorf("Setup badge = %q, want %q", it.badge, "prepare")
+			}
+		}
+	}
+	if !found {
+		t.Error("defaultItems() must include a Setup entry")
 	}
 }
 

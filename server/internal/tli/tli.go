@@ -38,6 +38,7 @@ import (
 	"time"
 
 	"boxland/server/internal/branding"
+	"boxland/server/internal/setup"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
@@ -108,6 +109,14 @@ type model struct {
 	// rebuild from per-job runners on every output batch — cheap because
 	// each runner caps its own buffer at tailMaxLines.
 	tailLines []string
+
+	// First-run state. When the working tree is missing required
+	// build artifacts (fonts, templ output, codegen, ...), the TLI
+	// shows a friendly card before the menu and intercepts `s` to run
+	// Setup. firstRunDone goes true once the user has either run setup
+	// or dismissed the card (pressing Tab/Enter to bypass).
+	firstRunMissing []string
+	firstRunDone    bool
 }
 
 // ANSI 256-color palette. We avoid truecolor so the TLI looks consistent
@@ -244,6 +253,7 @@ func (delegate) Render(w io.Writer, m list.Model, index int, listItem list.Item)
 func defaultItems() []item {
 	return []item{
 		{title: "Install", badge: "setup", desc: "Install/check Docker, Go, and Node; tries platform package managers before links.", cmd: []string{"boxland", "install"}, interactive: true},
+		{title: "Setup", badge: "prepare", desc: "Refresh generated artifacts (fonts, templ, codegen); safe to re-run after a pull.", cmd: []string{"boxland", "setup"}},
 		{title: "Design", badge: "quick start", desc: "Dependencies, migrations, web build, staging, then serve Boxland.", cmd: []string{"boxland", "design"}, featured: true, indefinite: true},
 		{title: "Serve", badge: "server", desc: "Run the Go server only.", cmd: []string{"boxland", "serve"}, indefinite: true},
 		{title: "Up", badge: "docker", desc: "Start Postgres, Redis, Mailpit, and MinIO with Docker Compose.", cmd: []string{"boxland", "up"}},
@@ -298,7 +308,7 @@ func newModel() model {
 
 	sw := stopwatch.NewWithInterval(100 * time.Millisecond)
 
-	return model{
+	m := model{
 		list:      l,
 		spinner:   s,
 		header:    header,
@@ -306,6 +316,41 @@ func newModel() model {
 		stopwatch: sw,
 		focus:     focusMenu,
 		jobs:      map[string]*job{},
+	}
+	// Inspect the working tree once at startup. Cwd is the canonical
+	// repo root in our docs ("run from the boxland/ directory"), so
+	// we don't try to walk up looking for a marker.
+	if wd, err := os.Getwd(); err == nil {
+		m.firstRunMissing = setup.Need(wd)
+		// Highlight Setup if anything's missing so the user's eye
+		// catches the right item even after they dismiss the card.
+		if len(m.firstRunMissing) > 0 {
+			highlightSetupItem(&m)
+		}
+	}
+	return m
+}
+
+// highlightSetupItem swaps the "Setup" item's featured flag on so it
+// renders in the same yellow color as the Design quick-start, signalling
+// "this is the one to run first".
+func highlightSetupItem(m *model) {
+	items := m.list.Items()
+	changed := false
+	for i, raw := range items {
+		it, ok := raw.(item)
+		if !ok || it.title != "Setup" {
+			continue
+		}
+		if !it.featured {
+			it.featured = true
+			items[i] = it
+			changed = true
+		}
+		break
+	}
+	if changed {
+		m.list.SetItems(items)
 	}
 }
 
@@ -336,12 +381,42 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case runDoneMsg:
+		// When Setup finishes (success or failure), refresh the
+		// first-run state so the friendly card disappears if the user
+		// is now ready to design.
+		if msg.jobID == "Setup" {
+			if wd, err := os.Getwd(); err == nil {
+				m.firstRunMissing = setup.Need(wd)
+				if len(m.firstRunMissing) == 0 {
+					m.firstRunDone = true
+				}
+			}
+		}
 		return m.handleRunDone(msg)
 
 	case runStartFailedMsg:
 		return m.handleRunDone(runDoneMsg{jobID: msg.jobID, err: msg.err})
 
 	case tea.KeyMsg:
+		// First-run card intercepts everything except quit. The user's
+		// only real choices are: install required software (S) or quit.
+		if m.showFirstRun() {
+			switch {
+			case key.Matches(msg, key.NewBinding(key.WithKeys("ctrl+c", "q", "esc"))):
+				return m, tea.Quit
+			case key.Matches(msg, key.NewBinding(key.WithKeys("s", "S", "enter"))):
+				return m.startSetup()
+			case key.Matches(msg, key.NewBinding(key.WithKeys("tab"))):
+				// Power-user escape hatch: dismiss the card and use
+				// the menu directly. We don't clear firstRunMissing
+				// (the Setup item stays highlighted) — just hide the
+				// card.
+				m.firstRunDone = true
+				return m, nil
+			}
+			return m, nil
+		}
+
 		// Don't intercept keys while the list's filter input is active.
 		filtering := m.focus == focusMenu && m.list.FilterState() == list.Filtering
 		if !filtering {
@@ -397,6 +472,45 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmds = append(cmds, cmd)
 
 	return m, tea.Batch(cmds...)
+}
+
+// showFirstRun reports whether the friendly first-run card should be
+// rendered in place of the menu. We hide it the moment the user
+// either completes setup or chooses to dismiss it (Tab).
+func (m model) showFirstRun() bool {
+	return len(m.firstRunMissing) > 0 && !m.firstRunDone
+}
+
+// startSetup launches the Setup item from the first-run card. It
+// reuses the same job machinery the menu uses, so output streams into
+// the logs pane and the user can watch progress.
+func (m model) startSetup() (tea.Model, tea.Cmd) {
+	// Find the Setup item in the live menu so we honour any future
+	// changes to its cmd shape.
+	for _, raw := range m.list.Items() {
+		it, ok := raw.(item)
+		if !ok || it.title != "Setup" {
+			continue
+		}
+		// Selecting + dispatching mirrors what Enter would do, with
+		// the small twist that we hide the card right away so the
+		// logs pane has room to breathe.
+		m.firstRunDone = true
+		m.list.Select(itemIndex(m.list.Items(), "Setup"))
+		return m.startSelected()
+	}
+	return m, nil
+}
+
+// itemIndex returns the position of the named item in the slice, or 0
+// if not found.
+func itemIndex(items []list.Item, title string) int {
+	for i, raw := range items {
+		if it, ok := raw.(item); ok && it.title == title {
+			return i
+		}
+	}
+	return 0
 }
 
 // toggleFocus flips between menu and logs panes. Logs focus is a no-op
@@ -621,6 +735,9 @@ func (m model) View() string {
 	}
 
 	body := m.viewBody()
+	if m.showFirstRun() && !m.hasJobs() {
+		body = m.renderFirstRunCard()
+	}
 	footer := m.renderFooter(m.header.Width)
 
 	return docStyle.Render(lipgloss.JoinVertical(lipgloss.Left,
@@ -628,6 +745,51 @@ func (m model) View() string {
 		body,
 		footer,
 	))
+}
+
+// renderFirstRunCard is the friendly pre-menu view the TLI shows on a
+// fresh clone. It explains in plain English what's missing and how to
+// fix it with one keystroke.
+func (m model) renderFirstRunCard() string {
+	width := m.header.Width
+	cardWidth := width
+	if cardWidth > 76 {
+		cardWidth = 76
+	}
+
+	titleLine := bubbleTitleStyle.Render("Welcome to Boxland")
+	intro := descStyle.Render("Boxland needs to install required software first. " +
+		"Press S to do it now (~30s), or q to quit.")
+
+	missingHeader := footerLabel.Render("Still required:")
+	rows := make([]string, 0, len(m.firstRunMissing))
+	for _, name := range m.firstRunMissing {
+		rows = append(rows, "  "+statusErr.Render("•")+" "+descStyle.Render(name))
+	}
+
+	hint := footerKey.Render("S") + footerLabel.Render(" install required software   ") +
+		footerKey.Render("q") + footerLabel.Render(" quit")
+
+	parts := []string{titleLine, "", intro, "", missingHeader}
+	parts = append(parts, rows...)
+	parts = append(parts, "", hint)
+
+	card := bubbleStyleFocused.
+		Width(cardWidth).
+		Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
+
+	// Centre the card inside the body width so it doesn't hug the
+	// left margin on wide terminals.
+	pad := (width - lipgloss.Width(card)) / 2
+	if pad < 0 {
+		pad = 0
+	}
+	leftPad := strings.Repeat(" ", pad)
+	lines := strings.Split(card, "\n")
+	for i, ln := range lines {
+		lines[i] = leftPad + ln
+	}
+	return strings.Join(lines, "\n")
 }
 
 // viewBody composes the always-visible menu pane with the optional logs

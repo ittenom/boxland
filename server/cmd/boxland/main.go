@@ -68,6 +68,12 @@ func main() {
 			slog.Error("install failed", "err", err)
 			os.Exit(1)
 		}
+	case "setup":
+		wd, _ := os.Getwd()
+		if err := runSetupVerbose(wd); err != nil {
+			slog.Error("setup failed", "err", err)
+			os.Exit(1)
+		}
 	case "design":
 		if err := runDesign(); err != nil {
 			slog.Error("design failed", "err", err)
@@ -130,7 +136,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: boxland [install|design|up|down|logs|serve|migrate [up|down|version]|backup export|import|test|version]")
+	fmt.Fprintln(os.Stderr, "usage: boxland [install|setup|design|up|down|logs|serve|migrate [up|down|version]|backup export|import|test|version]")
 }
 
 func runInstall() error {
@@ -141,6 +147,13 @@ func runInstall() error {
 		{Name: "Go", Cmd: "go", VersionArgs: []string{"version"}, URL: "https://go.dev/dl/", Packages: map[string]string{"winget": "GoLang.Go", "choco": "golang", "brew": "go", "apt": "golang-go", "dnf": "golang", "pacman": "go"}},
 		{Name: "Node.js", Cmd: "node", VersionArgs: []string{"--version"}, URL: "https://nodejs.org/", Packages: map[string]string{"winget": "OpenJS.NodeJS.LTS", "choco": "nodejs-lts", "brew": "node", "apt": "nodejs npm", "dnf": "nodejs npm", "pacman": "nodejs npm"}},
 		{Name: "npm", Cmd: "npm", VersionArgs: []string{"--version"}, URL: "https://docs.npmjs.com/downloading-and-installing-node-js-and-npm", Packages: map[string]string{"winget": "OpenJS.NodeJS.LTS", "choco": "nodejs-lts", "brew": "node", "apt": "npm", "dnf": "npm", "pacman": "npm"}},
+		// sqlc + flatc are required by `boxland setup` to regenerate
+		// the embedded hot-path queries and FlatBuffers code on a
+		// fresh clone. setup itself only warns when these are missing
+		// (so a partial boot still works), but Install gives users
+		// the one-shot path to a fully functional tree.
+		{Name: "sqlc", Cmd: "sqlc", VersionArgs: []string{"version"}, URL: "https://docs.sqlc.dev/en/stable/overview/install.html", Packages: map[string]string{"winget": "sqlc-dev.sqlc", "brew": "sqlc", "pacman": "sqlc"}},
+		{Name: "flatc", Cmd: "flatc", VersionArgs: []string{"--version"}, URL: "https://flatbuffers.dev/flatbuffers_guide_building.html", Packages: map[string]string{"winget": "Google.FlatBuffers", "choco": "flatc", "brew": "flatbuffers", "apt": "flatbuffers-compiler", "dnf": "flatbuffers-compiler", "pacman": "flatbuffers"}},
 	}
 	for _, r := range reqs {
 		if err := ensureRequirement(r); err != nil {
@@ -152,6 +165,17 @@ func runInstall() error {
 	if err := runWeb("npm", "install", "--silent", "--no-audit", "--no-fund"); err != nil {
 		return err
 	}
+	// Refresh embedded artifacts (fonts, templ, sqlc, flatc). On a
+	// fresh clone these are already populated from the committed
+	// generator outputs, so this step is fast and idempotent; after
+	// a `git pull` that touched schemas/queries/templ it brings
+	// generated code back in sync.
+	fmt.Println()
+	wd, _ := os.Getwd()
+	if err := runSetupVerbose(wd); err != nil {
+		return err
+	}
+	fmt.Println()
 	fmt.Println("Building Boxland CLI to repo root and ./bin ...")
 	if err := os.MkdirAll("bin", 0o755); err != nil {
 		return err
@@ -289,6 +313,14 @@ func runBackup(args []string) error {
 }
 
 func runDesign() error {
+	// Refresh generated artifacts before kicking the design loop.
+	// Idempotent and instant when nothing changed; useful after a
+	// `git pull` that touched schemas/queries/templ.
+	wd, _ := os.Getwd()
+	if err := runSetupVerbose(wd); err != nil {
+		return err
+	}
+
 	// Re-invoke ourselves rather than relying on a `boxland` entry on
 	// PATH. Works whether the user started the TLI via `go run`, the
 	// repo-root `boxland.cmd`/`./boxland` launchers, or an installed
