@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"boxland/server/internal/persistence"
@@ -32,8 +33,9 @@ type UploadResult struct {
 	OriginalFn string // original filename from the multipart form
 	// TileCells / TileMeta are populated for kind=tile uploads.
 	// See MultiUploadResult for the long form.
-	TileCells []TileCell
-	TileMeta  TileSheetMetadata
+	TileCells    []TileCell
+	TileMeta     TileSheetMetadata
+	SpriteImport *ImportResult
 }
 
 // SupportedContentTypes maps the sniffed MIME type to the kind it produces.
@@ -43,18 +45,37 @@ var SupportedContentTypes = map[string]struct {
 	Kind   Kind
 	Format string
 }{
-	"image/png":  {KindSprite, "png"},
-	"audio/wav":  {KindAudio, "wav"},
+	"image/png":   {KindSprite, "png"},
+	"audio/wav":   {KindAudio, "wav"},
 	"audio/x-wav": {KindAudio, "wav"},
-	"audio/wave": {KindAudio, "wav"},
-	"audio/ogg":  {KindAudio, "ogg"},
-	"audio/mpeg": {KindAudio, "mp3"},
+	"audio/wave":  {KindAudio, "wav"},
+	"audio/ogg":   {KindAudio, "ogg"},
+	"audio/mpeg":  {KindAudio, "mp3"},
+}
+
+const (
+	KindOverrideSpriteSheet    = "sprite_sheet"
+	KindOverrideAnimatedSprite = "animated_sprite"
+)
+
+// NormalizeUploadKind maps UI-only upload modes onto persisted asset kinds.
+// Sprite sheets and animated sprites are still sprite assets; the importer
+// persists frame metadata + animation rows alongside the asset.
+func NormalizeUploadKind(raw string) Kind {
+	switch strings.TrimSpace(raw) {
+	case "", "auto":
+		return ""
+	case KindOverrideSpriteSheet, KindOverrideAnimatedSprite:
+		return KindSprite
+	default:
+		return Kind(raw)
+	}
 }
 
 // Errors returned by Upload. Stable for HTTP handler mapping.
 var (
-	ErrNoFile                = errors.New("upload: no file in request")
-	ErrTooLarge              = errors.New("upload: file exceeds size limit")
+	ErrNoFile                 = errors.New("upload: no file in request")
+	ErrTooLarge               = errors.New("upload: file exceeds size limit")
 	ErrUnsupportedContentType = errors.New("upload: unsupported content type")
 )
 
@@ -151,6 +172,7 @@ func (s *Service) UploadMany(
 		entry.Reused = res.Reused
 		entry.TileCells = res.TileCells
 		entry.TileMeta = res.TileMeta
+		entry.SpriteImport = res.SpriteImport
 		out = append(out, entry)
 	}
 	return out, nil
@@ -201,7 +223,10 @@ func (s *Service) uploadFromHeader(
 
 	kind := supported.Kind
 	if kindOverride != "" {
-		kind = kindOverride
+		kind = NormalizeUploadKind(string(kindOverride))
+	}
+	if kindOverride == "" && supported.Kind == KindSprite && isAutoTileSheet(body) {
+		kind = KindTile
 	}
 	originalName := header.Filename
 	displayName := defaultDisplayName(originalName)
@@ -268,7 +293,7 @@ func (s *Service) uploadFromHeader(
 		}
 		return &UploadResult{
 			Asset: existing, Reused: true, OriginalFn: originalName,
-			TileCells: tileCells, TileMeta: tileMD,
+			TileCells: tileCells, TileMeta: tileMD, SpriteImport: spriteImport,
 		}, nil
 	} else if !errors.Is(err, ErrAssetNotFound) {
 		return nil, fmt.Errorf("dedup lookup: %w", err)
@@ -343,7 +368,7 @@ func (s *Service) uploadFromHeader(
 
 	return &UploadResult{
 		Asset: asset, Reused: false, OriginalFn: originalName,
-		TileCells: tileCells, TileMeta: tileMD,
+		TileCells: tileCells, TileMeta: tileMD, SpriteImport: spriteImport,
 	}, nil
 }
 
@@ -365,12 +390,94 @@ const MaxFilesPerUpload = 64
 // failed slicing (e.g. odd dimensions — the asset row is not
 // created in that case; Err carries the reason).
 type MultiUploadResult struct {
-	Asset      *Asset
-	Reused     bool
-	OriginalFn string
-	Err        error
-	TileCells  []TileCell
-	TileMeta   TileSheetMetadata
+	Asset        *Asset
+	Reused       bool
+	OriginalFn   string
+	Err          error
+	TileCells    []TileCell
+	TileMeta     TileSheetMetadata
+	SpriteImport *ImportResult
+}
+
+// isAutoTileSheet returns true for plain PNG uploads that should default to
+// tile-sheet slicing: any valid, non-empty, 32px-divisible grid larger than a
+// single cell. Explicit Sprite/Sprite sheet/Animated sprite selections bypass
+// this and stay sprite assets.
+func isAutoTileSheet(body []byte) bool {
+	cells, _, err := SliceTileSheet(body)
+	if err != nil || len(cells) <= 1 {
+		return false
+	}
+	return true
+}
+
+// SpriteSheetSummary describes the persisted frame metadata for a sprite
+// upload. Handlers use it for upload-result captions and JSON responses.
+type SpriteSheetSummary struct {
+	Frames     int    `json:"frames"`
+	Cols       int    `json:"cols"`
+	Rows       int    `json:"rows"`
+	GridW      int    `json:"grid_w"`
+	GridH      int    `json:"grid_h"`
+	Source     string `json:"source"`
+	Animations int    `json:"animations"`
+}
+
+// SpriteSummaryFromImport converts an upload-time import result into the
+// small presentation shape users need in the upload summary.
+func SpriteSummaryFromImport(ir *ImportResult) SpriteSheetSummary {
+	if ir == nil {
+		return SpriteSheetSummary{}
+	}
+	md := ir.SheetMetadata
+	frames := md.FrameCount
+	if frames == 0 {
+		frames = len(ir.Frames)
+	}
+	return SpriteSheetSummary{
+		Frames:     frames,
+		Cols:       md.Cols,
+		Rows:       md.Rows,
+		GridW:      md.GridW,
+		GridH:      md.GridH,
+		Source:     md.Source,
+		Animations: len(ir.Animations),
+	}
+}
+
+// SpriteSummaryFromMetadata decodes a previously persisted sprite sheet's
+// metadata. It returns a zero summary for ordinary single-frame sprites.
+func SpriteSummaryFromMetadata(raw []byte) SpriteSheetSummary {
+	var md SheetMetadata
+	if len(raw) == 0 || string(raw) == "{}" || string(raw) == "null" {
+		return SpriteSheetSummary{}
+	}
+	if err := json.Unmarshal(raw, &md); err != nil {
+		return SpriteSheetSummary{}
+	}
+	return SpriteSheetSummary{
+		Frames: md.FrameCount,
+		Cols:   md.Cols,
+		Rows:   md.Rows,
+		GridW:  md.GridW,
+		GridH:  md.GridH,
+		Source: md.Source,
+	}
+}
+
+func (s SpriteSheetSummary) IsSheet() bool {
+	return s.Frames > 1 || s.Cols > 1 || s.Rows > 1
+}
+
+func (s SpriteSheetSummary) String() string {
+	if !s.IsSheet() {
+		return ""
+	}
+	out := strconv.Itoa(s.Frames) + " frames"
+	if s.Animations > 0 {
+		out += " · " + strconv.Itoa(s.Animations) + " animations"
+	}
+	return out
 }
 
 // readSidecar locates and reads an Aseprite-style JSON sidecar from

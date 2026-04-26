@@ -72,10 +72,14 @@ func authedReq(method, path, designerToken string, body io.Reader) *http.Request
 }
 
 func tinyPNG(t *testing.T) []byte {
+	return testPNG(t, 32, 32)
+}
+
+func testPNG(t *testing.T, w, h int) []byte {
 	t.Helper()
-	img := image.NewNRGBA(image.Rect(0, 0, 32, 32))
-	for y := 0; y < 32; y++ {
-		for x := 0; x < 32; x++ {
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
 			img.Set(x, y, color.NRGBA{R: 200, G: 100, B: 50, A: 255})
 		}
 	}
@@ -87,9 +91,18 @@ func tinyPNG(t *testing.T) []byte {
 }
 
 func multipartUpload(t *testing.T, body []byte, filename string) (io.Reader, string) {
+	return assetMultipartUploadWithKind(t, body, filename, "")
+}
+
+func assetMultipartUploadWithKind(t *testing.T, body []byte, filename, kind string) (io.Reader, string) {
 	t.Helper()
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
+	if kind != "" {
+		if err := mw.WriteField("kind", kind); err != nil {
+			t.Fatal(err)
+		}
+	}
 	hdr := make(map[string][]string)
 	hdr["Content-Disposition"] = []string{`form-data; name="file"; filename="` + filename + `"`}
 	hdr["Content-Type"] = []string{"image/png"}
@@ -184,6 +197,59 @@ func TestAssetUpload_ViaHTMX_ReturnsToast(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "bx-toast--success") {
 		t.Errorf("expected success toast; body=%s", rr.Body.String())
+	}
+}
+
+func TestAssetUploadModal_IncludesSpriteSheetAndAnimatedSpriteKinds(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	resetDB(t, pool)
+	deps, designerID := fullDeps(t, pool)
+	srv := buildHandler(deps)
+
+	tok, _ := deps.Auth.OpenSession(context.Background(), designerID, "ua", nil)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, authedReq(http.MethodGet, "/design/assets/upload", tok, nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		`value="sprite_sheet"`,
+		`Sprite sheet`,
+		`value="animated_sprite"`,
+		`Animated sprite`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in body", want)
+		}
+	}
+}
+
+func TestAssetUpload_ExplicitAnimatedSpriteReturnsFrameCaption(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	resetDB(t, pool)
+	deps, designerID := fullDeps(t, pool)
+	deps.Assets.Importers = assets.DefaultRegistry()
+	srv := buildHandler(deps)
+
+	body, ct := assetMultipartUploadWithKind(t, testPNG(t, 4*32, 4*32), "hero.png", assets.KindOverrideAnimatedSprite)
+	tok, _ := deps.Auth.OpenSession(context.Background(), designerID, "ua", nil)
+	req := authedReq(http.MethodPost, "/design/assets/upload", tok, body)
+	req.Header.Set("Content-Type", ct)
+	req.Header.Set("HX-Request", "true")
+
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	out := rr.Body.String()
+	for _, want := range []string{"added as sprite sheet", "16 frames", "animations"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in body=%s", want, out)
+		}
 	}
 }
 

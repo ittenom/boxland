@@ -37,7 +37,7 @@ templ AssetUploadModal(p AssetUploadModalProps) {
 						data-copy-slot="assets.upload.drop"
 					>
 						<p data-bx-drop-msg>
-							<strong>Drag PNG / WAV / OGG / MP3 files</strong> (or a whole folder) here, or use the buttons below.
+							<strong>Drag PNG sheets / WAV / OGG / MP3 files</strong> (or a whole folder) here, or use the buttons below.
 						</p>
 						<div class="bx-row" style="gap: var(--bx-s2); justify-content: center;">
 							<button
@@ -83,12 +83,14 @@ templ AssetUploadModal(p AssetUploadModalProps) {
 						<select name="kind" class="bx-select" data-bx-kind-select>
 							<option value="">Auto-detect from content</option>
 							<option value="sprite">Sprite — single 32×32 image</option>
+							<option value="sprite_sheet">Sprite sheet — save 32×32 frames</option>
+							<option value="animated_sprite">Animated sprite — auto-create animations</option>
 							<option value="tile">Tile sheet — sliced into 32×32 cells</option>
 							<option value="audio">Audio</option>
 							<option value="ui_panel">UI panel — 9-slice HUD border</option>
 						</select>
 						<small class="bx-help" data-copy-slot="assets.upload.kind-help">
-							PNG defaults to Sprite. Pick <strong>Tile sheet</strong> when uploading an atlas — Boxland slices it into 32×32 cells and adds each cell to the Mapmaker palette automatically. Both axes must be a multiple of 32. Pick <strong>UI panel</strong> when the PNG is a 9-slice border that should wrap HUD frames, dialogs, or tooltips without stretching.
+							Auto-detect keeps a single 32×32 PNG as a sprite and slices any larger 32px grid into individual tile sprites. Pick <strong>Sprite sheet</strong> when a character/object sheet should stay together as frames. Pick <strong>Animated sprite</strong> when walking or idle frames should create animations — Boxland saves the 32×32 grid when the layout is recognizable. Pick <strong>UI panel</strong> when the PNG is a 9-slice HUD border.
 						</small>
 					</div>
 					<div class="bx-row bx-row--end">
@@ -204,6 +206,11 @@ type AssetUploadItem struct {
 	// created for a kind=tile upload. Renders the row's success
 	// caption, e.g. "added as tile · 24 paintable cells".
 	TileEntityCount int
+
+	// SpriteFrameCount / SpriteAnimationCount are populated for sprite-sheet
+	// uploads so the result confirms that a sheet/animated sprite was parsed.
+	SpriteFrameCount     int
+	SpriteAnimationCount int
 }
 
 // AssetUploadResultsProps drives the multi-file upload summary that
@@ -337,6 +344,13 @@ func uploadAddedCaption(it AssetUploadItem) string {
 			return "added as tile sheet · " + intToA(it.TileEntityCount) + " paintable cells"
 		}
 	}
+	if it.Kind == "sprite" && it.SpriteFrameCount > 1 {
+		caption := "added as sprite sheet · " + intToA(it.SpriteFrameCount) + " frames"
+		if it.SpriteAnimationCount > 0 {
+			caption += " · " + intToA(it.SpriteAnimationCount) + " animations"
+		}
+		return caption
+	}
 	return "added as " + it.Kind
 }
 
@@ -351,6 +365,13 @@ func uploadReusedCaption(it AssetUploadItem) string {
 		default:
 			return "already in library · " + intToA(it.TileEntityCount) + " new cells added"
 		}
+	}
+	if it.Kind == "sprite" && it.SpriteFrameCount > 1 {
+		caption := "already in library · " + intToA(it.SpriteFrameCount) + " frames"
+		if it.SpriteAnimationCount > 0 {
+			caption += " · " + intToA(it.SpriteAnimationCount) + " animations"
+		}
+		return caption
 	}
 	return "already in library"
 }

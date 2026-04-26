@@ -223,7 +223,32 @@ func TestUpload_DifferentBytesProduceDifferentRows(t *testing.T) {
 	}
 }
 
-func TestUpload_SpritePersistsSynthesizedWalkAnimations(t *testing.T) {
+func TestUpload_AutoDetectsMultiCellPNGAsTileSheet(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	designerID := resetDB(t, pool)
+	store := makeStore(t)
+	svc := assets.New(pool)
+
+	body := pngOf(t, 64, 32)
+	res, err := svc.Upload(context.Background(),
+		makeUploadRequest(t, "terrain.png", body, "image/png"),
+		store, designerID, "")
+	if err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+	if res.Asset.Kind != assets.KindTile {
+		t.Fatalf("auto-detected kind = %q, want tile", res.Asset.Kind)
+	}
+	if len(res.TileCells) != 2 {
+		t.Fatalf("TileCells len = %d, want 2", len(res.TileCells))
+	}
+	if !strings.Contains(string(res.Asset.MetadataJSON), `"non_empty_count"`) {
+		t.Errorf("tile metadata missing non_empty_count: %s", res.Asset.MetadataJSON)
+	}
+}
+
+func TestUpload_ExplicitAnimatedSpriteStaysSpriteSheet(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
 	designerID := resetDB(t, pool)
@@ -235,7 +260,7 @@ func TestUpload_SpritePersistsSynthesizedWalkAnimations(t *testing.T) {
 	body := pngOf(t, 4*32, 4*32)
 	res, err := svc.Upload(context.Background(),
 		makeUploadRequest(t, "hero.png", body, "image/png"),
-		store, designerID, "")
+		store, designerID, assets.KindOverrideAnimatedSprite)
 	if err != nil {
 		t.Fatalf("Upload: %v", err)
 	}
@@ -265,7 +290,7 @@ func TestUpload_SpritePersistsSynthesizedWalkAnimations(t *testing.T) {
 	}
 }
 
-func TestUpload_SpriteAnimationsBackfilledOnReuse(t *testing.T) {
+func TestUpload_ExplicitSpriteSheetBackfilledOnReuse(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
 	designerID := resetDB(t, pool)
@@ -275,7 +300,7 @@ func TestUpload_SpriteAnimationsBackfilledOnReuse(t *testing.T) {
 	body := pngOf(t, 4*32, 4*32)
 	first, err := svc.Upload(context.Background(),
 		makeUploadRequest(t, "hero.png", body, "image/png"),
-		store, designerID, "")
+		store, designerID, assets.KindOverrideSpriteSheet)
 	if err != nil {
 		t.Fatalf("first upload: %v", err)
 	}
@@ -287,7 +312,7 @@ func TestUpload_SpriteAnimationsBackfilledOnReuse(t *testing.T) {
 	svc.Importers = assets.DefaultRegistry()
 	second, err := svc.Upload(context.Background(),
 		makeUploadRequest(t, "hero-v2.png", body, "image/png"),
-		store, designerID, "")
+		store, designerID, assets.KindOverrideSpriteSheet)
 	if err != nil {
 		t.Fatalf("re-upload: %v", err)
 	}

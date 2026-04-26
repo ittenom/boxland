@@ -3445,7 +3445,7 @@ func postAssetUpload(d Deps) http.HandlerFunc {
 		// uploads were classified as sprites. ParseMultipartForm is
 		// idempotent, so the inner UploadMany call is unaffected.
 		_ = r.ParseMultipartForm(int64(assets.MaxUploadBytes) * int64(assets.MaxFilesPerUpload))
-		kindOverride := assets.Kind(firstNonEmpty(
+		kindOverride := assets.NormalizeUploadKind(firstNonEmpty(
 			r.URL.Query().Get("kind"),
 			r.FormValue("kind"),
 		))
@@ -3497,6 +3497,14 @@ func postAssetUpload(d Deps) http.HandlerFunc {
 						item.TileEntityCount = n
 					}
 				}
+				if res.Asset.Kind == assets.KindSprite {
+					summary := assets.SpriteSummaryFromImport(res.SpriteImport)
+					if !summary.IsSheet() {
+						summary = assets.SpriteSummaryFromMetadata(res.Asset.MetadataJSON)
+					}
+					item.SpriteFrameCount = summary.Frames
+					item.SpriteAnimationCount = summary.Animations
+				}
 			}
 			viewItems = append(viewItems, item)
 		}
@@ -3518,6 +3526,15 @@ func postAssetUpload(d Deps) http.HandlerFunc {
 			} else {
 				entry["asset"] = r.Asset
 				entry["reused"] = r.Reused
+				if r.Asset != nil && r.Asset.Kind == assets.KindSprite {
+					summary := assets.SpriteSummaryFromImport(r.SpriteImport)
+					if !summary.IsSheet() {
+						summary = assets.SpriteSummaryFromMetadata(r.Asset.MetadataJSON)
+					}
+					if summary.IsSheet() {
+						entry["sprite_sheet"] = summary
+					}
+				}
 			}
 			jsonResults = append(jsonResults, entry)
 		}
