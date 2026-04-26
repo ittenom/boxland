@@ -28,6 +28,7 @@
 package tli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -39,6 +40,7 @@ import (
 
 	"boxland/server/internal/branding"
 	"boxland/server/internal/setup"
+	"boxland/server/internal/updater"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
@@ -126,6 +128,14 @@ type model struct {
 	// of failure is a 6-second status-bar toast and the actual error
 	// is irretrievable.
 	failedJob *failedJobView
+
+	// Update check. updateClient is fired on Init via a tea.Cmd so the
+	// menu paints first; the result is stashed in updateStatus and the
+	// menu is rebuilt to swap the "Check for updates" item over to a
+	// pink "Update Boxland" CTA. nil/zero means we haven't heard back
+	// from GitHub (or the user disabled checks via env).
+	updateClient *updater.Client
+	updateStatus *updater.Status
 }
 
 // failedJobView holds just enough about a failed interactive job to
@@ -302,7 +312,7 @@ func designItem(featured bool) item {
 // defaultItems is the live menu, with ordering driven by whether the
 // install is complete on the current working tree.
 func defaultItems() []item {
-	return itemsForState(isInstallComplete())
+	return itemsForState(isInstallComplete(), nil)
 }
 
 // itemsForState builds the menu with adaptive ordering: when the
@@ -311,9 +321,16 @@ func defaultItems() []item {
 // first and gets the featured/yellow treatment so the eye catches
 // it. Split out from defaultItems so tests can assert layout against
 // both states without mocking the filesystem.
-func itemsForState(installComplete bool) []item {
+//
+// upd, when non-nil, drives the Update Boxland row: a real "ready"
+// CTA when an upstream release is newer than the running version,
+// or a quieter "Check for updates" row otherwise. nil means we
+// haven't heard back from GitHub yet — the menu still shows the
+// row in its check-only form so users know the feature exists.
+func itemsForState(installComplete bool, upd *updater.Status) []item {
 	check := checkInstallationItem(!installComplete)
 	design := designItem(installComplete)
+	updateRow := updateBoxlandItem(upd)
 
 	rest := []item{
 		{title: "Serve", badge: "server", desc: "Run the Go server only.", cmd: []string{"boxland", "serve"}, indefinite: true},
@@ -325,13 +342,77 @@ func itemsForState(installComplete bool) []item {
 		{title: "Test", badge: "quality", desc: "Run Go, web, scripts, and realm isolation tests.", cmd: []string{"boxland", "test"}},
 	}
 
-	if installComplete {
+	switch {
+	case installComplete && upd != nil && upd.HasUpdate:
+		// Update is the *most important* thing the user can do
+		// today: their schema is about to drift from upstream. Pin
+		// it to the top with the featured highlight — Design slides
+		// down one row, but the user still has it instantly via "/".
+		return append([]item{updateRow, design, check}, rest...)
+	case installComplete:
 		// Daily-driver layout: Design first, then the install check
-		// stays available for re-running after a `git pull`.
-		return append([]item{design, check}, rest...)
+		// stays available for re-running after a `git pull`. Update
+		// row tucks just below the always-relevant items so power
+		// users can still trigger a manual "Check for updates".
+		return append([]item{design, check}, append(rest, updateRow)...)
+	default:
+		// Fresh-clone layout: install first, design dimmed below.
+		// We still surface the update row (in check-only form) so a
+		// user re-installing after a git pull can confirm they're
+		// actually on the newest tag.
+		return append([]item{check, design}, append(rest, updateRow)...)
 	}
-	// Fresh-clone layout: install first, design dimmed below.
-	return append([]item{check, design}, rest...)
+}
+
+// updateBoxlandTitle is the constant title we use to look up the
+// update row when refreshing menu items or routing the U hotkey, so
+// renames stay in lockstep.
+const updateBoxlandTitle = "Update Boxland"
+
+// updateBoxlandItem builds the row in either "ready to apply" or
+// "check only" form. When ready, the row carries the new version in
+// its description and runs `boxland update`; otherwise it runs
+// `boxland update --check` so a user behind a flaky connection can
+// retry the GitHub probe by hand.
+func updateBoxlandItem(s *updater.Status) item {
+	if s != nil && s.HasUpdate {
+		desc := fmt.Sprintf("New release %s available — pull, migrate, rebuild, restart.",
+			normalizeTag(s.Latest))
+		return item{
+			title:       updateBoxlandTitle,
+			badge:       "ready",
+			desc:        desc,
+			cmd:         []string{"boxland", "update"},
+			interactive: true, // sudoless prompts (git creds, etc.) need TTY
+			featured:    true,
+		}
+	}
+	desc := "Ask GitHub if a newer Boxland is available."
+	if s != nil && s.Latest != "" {
+		desc = fmt.Sprintf("Up to date (latest is %s). Press to re-check.",
+			normalizeTag(s.Latest))
+	}
+	return item{
+		title:       updateBoxlandTitle,
+		badge:       "update",
+		desc:        desc,
+		cmd:         []string{"boxland", "update", "--check"},
+		interactive: false,
+	}
+}
+
+// normalizeTag prefixes a `v` if missing so the UI consistently
+// shows tag-style versions ("v0.2.0") rather than mixing bare and
+// prefixed forms.
+func normalizeTag(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return s
+	}
+	if strings.HasPrefix(s, "v") || strings.HasPrefix(s, "V") {
+		return s
+	}
+	return "v" + s
 }
 
 // isInstallComplete decides which menu layout to render. We treat
@@ -404,13 +485,14 @@ func newModel() model {
 	sw := stopwatch.NewWithInterval(100 * time.Millisecond)
 
 	m := model{
-		list:      l,
-		spinner:   s,
-		header:    header,
-		tail:      tail,
-		stopwatch: sw,
-		focus:     focusMenu,
-		jobs:      map[string]*job{},
+		list:         l,
+		spinner:      s,
+		header:       header,
+		tail:         tail,
+		stopwatch:    sw,
+		focus:        focusMenu,
+		jobs:         map[string]*job{},
+		updateClient: updater.NewClient(updater.DefaultRepo),
 	}
 	// Inspect the working tree once at startup. Cwd is the canonical
 	// repo root in our docs ("run from the boxland/ directory"), so
@@ -430,7 +512,37 @@ func headerHeight() int {
 	return logoLines + 3
 }
 
-func (m model) Init() tea.Cmd { return m.spinner.Tick }
+func (m model) Init() tea.Cmd {
+	return tea.Batch(m.spinner.Tick, m.checkForUpdate(false))
+}
+
+// updateCheckMsg carries the result of an updater check back to the
+// Update loop. status is nil when the check was disabled or had no
+// useful answer; the model just keeps showing what it had before.
+type updateCheckMsg struct {
+	status *updater.Status
+}
+
+// checkForUpdate runs the GitHub-Releases check off the bubbletea
+// goroutine so the menu renders first. It is intentionally fail-soft:
+// any error path returns a nil status which the model then treats as
+// "no opinion".
+//
+// force=true skips the on-disk TTL gate (still respects ETag and the
+// in-process throttle) and is used when the user invokes the Check
+// for updates menu item explicitly.
+func (m model) checkForUpdate(force bool) tea.Cmd {
+	c := m.updateClient
+	if c == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		defer cancel()
+		s, _ := c.CheckLatest(ctx, updater.CheckOpts{ForceRefresh: force})
+		return updateCheckMsg{status: s}
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Update
@@ -449,6 +561,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, j.runner.poll())
 		}
 
+	case updateCheckMsg:
+		// Keep prior status if the check came back empty (offline,
+		// disabled, etc.) — there's no point throwing away a perfectly
+		// good cached snapshot just because today's refresh failed.
+		if msg.status != nil {
+			m.updateStatus = msg.status
+			m.refreshMenuItems()
+		}
+
 	case runDoneMsg:
 		// When Check Installation finishes (success or failure),
 		// refresh the first-run state so the friendly card disappears
@@ -463,6 +584,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			m.refreshMenuItems()
+		}
+		// When Update Boxland finishes, re-check GitHub so the menu
+		// either snaps back to its "Up to date" form (success: the
+		// new binary will pick up the new VERSION on next launch,
+		// but we re-check anyway in case the user updates twice in
+		// a row across releases) or stays on "Update available" so
+		// the user can retry. Force the refresh because the on-disk
+		// TTL would otherwise serve a stale snapshot.
+		if msg.jobID == updateBoxlandTitle {
+			m, cmd := m.handleRunDone(msg)
+			return m, tea.Batch(cmd, m.(model).checkForUpdate(true))
 		}
 		return m.handleRunDone(msg)
 
@@ -523,6 +655,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			case m.focus == focusMenu && key.Matches(msg, key.NewBinding(key.WithKeys("enter"))):
 				return m.startSelected()
+			case m.focus == focusMenu && key.Matches(msg, key.NewBinding(key.WithKeys("u", "U"))):
+				// U is the global "go to update" shortcut. When an
+				// update is available, it launches `boxland update`
+				// directly; otherwise it triggers a fresh GitHub
+				// check (skipping the on-disk TTL) and surfaces the
+				// result in the menu. Either way it routes through
+				// the existing job machinery so the logs pane and
+				// status toast behave identically to a click.
+				return m.startUpdate()
 			}
 		}
 	}
@@ -569,6 +710,31 @@ func (m model) showFirstRun() bool {
 	return len(m.firstRunMissing) > 0 && !m.firstRunDone
 }
 
+// startUpdate is the "U" hotkey handler. When an update is known to
+// be available, it selects the Update Boxland row and dispatches as
+// if the user had pressed Enter. When no update is known (or we're
+// up-to-date), it kicks a forced re-check off the bubbletea
+// goroutine and shows a transient toast so the user knows the
+// keystroke was received.
+func (m model) startUpdate() (tea.Model, tea.Cmd) {
+	if m.updateStatus != nil && m.updateStatus.HasUpdate {
+		idx := itemIndex(m.list.Items(), updateBoxlandTitle)
+		if idx < 0 {
+			return m, nil
+		}
+		m.list.Select(idx)
+		return m.startSelected()
+	}
+	// No update known yet; force-refresh and let the user know we're
+	// asking. The toast is short-lived (status-bar default lifetime)
+	// so it won't pile up if they mash the key.
+	cmds := []tea.Cmd{
+		m.list.NewStatusMessage("Checking for updates…"),
+		m.checkForUpdate(true),
+	}
+	return m, tea.Batch(cmds...)
+}
+
 // startCheckInstallation launches the Check Installation item from
 // the first-run card. It reuses the same job machinery the menu
 // uses, so output streams into the logs pane and the user can watch
@@ -597,18 +763,30 @@ func itemIndex(items []list.Item, title string) int {
 	return -1
 }
 
-// refreshMenuItems rebuilds the list from defaultItems(), which
-// re-evaluates isInstallComplete() and may swap Design and Check
-// Installation. Called after Check Installation finishes so the
-// "daily driver" layout snaps into place without needing a TLI
-// restart.
+// refreshMenuItems rebuilds the list from itemsForState, which
+// re-evaluates isInstallComplete() and the cached update status, so
+// the menu can swap Design ↔ Check Installation and surface a fresh
+// "Update Boxland" CTA when GitHub returns a newer release. Called
+// after Check Installation or Update finishes, and whenever an
+// update check lands a new status.
+//
+// We preserve the user's selected row across rebuilds when possible
+// (matched by title) so the cursor doesn't snap back to the top
+// every time a quick job completes.
 func (m *model) refreshMenuItems() {
-	items := defaultItems()
+	prev, _ := m.list.SelectedItem().(item)
+	items := itemsForState(isInstallComplete(), m.updateStatus)
 	li := make([]list.Item, len(items))
 	for i, it := range items {
 		li[i] = it
 	}
 	m.list.SetItems(li)
+	if prev.title != "" {
+		if idx := itemIndex(li, prev.title); idx >= 0 {
+			m.list.Select(idx)
+			return
+		}
+	}
 	m.list.Select(0)
 }
 
@@ -987,13 +1165,50 @@ func (m model) renderFailureCard() string {
 
 // viewBody composes the always-visible menu pane with the optional logs
 // pane. The two are joined horizontally — no extra layout dep needed.
+//
+// When an update is available, a one-line banner sits above the body so
+// users notice it on TLI launch even before they look at the menu.
 func (m model) viewBody() string {
 	menu := m.list.View()
-	if !m.hasJobs() {
-		return menu
+	body := menu
+	if m.hasJobs() {
+		logs := m.renderLogsPane()
+		body = lipgloss.JoinHorizontal(lipgloss.Top, menu, " ", logs)
 	}
-	logs := m.renderLogsPane()
-	return lipgloss.JoinHorizontal(lipgloss.Top, menu, " ", logs)
+
+	if banner := m.renderUpdateBanner(); banner != "" {
+		return lipgloss.JoinVertical(lipgloss.Left, banner, body)
+	}
+	return body
+}
+
+// renderUpdateBanner is the slim "✦ Update available" strip that lives
+// above the menu when the cached update status flags a newer release.
+// Returns "" when there's nothing to say (no check yet, up-to-date,
+// or BOXLAND_DISABLE_UPDATE_CHECK=true). Color-coded with the same
+// pink/cyan palette as the rest of the TLI so it's instantly
+// recognisable as part of the family.
+func (m model) renderUpdateBanner() string {
+	s := m.updateStatus
+	if s == nil || !s.HasUpdate {
+		return ""
+	}
+	width := m.header.Width
+	if width <= 0 {
+		return ""
+	}
+	icon := lipgloss.NewStyle().Foreground(cPink).Bold(true).Render("✦")
+	label := lipgloss.NewStyle().Foreground(cPink).Bold(true).Render("Update available")
+	jump := lipgloss.NewStyle().Foreground(cMuted).Render(
+		normalizeTag(s.Current) + " → " + normalizeTag(s.Latest))
+	hint := footerKey.Render("U") + footerLabel.Render(" update now")
+
+	left := icon + " " + label + dotSep + jump
+	gap := width - lipgloss.Width(left) - lipgloss.Width(hint)
+	if gap < 1 {
+		gap = 1
+	}
+	return left + strings.Repeat(" ", gap) + hint + "\n"
 }
 
 // renderLogsPane builds the right-hand bubble with a pinned services

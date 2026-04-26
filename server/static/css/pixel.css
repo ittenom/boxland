@@ -388,6 +388,48 @@ p, li { font-size: 13px; line-height: 1.55; }
 .bx-chrome__theme svg { width: 14px; height: 14px; }
 .bx-chrome__me { color: var(--bx-fg-3); font-size: 11px; }
 
+/*
+ * Update pill in the chrome bar. Quiet by default (a designer mid-
+ * task should NOT be visually punched in the face) but the pulsing
+ * pink dot draws the eye on the next idle scan. Hover lifts the
+ * border and brightens the text. Click opens the GitHub release
+ * notes; the update itself runs from the operator's terminal.
+ */
+.bx-chrome__update {
+    display: inline-flex; align-items: center; gap: var(--bx-s1);
+    padding: 2px var(--bx-s2);
+    border: var(--bx-px) solid var(--bx-line);
+    background: var(--bx-bg-2);
+    color: var(--bx-fg-2);
+    font-size: 11px; line-height: 1.4;
+    text-decoration: none;
+    transition: border-color 80ms linear, color 80ms linear;
+}
+.bx-chrome__update:hover, .bx-chrome__update:focus-visible {
+    border-color: var(--bx-pink);
+    color: var(--bx-fg-0);
+    outline: none;
+}
+.bx-chrome__update-dot {
+    width: 6px; height: 6px;
+    background: var(--bx-pink, #ff5fa2);
+    box-shadow: 0 0 0 0 var(--bx-pink, #ff5fa2);
+    animation: bx-update-pulse 2.4s ease-out infinite;
+}
+.bx-chrome__update-label { font-weight: 600; color: var(--bx-pink, #ff5fa2); }
+.bx-chrome__update-jump {
+    color: var(--bx-fg-3);
+    font-feature-settings: "tnum" 1; /* tabular numerals so digits don't shimmy */
+}
+@keyframes bx-update-pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(255, 95, 162, 0.55); }
+    70%  { box-shadow: 0 0 0 6px rgba(255, 95, 162, 0);  }
+    100% { box-shadow: 0 0 0 0 rgba(255, 95, 162, 0);    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .bx-chrome__update-dot { animation: none; }
+}
+
 /* ---- tree ---- */
 .bx-tree {
     background: var(--bx-bg-1);

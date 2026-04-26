@@ -96,6 +96,12 @@ templ EntitiesList(p EntitiesListProps) {
 				@p.ModalSlot
 			}
 		</div>
+
+		// Entity detail modal preview canvas mount. Defer is safe — the
+		// script tags itself onto htmx:afterSwap so the modal's canvas
+		// paints whether it's pre-rendered (deep link) or htmx-swapped
+		// in after a row click.
+		<script src="/static/js/entity-manager.js" defer></script>
 	}
 }
 

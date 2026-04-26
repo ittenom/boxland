@@ -17,6 +17,16 @@ type EntityDetailProps struct {
 	AllKinds    []components.Kind        // every registered kind, for the "add component" picker
 	Descriptors map[components.Kind][]configurable.FieldDescriptor
 	SpriteURL   string                    // CDN URL of the sprite asset, "" if unset
+	// SpriteAtlasCols + SpriteTileSize describe how to slice SpriteURL
+	// down to the entity's single cell. Sprite assets uploaded as a
+	// tile sheet carry these in their metadata_json; single-frame
+	// sprites collapse to (1, 32) so the renderer treats the whole
+	// PNG as one cell. Without these, the preview canvas would draw
+	// the entire 109-tile sheet shrunk to a thumbnail (the bug
+	// customers reported as "preview is blank but the tile shows on
+	// the map").
+	SpriteAtlasCols int32
+	SpriteTileSize  int32
 
 	// UsedBy is the list of maps that have placements of this entity-type,
 	// used to build a count-aware delete confirm so we don't silently
@@ -256,14 +266,37 @@ templ ColliderOverlay(p EntityDetailProps) {
 			class="bx-collider-overlay"
 			data-bx-collider-overlay
 			data-sprite-url={ p.SpriteURL }
+			data-atlas-index={ fmt.Sprintf("%d", p.EntityType.AtlasIndex) }
+			data-atlas-cols={ fmt.Sprintf("%d", overlayAtlasCols(p)) }
+			data-tile-size={ fmt.Sprintf("%d", overlayTileSize(p)) }
 			data-collider-w={ fmt.Sprintf("%d", p.EntityType.ColliderW) }
 			data-collider-h={ fmt.Sprintf("%d", p.EntityType.ColliderH) }
 			data-anchor-x={ fmt.Sprintf("%d", p.EntityType.ColliderAnchorX) }
 			data-anchor-y={ fmt.Sprintf("%d", p.EntityType.ColliderAnchorY) }
-			width="64" height="64"
+			width="128" height="128"
 			aria-label={ "Collider overlay for " + p.EntityType.Name }
 		></canvas>
 	</div>
+}
+
+// overlayAtlasCols defaults to 1 so plain (single-frame) sprite assets
+// render as one whole cell instead of dividing by zero. Mirrors
+// paletteCols in mapmaker.templ — kept separate to avoid coupling the
+// two surfaces' defaulting logic together.
+func overlayAtlasCols(p EntityDetailProps) int32 {
+	if p.SpriteAtlasCols <= 0 {
+		return 1
+	}
+	return p.SpriteAtlasCols
+}
+
+// overlayTileSize defaults to the canonical 32px Boxland cell size when
+// the asset doesn't carry tile-sheet metadata.
+func overlayTileSize(p EntityDetailProps) int32 {
+	if p.SpriteTileSize <= 0 {
+		return 32
+	}
+	return p.SpriteTileSize
 }
 
 // ============================================================================

@@ -48,6 +48,23 @@ type LayoutProps struct {
 
 	// Right rail — nil renders an empty rail; for "no-rail" / "bleed" the rail is hidden entirely
 	Rail *RailData
+
+	// UpdateBadge populates the in-app update pill in the chrome.
+	// nil = no badge (running latest, or update checks disabled);
+	// non-nil = render a colored "vX.Y → vA.B.C" pill that links
+	// to the GitHub release. The actual update is run from the
+	// terminal (`boxland update`); the pill is a notification, not
+	// a button — designers don't have shell access from a browser.
+	UpdateBadge *UpdateBadge
+}
+
+// UpdateBadge is the chrome-bar "new release available" pill. Built
+// by BuildChrome from the on-disk update cache; never blocks the
+// page render on a network call.
+type UpdateBadge struct {
+	Current    string // e.g. "0.1.0"
+	Latest     string // e.g. "v0.2.0"
+	ReleaseURL string // GitHub release page; opens in a new tab
 }
 
 // Crumb is one step in the breadcrumb above the work area. Href is
@@ -276,6 +293,20 @@ templ Chrome(p LayoutProps) {
 				<span class="bx-dot bx-dot--map"></span>{ countLabel(p.Project.MapCount) }
 			</a>
 		</div>
+
+		if p.UpdateBadge != nil {
+			<a
+				class="bx-chrome__update"
+				href={ templ.SafeURL(p.UpdateBadge.ReleaseURL) }
+				target="_blank"
+				rel="noopener noreferrer"
+				title={ "Run `boxland update` from the terminal where you launched the server to apply " + p.UpdateBadge.Latest + "." }
+			>
+				<span class="bx-chrome__update-dot" aria-hidden="true"></span>
+				<span class="bx-chrome__update-label">Update</span>
+				<span class="bx-chrome__update-jump">{ tagWithV(p.UpdateBadge.Current) } → { tagWithV(p.UpdateBadge.Latest) }</span>
+			</a>
+		}
 
 		<span class="bx-chrome__spacer"></span>
 
@@ -665,6 +696,19 @@ func activeMatch(activeKind string, activeID int64, want string) func(int64) boo
 		return func(int64) bool { return false }
 	}
 	return func(id int64) bool { return id == activeID }
+}
+
+// tagWithV ensures version strings render with a leading `v`, so the
+// chrome update pill always shows e.g. "v0.1.0 → v0.2.0" regardless
+// of whether the upstream tag carried the prefix.
+func tagWithV(s string) string {
+	if s == "" {
+		return s
+	}
+	if s[0] == 'v' || s[0] == 'V' {
+		return s
+	}
+	return "v" + s
 }
 
 // formatIntPad is a tiny templ-safe int formatter that keeps the

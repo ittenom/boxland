@@ -32,6 +32,7 @@ import (
 	"boxland/server/internal/persistence"
 	"boxland/server/internal/publishing/artifact"
 	"boxland/server/internal/settings"
+	"boxland/server/internal/updater"
 	"boxland/server/views"
 )
 
@@ -79,6 +80,12 @@ type Deps struct {
 	// /talent-tree/NPC-template CRUD plus the publish artifact
 	// handlers. See server/internal/characters.
 	Characters *characters.Service
+
+	// Updates is the on-disk-cached GitHub Releases probe used to
+	// surface "new Boxland available" in the chrome bar and via the
+	// /design/api/version JSON endpoint. nil disables both UIs and
+	// is fine in tests / minimal embeddings.
+	Updates *updater.Client
 }
 
 // New returns an http.Handler with the designer routes mounted under
@@ -98,6 +105,12 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /design/", auth(getShellHome(d)))
 	mux.Handle("POST /design/logout", auth(postLogout(d)))
 	mux.Handle("POST /design/ws-ticket", auth(postWSTicket(d)))
+
+	// Update notification API. Designer-only because the response
+	// hints the operator at a `boxland update` workflow that only
+	// makes sense for the person who launched the server. Read-only
+	// (purely a cache-read), so safe to hit on every page load.
+	mux.Handle("GET /design/api/version", auth(getVersionStatus(d)))
 
 	// Asset Manager surface (PLAN.md §5c).
 	mux.Handle("GET /design/assets", auth(getAssetsList(d)))
@@ -273,6 +286,30 @@ func postWSTicket(d Deps) http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_ = json.NewEncoder(w).Encode(map[string]string{"ticket": tok})
+	}
+}
+
+// getVersionStatus returns the cached update status as JSON. We
+// intentionally read from the on-disk cache only (Cached(), not
+// CheckLatest) so a flood of designer page loads can never multiply
+// into a flood of GitHub API calls — the TLI is the one place that
+// refreshes the cache. The shape matches updater.Status so the
+// frontend can use it without a server-side mapping layer.
+func getVersionStatus(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		var s *updater.Status
+		if d.Updates != nil {
+			s = d.Updates.Cached()
+		}
+		if s == nil {
+			// Always emit at least the running version so the
+			// client can render "you're on vX.Y.Z" without a
+			// follow-up request.
+			s = &updater.Status{}
+		}
+		_ = json.NewEncoder(w).Encode(s)
 	}
 }
 
@@ -1623,12 +1660,15 @@ func getEntityDetail(d Deps) http.HandlerFunc {
 			return
 		}
 
+		spriteURL, atlasCols, tileSize := spriteRenderInfoFor(d, et)
 		props := views.EntityDetailProps{
-			EntityType:  *et,
-			Components:  comps,
-			AllKinds:    d.Components.Kinds(),
-			Descriptors: collectDescriptors(d.Components),
-			SpriteURL:   spriteURLFor(d, et),
+			EntityType:      *et,
+			Components:      comps,
+			AllKinds:        d.Components.Kinds(),
+			Descriptors:     collectDescriptors(d.Components),
+			SpriteURL:       spriteURL,
+			SpriteAtlasCols: atlasCols,
+			SpriteTileSize:  tileSize,
 		}
 
 		// Connections rail data so the modal carries the "used by N maps"
@@ -1880,12 +1920,15 @@ func postEntityComponentAdd(d Deps) http.HandlerFunc {
 			return
 		}
 		comps, _ := d.Entities.Components(r.Context(), id)
+		spriteURL, atlasCols, tileSize := spriteRenderInfoFor(d, et)
 		renderHTML(w, r, views.EntityDetail(views.EntityDetailProps{
-			EntityType:  *et,
-			Components:  comps,
-			AllKinds:    d.Components.Kinds(),
-			Descriptors: collectDescriptors(d.Components),
-			SpriteURL:   spriteURLFor(d, et),
+			EntityType:      *et,
+			Components:      comps,
+			AllKinds:        d.Components.Kinds(),
+			Descriptors:     collectDescriptors(d.Components),
+			SpriteURL:       spriteURL,
+			SpriteAtlasCols: atlasCols,
+			SpriteTileSize:  tileSize,
 		}))
 	}
 }
@@ -2024,14 +2067,39 @@ func collectDescriptors(reg *components.Registry) map[components.Kind][]configur
 type configurableFieldDescriptor = configurable.FieldDescriptor
 
 func spriteURLFor(d Deps, et *entities.EntityType) string {
+	url, _, _ := spriteRenderInfoFor(d, et)
+	return url
+}
+
+// spriteRenderInfoFor returns everything the entity-detail preview canvas
+// needs to draw the entity's single atlas cell (not the whole sheet):
+//
+//   - url       public CDN URL for the source PNG, "" when unset.
+//   - cols      atlas columns; 1 for single-frame sprites.
+//   - tileSize  cell size in source pixels; 32 (assets.TileSize) by default.
+//
+// Tile-sheet uploads carry cols + tile_size in metadata_json; sprite
+// uploads have no metadata and collapse to (1, 32) so the renderer
+// treats the whole PNG as a single cell. This helper centralises the
+// fallback so detail handlers (initial render + post-component-add
+// re-render) and any future surfaces stay consistent.
+func spriteRenderInfoFor(d Deps, et *entities.EntityType) (string, int32, int32) {
 	if et.SpriteAssetID == nil || d.Assets == nil {
-		return ""
+		return "", 1, int32(assets.TileSize)
 	}
 	a, err := d.Assets.FindByID(context.Background(), *et.SpriteAssetID)
 	if err != nil {
-		return ""
+		return "", 1, int32(assets.TileSize)
 	}
-	return assetPublicURLFunc([]assets.Asset{*a})(a.ContentAddressedPath)
+	url := assetPublicURLFunc([]assets.Asset{*a})(a.ContentAddressedPath)
+	cols, size := int32(1), int32(assets.TileSize)
+	if md, derr := assets.DecodeTileSheetMetadata(a.MetadataJSON); derr == nil && md.Cols > 0 {
+		cols = int32(md.Cols)
+		if md.TileSize > 0 {
+			size = int32(md.TileSize)
+		}
+	}
+	return url, cols, size
 }
 
 // ---- Edge sockets ----

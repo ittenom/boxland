@@ -112,6 +112,19 @@ func BuildChrome(r *http.Request, d Deps) views.LayoutProps {
 		}
 	}
 
+	// Update pill. Cached-only read — the TLI is the only place
+	// that refreshes the GitHub probe, so a designer hitting the
+	// page 100x in a session never spends a quota call.
+	if d.Updates != nil {
+		if s := d.Updates.Cached(); s != nil && s.HasUpdate {
+			out.UpdateBadge = &views.UpdateBadge{
+				Current:    s.Current,
+				Latest:     s.Latest,
+				ReleaseURL: s.ReleaseURL,
+			}
+		}
+	}
+
 	out.Tree.Loaded = true
 	return out
 }

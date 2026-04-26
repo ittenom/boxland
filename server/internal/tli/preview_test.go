@@ -49,7 +49,7 @@ func TestPreviewMenuInstallComplete(t *testing.T) {
 	m.firstRunMissing = nil // suppress first-run card
 	// Force the install-complete layout regardless of the test
 	// machine's actual cwd / PATH.
-	items := itemsForState(true)
+	items := itemsForState(true, nil)
 	li := make([]list.Item, len(items))
 	for i, it := range items {
 		li[i] = it
@@ -68,7 +68,7 @@ func TestPreviewMenuInstallComplete(t *testing.T) {
 func TestPreviewMenuFreshClone(t *testing.T) {
 	m := newModel()
 	m.firstRunMissing = nil // skip the card so we can see the menu itself
-	items := itemsForState(false)
+	items := itemsForState(false, nil)
 	li := make([]list.Item, len(items))
 	for i, it := range items {
 		li[i] = it

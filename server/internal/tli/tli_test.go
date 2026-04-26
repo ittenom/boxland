@@ -514,7 +514,7 @@ func TestFirstRunCardLaunchesCheckOnS(t *testing.T) {
 // the featured row. Check Installation drops to position 1, available
 // for re-running after a `git pull` but no longer the focal point.
 func TestDesignFirstWhenInstallComplete(t *testing.T) {
-	items := itemsForState(true)
+	items := itemsForState(true, nil)
 	if len(items) < 2 {
 		t.Fatalf("expected at least 2 items, got %d", len(items))
 	}
@@ -538,7 +538,7 @@ func TestDesignFirstWhenInstallComplete(t *testing.T) {
 // generators) gets the install-check at position 0, featured, with
 // Design dimmed in the second slot.
 func TestCheckFirstWhenIncomplete(t *testing.T) {
-	items := itemsForState(false)
+	items := itemsForState(false, nil)
 	if items[0].title != checkInstallationTitle {
 		t.Errorf("position 0: want %q, got %q",
 			checkInstallationTitle, items[0].title)

@@ -25,6 +25,10 @@ go run ./server/cmd/boxland
 
 (5) Select **Design** to start building your Boxland :)
 
+(6) When the TLI shows a pink **Update available** banner, run
+`boxland update` to pull the new release, run new migrations, and
+rebuild. See [docs/updates.md](docs/updates.md) for details.
+
 ## System requirements
 
 Boxland's server runs on any modern PC (of course, under multiplayer load, who knows?) Develop on Win/Mac/Linux or deploy to a Railway instance for quick-shipping public games.

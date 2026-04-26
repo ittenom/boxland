@@ -47,10 +47,16 @@ import (
 	"boxland/server/internal/settings"
 	"boxland/server/internal/sim/runtime"
 	"boxland/server/internal/tli"
+	"boxland/server/internal/updater"
+	bversion "boxland/server/internal/version"
 	"boxland/server/internal/ws"
 )
 
-const Version = "0.0.0-dev"
+// Version is sourced from the embedded VERSION file in the version
+// package (or a -ldflags override at build time). Kept as a package
+// variable rather than a const so tests and the version subcommand
+// route through the same value the rest of the app reports.
+var Version = bversion.Current()
 
 func main() {
 	logging.Init(logging.FromEnv())
@@ -127,6 +133,11 @@ func main() {
 	case "seed":
 		slog.Info("subcommand not yet implemented", "cmd", "seed")
 		os.Exit(1)
+	case "update":
+		if err := runUpdate(os.Args[2:]); err != nil {
+			slog.Error("update failed", "err", err)
+			os.Exit(1)
+		}
 	case "version":
 		fmt.Println(Version)
 	default:
@@ -136,7 +147,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: boxland [install|setup|design|up|down|logs|serve|migrate [up|down|version]|backup export|import|test|version]")
+	fmt.Fprintln(os.Stderr, "usage: boxland [install|setup|design|up|down|logs|serve|migrate [up|down|version]|backup export|import|test|update [--check|--force|--no-backup]|version]")
 }
 
 // installRequirements is the canonical list of system tools `boxland
@@ -634,6 +645,19 @@ func runServe() error {
 	defer pgPool.Close()
 	slog.Info("postgres connected")
 
+	// Record this boot as the most recent successful startup, so the
+	// updater can later detect cross-version jumps (PLAN: "clean
+	// update path from this version to all future versions"). Best-
+	// effort: a fresh DB without migration 0035 still boots — we
+	// just won't carry the breadcrumb until migrations land.
+	if prior, _, ok, _ := persistence.LastStartedVersion(rootCtx, pgPool); ok && prior != Version {
+		slog.Info("boxland version changed since last boot",
+			"from", prior, "to", Version)
+	}
+	if err := persistence.RecordStartup(rootCtx, pgPool, Version, time.Now()); err != nil {
+		slog.Warn("could not record startup version (run `boxland migrate up`?)", "err", err)
+	}
+
 	redisCli, err := persistence.NewRedis(rootCtx, cfg.RedisURL)
 	if err != nil {
 		return fmt.Errorf("redis: %w", err)
@@ -788,6 +812,7 @@ func runServe() error {
 		HUD:                hudRepo,
 		HUDWidgets:         hudWidgets,
 		Characters:         charactersSvc,
+		Updates:            updater.NewClient(updater.DefaultRepo),
 	}
 	loadSessionMW := designerhandlers.LoadSession(designerDeps)
 	// Order matters: CSRF must run on every request to mint the cookie;
