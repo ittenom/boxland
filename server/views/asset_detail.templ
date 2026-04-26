@@ -2,6 +2,7 @@ package views
 
 import (
 	"fmt"
+	"strings"
 
 	"boxland/server/internal/assets"
 	"boxland/server/internal/configurable"
@@ -219,20 +220,19 @@ templ tileAtlasPreview(p AssetDetailProps) {
 				<span class="bx-muted">·</span>
 				{ fmt.Sprintf("%d px tile", md.TileSize) }
 			</div>
-			<div
+			<canvas
 				class="bx-tile-atlas bx-pixel"
-				style={ tileAtlasGridStyle(md) }
-			>
-				for r := 0; r < md.Rows; r++ {
-					for c := 0; c < md.Cols; c++ {
-						<span
-							class={ tileAtlasCellClass(md, r*md.Cols+c) }
-							style={ tileAtlasCellStyle(p.PublicURL(p.Asset.ContentAddressedPath), md, r, c) }
-							title={ fmt.Sprintf("r%d c%d · idx %d", r, c, r*md.Cols+c) }
-						></span>
-					}
-				}
-			</div>
+				width={ fmt.Sprintf("%d", tilePreviewCanvasW(md, md.Cols)) }
+				height={ fmt.Sprintf("%d", tilePreviewCanvasH(md, md.Rows)) }
+				data-bx-tile-preview={ p.PublicURL(p.Asset.ContentAddressedPath) }
+				data-cols={ fmt.Sprintf("%d", md.Cols) }
+				data-rows={ fmt.Sprintf("%d", md.Rows) }
+				data-tile-size={ fmt.Sprintf("%d", md.TileSize) }
+				data-max-cols={ fmt.Sprintf("%d", md.Cols) }
+				data-max-rows={ fmt.Sprintf("%d", md.Rows) }
+				data-non-empty={ tilePreviewNonEmpty(md) }
+				aria-label={ "Tile atlas preview for " + p.Asset.Name }
+			></canvas>
 			<p class="bx-tiny bx-muted">
 				Each cell becomes one paintable tile in the Mapmaker palette.
 			</p>
@@ -255,40 +255,28 @@ func decodeTileSheetMD(a assets.Asset) (assets.TileSheetMetadata, bool) {
 	return md, true
 }
 
-// tileAtlasGridStyle sizes the grid so each cell is rendered at 2x its
-// source size — small enough to fit a 16x16 sheet on screen, big enough
-// to read at a glance. Cap by viewport via max-width; the overflow
-// scrolls.
-func tileAtlasGridStyle(md assets.TileSheetMetadata) string {
-	const cellPx = 32 // logical CSS px per cell in the preview
-	return fmt.Sprintf(
-		"display:grid;grid-template-columns:repeat(%d, %dpx);grid-auto-rows:%dpx;gap:1px;background:rgba(255,255,255,0.06);padding:1px;max-width:100%%;overflow:auto;",
-		md.Cols, cellPx, cellPx,
-	)
-}
-
-// tileAtlasCellClass tags non-empty vs empty cells so CSS can render
-// the empty-state placeholder distinctly without an extra <span>.
-func tileAtlasCellClass(md assets.TileSheetMetadata, idx int) string {
-	for _, ne := range md.NonEmptyIndex {
-		if ne == idx {
-			return "bx-tile-atlas__cell"
-		}
+func tilePreviewCanvasW(md assets.TileSheetMetadata, maxCols int) int {
+	cols := md.Cols
+	if maxCols > 0 && cols > maxCols {
+		cols = maxCols
 	}
-	return "bx-tile-atlas__cell bx-tile-atlas__cell--empty"
+	return cols * 32
 }
 
-// tileAtlasCellStyle clips the source PNG to a single (r, c) cell. The
-// background-size scales the *whole* sheet so each source-cell maps to
-// `cellPx` on screen; background-position shifts it so the right cell
-// is visible inside the 32x32 window.
-func tileAtlasCellStyle(url string, md assets.TileSheetMetadata, row, col int) string {
-	const cellPx = 32
-	totalW := cellPx * md.Cols
-	return fmt.Sprintf(
-		"background-image:url('%s');background-repeat:no-repeat;background-size:%dpx auto;background-position:-%dpx -%dpx;",
-		url, totalW, col*cellPx, row*cellPx,
-	)
+func tilePreviewCanvasH(md assets.TileSheetMetadata, maxRows int) int {
+	rows := md.Rows
+	if maxRows > 0 && rows > maxRows {
+		rows = maxRows
+	}
+	return rows * 32
+}
+
+func tilePreviewNonEmpty(md assets.TileSheetMetadata) string {
+	parts := make([]string, 0, len(md.NonEmptyIndex))
+	for _, idx := range md.NonEmptyIndex {
+		parts = append(parts, fmt.Sprintf("%d", idx))
+	}
+	return strings.Join(parts, ",")
 }
 
 // AudioPreview renders the waveform + native playback controls. The

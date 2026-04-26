@@ -1062,10 +1062,6 @@ p, li { font-size: 13px; line-height: 1.55; }
     box-shadow: 0 0 0 4px rgba(0,0,0,0.18);
     image-rendering: pixelated;
 }
-.bx-asset-card__tile-preview .bx-tile-atlas__cell {
-    width: 32px;
-    height: 32px;
-}
 .bx-asset-card__pip {
     position: absolute; top: 4px; right: 4px;
     background: var(--bx-info);
@@ -1488,8 +1484,10 @@ p, li { font-size: 13px; line-height: 1.55; }
     margin-bottom: var(--bx-s2);
 }
 .bx-tile-atlas {
-    /* grid-template-columns is set inline (depends on Cols) */
     background: var(--bx-bg-0);
+    max-width: 100%;
+    overflow: auto;
+    image-rendering: pixelated;
 }
 .bx-tile-atlas__cell {
     display: block;

@@ -479,7 +479,85 @@
     });
   });
 
-  // 9. Telemetry breadcrumb.
+  // 9. Tile atlas previews. CSS background clipping is fragile across
+  //    same-origin asset proxies and HTMX swaps; draw the preview cells
+  //    with Canvas2D so Asset Manager matches Mapmaker's renderer.
+  function drawTilePreviews(root) {
+    const host = root && root.querySelectorAll ? root : document;
+    host.querySelectorAll("canvas[data-bx-tile-preview]").forEach((canvas) => {
+      if (!(canvas instanceof HTMLCanvasElement)) return;
+      if (canvas.dataset.bxTilePreviewDrawn === "1") return;
+      const url = canvas.getAttribute("data-bx-tile-preview") || "";
+      if (!url) return;
+      const cols = Math.max(1, Number(canvas.dataset.cols || "1"));
+      const rows = Math.max(1, Number(canvas.dataset.rows || "1"));
+      const tileSize = Math.max(1, Number(canvas.dataset.tileSize || "32"));
+      const maxCols = Math.max(1, Number(canvas.dataset.maxCols || cols));
+      const maxRows = Math.max(1, Number(canvas.dataset.maxRows || rows));
+      const visibleCols = Math.min(cols, maxCols);
+      const visibleRows = Math.min(rows, maxRows);
+      const cellPx = 32;
+      canvas.width = visibleCols * cellPx;
+      canvas.height = visibleRows * cellPx;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.imageSmoothingEnabled = false;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawChecker(ctx, canvas.width, canvas.height);
+      drawTileGrid(ctx, visibleCols, visibleRows, cellPx);
+
+      const nonEmpty = new Set((canvas.dataset.nonEmpty || "")
+        .split(",")
+        .map((x) => Number(x.trim()))
+        .filter((x) => Number.isFinite(x)));
+      const img = new Image();
+      img.onload = () => {
+        drawChecker(ctx, canvas.width, canvas.height);
+        for (let r = 0; r < visibleRows; r++) {
+          for (let c = 0; c < visibleCols; c++) {
+            const idx = r * cols + c;
+            if (nonEmpty.size > 0 && !nonEmpty.has(idx)) continue;
+            ctx.drawImage(img, c * tileSize, r * tileSize, tileSize, tileSize, c * cellPx, r * cellPx, cellPx, cellPx);
+          }
+        }
+        drawTileGrid(ctx, visibleCols, visibleRows, cellPx);
+        canvas.dataset.bxTilePreviewDrawn = "1";
+      };
+      img.onerror = () => {
+        canvas.dataset.bxTilePreviewDrawn = "error";
+      };
+      img.src = url;
+    });
+  }
+  function drawChecker(ctx, w, h) {
+    const s = 8;
+    ctx.fillStyle = "#08213a";
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = "#0a2a49";
+    for (let y = 0; y < h; y += s) {
+      for (let x = 0; x < w; x += s) {
+        if (((x / s) + (y / s)) % 2 === 0) ctx.fillRect(x, y, s, s);
+      }
+    }
+  }
+  function drawTileGrid(ctx, cols, rows, cellPx) {
+    ctx.strokeStyle = "rgba(144, 213, 255, 0.16)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = 0; x <= cols; x++) {
+      ctx.moveTo(x * cellPx + 0.5, 0);
+      ctx.lineTo(x * cellPx + 0.5, rows * cellPx);
+    }
+    for (let y = 0; y <= rows; y++) {
+      ctx.moveTo(0, y * cellPx + 0.5);
+      ctx.lineTo(cols * cellPx, y * cellPx + 0.5);
+    }
+    ctx.stroke();
+  }
+  drawTilePreviews(document);
+  document.body.addEventListener("htmx:afterSwap", (e) => drawTilePreviews(e.target || document));
+
+  // 10. Telemetry breadcrumb.
   console.info(
     "[boxland] boot.js loaded; surface=%s",
     document.body.dataset.surface || "unknown"

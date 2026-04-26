@@ -249,8 +249,10 @@ func TestAssetsGrid_TileSheetShowsCellPreview(t *testing.T) {
 	body := rr.Body.String()
 	for _, want := range []string{
 		`bx-asset-card__tile-preview`,
-		`/design/assets/blob/`,
-		`background-position:-32px -32px`,
+		`data-bx-tile-preview="/design/assets/blob/`,
+		`data-cols="2"`,
+		`data-rows="2"`,
+		`data-non-empty="0,1,3"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q in body", want)
