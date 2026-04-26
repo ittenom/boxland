@@ -87,7 +87,7 @@ func TestMapmakerPage_RendersAtlasAwarePalette(t *testing.T) {
 		`data-bx-sprite-url="/design/assets/blob/` + itoa(a.ID) + `"`,
 		`data-bx-atlas-index="5"`,
 		`data-bx-atlas-cols="4"`,
-		`background-position:-32px -32px`,
+		`class="bx-mapmaker__palette__thumb bx-pixel"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q in body", want)

@@ -71,6 +71,7 @@
 		};
 
 		readPalette(state);
+		renderPaletteThumbs(state);
 		bindTools(state);
 		bindLayers(state, canvas);
 		bindPalette(state);
@@ -454,6 +455,21 @@
 			});
 		}
 
+		function renderPaletteThumbs(state) {
+			$$(".bx-mapmaker__palette li[data-bx-entity-type-id]").forEach((li) => {
+				const id = Number(li.getAttribute("data-bx-entity-type-id"));
+				const meta = state.paletteByEntity.get(id);
+				const thumb = $(".bx-mapmaker__palette__thumb", li);
+				if (!(thumb instanceof HTMLCanvasElement) || !meta || !meta.spriteUrl) return;
+				const ctx = thumb.getContext("2d");
+				if (!ctx) return;
+				ctx.imageSmoothingEnabled = false;
+				ctx.clearRect(0, 0, thumb.width, thumb.height);
+				const img = ensureImage(state, meta.spriteUrl);
+				if (img && img.complete && img.naturalWidth > 0) drawAtlasCell(ctx, img, meta, 0, 0, thumb.width, thumb.height);
+			});
+		}
+
 		function prefetchImages(state, tiles) {
 			// Build the union of every URL referenced by tiles + palette
 			// and load each exactly once. The image cache is keyed by URL
@@ -471,15 +487,18 @@
 		}
 
 		function ensureImage(state, url) {
-			if (!url || state.images.has(url)) return;
+			if (!url) return null;
+			if (state.images.has(url)) return state.images.get(url);
 			const img = new Image();
 			img.onload = () => {
+				renderPaletteThumbs(state);
 				const canvas = $("[data-bx-mapmaker-canvas]");
 				if (canvas) canvas.dispatchEvent(new CustomEvent("bx:mapmaker-redraw"));
 			};
 			img.onerror = () => state.images.set(url, null);
 			img.src = url;
 			state.images.set(url, img);
+			return img;
 		}
 
 		function bindProceduralOverlay(state, canvas) {
@@ -579,6 +598,10 @@
 				drawPendingCell(ctx, px, py);
 				return;
 			}
+			drawAtlasCell(ctx, img, meta, px, py, TILE_PX, TILE_PX);
+		}
+
+		function drawAtlasCell(ctx, img, meta, dx, dy, dw, dh) {
 			// Slice the source sheet to the entity's atlas cell.
 			// (cellPx, cols) come from the asset's tile-sheet metadata
 			// at upload time; single-frame sprites collapse to (32, 1).
@@ -586,7 +609,7 @@
 			const cols = Math.max(1, meta.atlasCols || 1);
 			const sx = (meta.atlasIndex % cols) * cellPx;
 			const sy = Math.floor(meta.atlasIndex / cols) * cellPx;
-			ctx.drawImage(img, sx, sy, cellPx, cellPx, px, py, TILE_PX, TILE_PX);
+			ctx.drawImage(img, sx, sy, cellPx, cellPx, dx, dy, dw, dh);
 		}
 
 		// drawPendingCell renders a 1px dashed outline so an unloaded /

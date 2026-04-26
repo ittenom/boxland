@@ -283,10 +283,12 @@ templ MapmakerToolbar(p MapmakerProps) {
 					if i == 0 { aria-selected="true" } else { aria-selected="false" }
 					title={ e.Name }
 				>
-					<span
+					<canvas
 						class="bx-mapmaker__palette__thumb bx-pixel"
-						if e.SpriteURL != "" { style={ paletteThumbStyle(e) } }
-					></span>
+						width="32"
+						height="32"
+						aria-hidden="true"
+					></canvas>
 					<span class="bx-mapmaker__palette__name">{ e.Name }</span>
 				</li>
 			}
