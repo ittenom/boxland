@@ -22,8 +22,29 @@ import (
 	"boxland/server/internal/maps/wfc"
 )
 
+// TilePixelLoader is the maps service's view of "give me edge fingerprints
+// for one tile-kind entity type." Implemented by the designer wiring
+// against assets.Service + persistence.ObjectStore so the maps package
+// stays free of asset-pipeline dependencies. Nil is acceptable: pixel-WFC
+// then falls back to socket-mode for that map and logs a warning.
+type TilePixelLoader interface {
+	// FingerprintFor returns the four-edge fingerprint for the tile
+	// stored on entity-type `entityTypeID`. The implementation owns its
+	// own cache; callers may invoke this once per generation per tile.
+	FingerprintFor(ctx context.Context, entityTypeID int64) ([4]wfc.EdgeFingerprint, error)
+}
+
+// SetPixelLoader installs the dependency. cmd/boxland calls this once at
+// boot; tests can pass nil to keep socket mode the only working option.
+func (s *Service) SetPixelLoader(l TilePixelLoader) { s.pixelLoader = l }
+
 // ProceduralPreviewInput drives GenerateProceduralPreview.
 type ProceduralPreviewInput struct {
+	// MapID is required so the service can load the map's gen_algorithm
+	// + locked cells. Pre-existing zero-value callers (none in tree)
+	// keep working — they just don't get lock anchors mixed in.
+	MapID int64
+
 	// Width/Height are in tiles. The Mapmaker enforces sensible limits
 	// upstream (typically 16..256); this method only checks > 0.
 	Width, Height int32
@@ -33,11 +54,20 @@ type ProceduralPreviewInput struct {
 
 	// Anchors are designer-painted cells in WORLD coordinates. The
 	// caller is responsible for translating designer-region paints
-	// into individual cell anchors before invoking.
+	// into individual cell anchors before invoking. The service
+	// additionally merges any locked cells stored under MapID so the
+	// caller doesn't have to re-fetch them.
 	Anchors []wfc.Cell
 
 	// MaxReseeds caps WFC retry attempts per call. 0 = WFC default.
+	// Ignored by the pixel-WFC engine (which never reseeds).
 	MaxReseeds int
+
+	// AlgorithmOverride lets the caller force a specific engine
+	// regardless of the map's stored gen_algorithm. Empty = use the
+	// stored value. Useful for "preview as pixel WFC before I commit
+	// to switching" UX.
+	AlgorithmOverride string
 }
 
 // ProceduralPreviewResult is what the Mapmaker renders as a ghost overlay.
@@ -48,6 +78,17 @@ type ProceduralPreviewResult struct {
 	// considered. Surfaced so the UI can warn "you only have 1 tile
 	// in your project" when a generation looks degenerate.
 	TileSetSize int
+
+	// Algorithm is the engine that actually ran. Echoed so the UI can
+	// confirm the pixel-mode override took effect (or warn that the
+	// fallback to socket fired because no pixel loader was wired).
+	Algorithm string
+
+	// Fallbacks counts cells the pixel engine had to fill from its
+	// nearest-neighbour fallback because propagation pruned them empty.
+	// Always 0 for socket mode. The Mapmaker shows it as an "increase
+	// tile variety" hint when non-zero.
+	Fallbacks int
 }
 
 // Errors. Stable for HTTP handler mapping.
@@ -74,19 +115,22 @@ type MaterializeProceduralResult struct {
 	Seed         uint64
 }
 
-// MaterializeProcedural runs WFC against the project's tile-kind entity
-// types and persists the result into map_tiles for `mapID`. Only applies
-// to procedural+persistent maps — transient procedural maps regenerate
-// in-memory per refresh window (PLAN.md §4g) and never touch map_tiles.
+// MaterializeProcedural runs the configured generation algorithm against
+// the project's tile-kind entity types and persists the result into
+// map_tiles for `mapID`. Only applies to procedural+persistent maps —
+// transient procedural maps regenerate in-memory per refresh window
+// (PLAN.md §4g) and never touch map_tiles.
 //
 // The previously-persisted tiles in the target layer are wiped first so
 // re-materializing with a new seed produces a clean replacement (designers
-// commonly preview half a dozen seeds, then commit one). The map's
-// `seed` column is updated so subsequent loads of this map reproduce the
-// same world even when the materialized tiles get cleared by an admin.
+// commonly preview half a dozen seeds, then commit one). Locked cells on
+// that layer survive the wipe (they're re-asserted from
+// `map_locked_cells` after the bulk DELETE) so the runtime loader can
+// continue reading map_tiles directly without joining.
 //
-// All writes are in one transaction so a partially-materialized layer
-// can never be observed.
+// The map's `seed` column is updated so subsequent loads of this map
+// reproduce the same world even when the materialized tiles get cleared
+// by an admin. All writes are in one transaction.
 func (s *Service) MaterializeProcedural(ctx context.Context, in MaterializeProceduralInput) (*MaterializeProceduralResult, error) {
 	m, err := s.FindByID(ctx, in.MapID)
 	if err != nil {
@@ -99,49 +143,28 @@ func (s *Service) MaterializeProcedural(ctx context.Context, in MaterializeProce
 		return nil, ErrNotPersistent
 	}
 
-	// Resolve target layer.
-	layerID := in.LayerID
-	if layerID == 0 {
-		layers, err := s.Layers(ctx, m.ID)
-		if err != nil {
-			return nil, fmt.Errorf("layers: %w", err)
-		}
-		for _, l := range layers {
-			if l.Kind == "tile" {
-				layerID = l.ID
-				break
-			}
-		}
-		if layerID == 0 {
-			return nil, ErrNoBaseLayer
-		}
-	}
-
-	// Build tileset + run WFC. Reuses the preview path so persistent
-	// materialization and live preview can never disagree about the
-	// solver's decisions for a given seed.
-	procSet, err := s.loadTileSetForProcedural(ctx)
+	layerID, err := s.resolveTargetTileLayer(ctx, m.ID, in.LayerID)
 	if err != nil {
 		return nil, err
 	}
-	if len(procSet.tiles) == 0 {
-		return nil, ErrNoTileKinds
-	}
-	region, err := wfc.Generate(wfc.NewTileSet(procSet.tiles), wfc.GenerateOptions{
-		Width:  m.Width,
-		Height: m.Height,
-		Seed:   in.Seed,
-	})
+
+	// Pull locks for this layer; we use them as anchors for the
+	// generator AND re-assert them after the layer wipe.
+	locks, err := s.LockedCellsForLayer(ctx, m.ID, layerID)
 	if err != nil {
-		// PLAN.md §139: WFC failures get a structured slog entry with
+		return nil, fmt.Errorf("load locked cells: %w", err)
+	}
+	anchors := lockedCellsToAnchors(locks)
+
+	region, algorithm, _, err := s.runProcedural(ctx, m, in.Seed, anchors, "")
+	if err != nil {
+		// PLAN.md §139: failures get a structured slog entry with
 		// seed + map id so the designer can reproduce the failure.
 		slog.Warn("wfc materialize failed",
-			"map_id", m.ID, "seed", in.Seed,
+			"map_id", m.ID, "seed", in.Seed, "algorithm", algorithm,
 			"width", m.Width, "height", m.Height, "err", err)
-		return nil, fmt.Errorf("wfc: %w", err)
+		return nil, err
 	}
-
-	region = expandProceduralGroups(region, procSet.groups)
 
 	// Persist.
 	tx, err := s.Pool.BeginTx(ctx, pgx.TxOptions{})
@@ -156,7 +179,23 @@ func (s *Service) MaterializeProcedural(ctx context.Context, in MaterializeProce
 		return nil, fmt.Errorf("clear layer: %w", err)
 	}
 
+	// Index locks by (x,y) so we can override the generator's pick at
+	// each locked coord with the designer's exact entity + rotation.
+	lockedAt := make(map[[2]int32]LockedCell, len(locks))
+	for _, l := range locks {
+		lockedAt[[2]int32{l.X, l.Y}] = l
+	}
+
 	for _, c := range region.Cells {
+		if l, ok := lockedAt[[2]int32{c.X, c.Y}]; ok {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO map_tiles (map_id, layer_id, x, y, entity_type_id, rotation_degrees)
+				VALUES ($1, $2, $3, $4, $5, $6)
+			`, m.ID, layerID, l.X, l.Y, l.EntityTypeID, l.RotationDegrees); err != nil {
+				return nil, fmt.Errorf("insert locked tile (%d,%d): %w", l.X, l.Y, err)
+			}
+			continue
+		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO map_tiles (map_id, layer_id, x, y, entity_type_id)
 			VALUES ($1, $2, $3, $4, $5)
@@ -191,6 +230,10 @@ func (s *Service) MaterializeProcedural(ctx context.Context, in MaterializeProce
 // loader's spawn path. Reset-rules engine integration (PLAN.md §automations
 // task) keys off this method's seed argument so the same refresh window
 // always produces the same world.
+//
+// Locked cells are still honoured: the loader reads map_locked_cells and
+// the generator anchors them. Designers can author "always-here" set
+// pieces in transient maps too.
 func (s *Service) GenerateTransientRegion(ctx context.Context, mapID int64, seed uint64) (*wfc.Region, error) {
 	m, err := s.FindByID(ctx, mapID)
 	if err != nil {
@@ -199,56 +242,302 @@ func (s *Service) GenerateTransientRegion(ctx context.Context, mapID int64, seed
 	if m.Mode != "procedural" {
 		return nil, ErrNotProcedural
 	}
-	procSet, err := s.loadTileSetForProcedural(ctx)
+	locks, err := s.LockedCells(ctx, mapID)
+	if err != nil {
+		return nil, fmt.Errorf("load locked cells: %w", err)
+	}
+	anchors := lockedCellsToAnchors(locks)
+	region, _, _, err := s.runProcedural(ctx, m, seed, anchors, "")
 	if err != nil {
 		return nil, err
 	}
-	if len(procSet.tiles) == 0 {
-		return nil, ErrNoTileKinds
-	}
-	region, err := wfc.Generate(wfc.NewTileSet(procSet.tiles), wfc.GenerateOptions{
-		Width:  m.Width,
-		Height: m.Height,
-		Seed:   seed,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return expandProceduralGroups(region, procSet.groups), nil
+	return region, nil
 }
 
-// GenerateProceduralPreview builds a TileSet from the project's tile-kind
-// entity types + their tile_edge_assignments and runs WFC. Returns the
+// GenerateProceduralPreview builds the configured engine's tileset from
+// the project's tile-kind entity types and runs it. Returns the
 // fully-collapsed Region.
 //
-// "Tile-kind entity type" = any entity_type with a Tile component
-// attached. The Mapmaker UI is expected to point designers at the Entity
-// Manager when the project has zero such types.
+// "Tile-kind entity type" = any entity_type tagged "tile" or with a Tile
+// component attached. The Mapmaker UI is expected to point designers at
+// the Entity Manager when the project has zero such types.
 func (s *Service) GenerateProceduralPreview(ctx context.Context, in ProceduralPreviewInput) (*ProceduralPreviewResult, error) {
 	if in.Width <= 0 || in.Height <= 0 {
 		return nil, wfc.ErrInvalidRegion
 	}
 
-	procSet, err := s.loadTileSetForProcedural(ctx)
+	// Merge any caller-supplied anchors with the map's locked cells so a
+	// preview from the designer panel always reflects "what would commit."
+	allAnchors := make([]wfc.Cell, 0, len(in.Anchors))
+	allAnchors = append(allAnchors, in.Anchors...)
+
+	var m *Map
+	if in.MapID > 0 {
+		mm, err := s.FindByID(ctx, in.MapID)
+		if err != nil {
+			return nil, err
+		}
+		m = mm
+		locks, err := s.LockedCells(ctx, in.MapID)
+		if err != nil {
+			return nil, fmt.Errorf("load locked cells: %w", err)
+		}
+		// Lock anchors take precedence over caller-supplied anchors at
+		// the same coordinate. Caller anchors are usually empty for the
+		// preview path; this is belt-and-suspenders.
+		seen := make(map[[2]int32]struct{}, len(locks))
+		for _, l := range locks {
+			seen[[2]int32{l.X, l.Y}] = struct{}{}
+			allAnchors = append(allAnchors, wfc.Cell{X: l.X, Y: l.Y, EntityType: wfc.EntityTypeID(l.EntityTypeID)})
+		}
+		filtered := allAnchors[:0]
+		for _, a := range allAnchors {
+			if _, lockedHere := seen[[2]int32{a.X, a.Y}]; lockedHere {
+				// Drop caller version; lock-version was appended above.
+				// The lock entries themselves are kept.
+				continue
+			}
+			filtered = append(filtered, a)
+		}
+		// Re-append the lock-derived anchors that were dropped above.
+		for _, l := range locks {
+			filtered = append(filtered, wfc.Cell{X: l.X, Y: l.Y, EntityType: wfc.EntityTypeID(l.EntityTypeID)})
+		}
+		allAnchors = filtered
+	} else {
+		// No MapID supplied (legacy/tests). Synthesise a transient Map
+		// matching the requested dimensions; algorithm defaults to socket.
+		m = &Map{
+			Width:        in.Width,
+			Height:       in.Height,
+			Mode:         "procedural",
+			GenAlgorithm: GenAlgorithmSocket,
+		}
+	}
+
+	// Width/Height in the input override the map's stored dims. Useful
+	// for shrunk previews while iterating on a seed.
+	gen := *m
+	gen.Width = in.Width
+	gen.Height = in.Height
+
+	region, algorithm, fallbacks, err := s.runProcedural(ctx, &gen, in.Seed, allAnchors, in.AlgorithmOverride)
 	if err != nil {
 		return nil, err
 	}
-	if len(procSet.tiles) == 0 {
-		return nil, ErrNoTileKinds
+
+	tileCount, err := s.countProceduralTiles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &ProceduralPreviewResult{
+		Region:      region,
+		TileSetSize: tileCount,
+		Algorithm:   algorithm,
+		Fallbacks:   fallbacks,
+	}, nil
+}
+
+// resolveTargetTileLayer returns the requested layer id, falling back to
+// the lowest-ord tile layer when caller passes 0.
+func (s *Service) resolveTargetTileLayer(ctx context.Context, mapID, requested int64) (int64, error) {
+	if requested != 0 {
+		return requested, nil
+	}
+	layers, err := s.Layers(ctx, mapID)
+	if err != nil {
+		return 0, fmt.Errorf("layers: %w", err)
+	}
+	for _, l := range layers {
+		if l.Kind == "tile" {
+			return l.ID, nil
+		}
+	}
+	return 0, ErrNoBaseLayer
+}
+
+// countProceduralTiles returns the size of the tile-kind palette without
+// rebuilding the full TileSet. Used by the preview response so the UI can
+// surface "you have N tiles in this project."
+func (s *Service) countProceduralTiles(ctx context.Context) (int, error) {
+	procSet, err := s.loadTileSetForProcedural(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return len(procSet.tiles), nil
+}
+
+// runProcedural dispatches by m.GenAlgorithm (or the override) and runs
+// the right engine. Returns the expanded region, the algorithm that ran,
+// the fallback count (pixel only), and any error.
+func (s *Service) runProcedural(
+	ctx context.Context,
+	m *Map,
+	seed uint64,
+	anchors []wfc.Cell,
+	override string,
+) (*wfc.Region, string, int, error) {
+	algo := override
+	if algo == "" {
+		algo = m.GenAlgorithm
+	}
+	if algo == "" {
+		algo = GenAlgorithmSocket
 	}
 
-	region, err := wfc.Generate(wfc.NewTileSet(procSet.tiles), wfc.GenerateOptions{
-		Width:      in.Width,
-		Height:     in.Height,
-		Seed:       in.Seed,
-		Anchors:    wfc.Anchors{Cells: in.Anchors},
-		MaxReseeds: in.MaxReseeds,
-	})
+	procSet, err := s.loadTileSetForProcedural(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("wfc generate: %w", err)
+		return nil, algo, 0, err
+	}
+	if len(procSet.tiles) == 0 {
+		return nil, algo, 0, ErrNoTileKinds
+	}
+
+	switch algo {
+	case GenAlgorithmPixelWFC:
+		if s.pixelLoader == nil {
+			slog.Warn("pixel-WFC requested but no pixel loader wired; falling back to socket",
+				"map_id", m.ID)
+			algo = GenAlgorithmSocket
+			break
+		}
+		pixelTiles, perr := s.buildPixelTiles(ctx, procSet)
+		if perr != nil {
+			return nil, algo, 0, fmt.Errorf("build pixel tiles: %w", perr)
+		}
+		if len(pixelTiles) == 0 {
+			// Every tile failed to produce a fingerprint; degrade.
+			slog.Warn("no pixel tiles produced; falling back to socket", "map_id", m.ID)
+			algo = GenAlgorithmSocket
+			break
+		}
+		res, gerr := wfc.GeneratePixel(wfc.NewPixelTileSet(pixelTiles, wfc.PixelTileSetOptions{}), wfc.GenerateOptions{
+			Width:   m.Width,
+			Height:  m.Height,
+			Seed:    seed,
+			Anchors: wfc.Anchors{Cells: anchors},
+		})
+		if gerr != nil {
+			return nil, algo, 0, fmt.Errorf("pixel wfc: %w", gerr)
+		}
+		region := expandProceduralGroups(res.Region, procSet.groups)
+		return region, algo, res.Fallbacks, nil
+	}
+
+	// Socket path (default + fallback).
+	region, gerr := wfc.Generate(wfc.NewTileSet(procSet.tiles), wfc.GenerateOptions{
+		Width:   m.Width,
+		Height:  m.Height,
+		Seed:    seed,
+		Anchors: wfc.Anchors{Cells: anchors},
+	})
+	if gerr != nil {
+		return nil, algo, 0, fmt.Errorf("wfc generate: %w", gerr)
 	}
 	region = expandProceduralGroups(region, procSet.groups)
-	return &ProceduralPreviewResult{Region: region, TileSetSize: len(procSet.tiles)}, nil
+	return region, algo, 0, nil
+}
+
+// buildPixelTiles loads edge fingerprints for every tile in `procSet`.
+// Tiles missing a fingerprint (e.g. their sprite asset is gone) get
+// silently dropped — they were unpaintable anyway.
+//
+// Tile groups participate by averaging their member tiles' edge
+// fingerprints (so a 2x2 group's south edge is the mean of its bottom-
+// row members' south edges). Groups whose member tiles all lack
+// fingerprints are also dropped.
+func (s *Service) buildPixelTiles(ctx context.Context, procSet *proceduralTileSet) ([]wfc.PixelTile, error) {
+	out := make([]wfc.PixelTile, 0, len(procSet.tiles))
+	// Tiles with positive entity-type IDs are real entity types we can
+	// fingerprint. Synthetic group ids are negative; for those we
+	// composite member fingerprints.
+	memberFingerprints := make(map[wfc.EntityTypeID][4]wfc.EdgeFingerprint, len(procSet.tiles))
+	for _, t := range procSet.tiles {
+		if t.EntityType <= 0 {
+			continue
+		}
+		fp, err := s.pixelLoader.FingerprintFor(ctx, int64(t.EntityType))
+		if err != nil {
+			slog.Debug("pixel fingerprint unavailable; skipping tile",
+				"entity_type_id", t.EntityType, "err", err)
+			continue
+		}
+		memberFingerprints[t.EntityType] = fp
+		out = append(out, wfc.PixelTile{
+			EntityType:  t.EntityType,
+			Fingerprint: fp,
+			Weight:      t.Weight,
+		})
+	}
+	for _, t := range procSet.tiles {
+		if t.EntityType >= 0 {
+			continue
+		}
+		g, ok := procSet.groups[t.EntityType]
+		if !ok {
+			continue
+		}
+		fp, ok := compositeGroupFingerprint(g, memberFingerprints)
+		if !ok {
+			continue
+		}
+		out = append(out, wfc.PixelTile{
+			EntityType:  t.EntityType,
+			Fingerprint: fp,
+			Weight:      t.Weight,
+		})
+	}
+	return out, nil
+}
+
+// compositeGroupFingerprint averages the edge fingerprints of a group's
+// boundary cells. Returns false if no boundary cell on any edge has a
+// fingerprint (group entirely composed of fingerprint-less tiles).
+func compositeGroupFingerprint(g proceduralGroup, members map[wfc.EntityTypeID][4]wfc.EdgeFingerprint) ([4]wfc.EdgeFingerprint, bool) {
+	var out [4]wfc.EdgeFingerprint
+	hasAny := false
+	for edge := wfc.Edge(0); edge < 4; edge++ {
+		var parts []wfc.EdgeFingerprint
+		for r := int32(0); r < g.Height; r++ {
+			for c := int32(0); c < g.Width; c++ {
+				if (edge == wfc.EdgeN && r != 0) ||
+					(edge == wfc.EdgeS && r != g.Height-1) ||
+					(edge == wfc.EdgeW && c != 0) ||
+					(edge == wfc.EdgeE && c != g.Width-1) {
+					continue
+				}
+				et := g.Layout[r][c]
+				if et == 0 {
+					continue
+				}
+				fp, ok := members[et]
+				if !ok {
+					continue
+				}
+				parts = append(parts, fp[edge])
+			}
+		}
+		if len(parts) == 0 {
+			continue
+		}
+		out[edge] = wfc.CompositeFingerprint(parts)
+		hasAny = true
+	}
+	return out, hasAny
+}
+
+// lockedCellsToAnchors converts a slice of LockedCell to the WFC anchor
+// shape the engine expects.
+func lockedCellsToAnchors(cells []LockedCell) []wfc.Cell {
+	out := make([]wfc.Cell, 0, len(cells))
+	for _, c := range cells {
+		out = append(out, wfc.Cell{
+			X:          c.X,
+			Y:          c.Y,
+			EntityType: wfc.EntityTypeID(c.EntityTypeID),
+		})
+	}
+	return out
 }
 
 // loadTileSetForProcedural reads every entity-type that can be painted as a

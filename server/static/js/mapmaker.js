@@ -53,7 +53,7 @@
 		ctx.imageSmoothingEnabled = false;
 
 		const state = {
-			tool:        "brush", // brush | rect | fill | eyedrop | eraser
+			tool:        "brush", // brush | rect | fill | eyedrop | eraser | lock
 			activeLayer: Number(canvas.getAttribute("data-default-layer-id")) || 0,
 			activeEntity: 0,
 			activeRotation: 0,
@@ -68,6 +68,10 @@
 			// Shape: {name, spriteUrl, atlasIndex, atlasCols, tileSize}
 			paletteByEntity: new Map(),
 			procPreview: null,   // last bx:procedural-preview, drawn as ghost overlay
+			// lockedCells is keyed "L:x:y" same as tiles. Loaded once on
+			// boot via /design/maps/{id}/locks; the Lock tool mutates it
+			// + ships diffs back to the server.
+			lockedCells: new Map(),
 			pending: 0,          // outstanding network requests
 		};
 
@@ -92,10 +96,27 @@
 				flash(`Failed to load tiles: ${err && err.message ? err.message : err}`);
 			});
 
+		// Locks (procedural maps only). Failure is non-fatal — authored-
+		// mode maps simply have an empty lock set and the Lock tool isn't
+		// rendered anyway.
+		loadLocks(mapId)
+			.then((cells) => {
+				for (const c of cells) state.lockedCells.set(tileKey(c), c);
+				draw(state, ctx, canvas);
+			})
+			.catch(() => { /* swallow: 404 on authored maps is fine */ });
+
 		// Public surface for other modules (procedural overlay, future
 		// tile-group stamps) via a CustomEvent layer. Keeps coupling
 		// observable in the dev console.
 		canvas.addEventListener("bx:mapmaker-redraw", () => draw(state, ctx, canvas));
+
+		// "Clear all locks" from the procedural panel: drop every lock
+		// without removing the underlying tiles.
+		canvas.addEventListener("bx:locks-cleared", () => {
+			state.lockedCells.clear();
+			draw(state, ctx, canvas);
+		});
 
 		// Expose for the procedural module's commit success path: it can
 		// fire bx:mapmaker-reload to re-pull the canonical tiles after
@@ -148,21 +169,61 @@
 			});
 		}
 
+		function loadLocks(id) {
+			return fetch(`/design/maps/${id}/locks`, {
+				headers: { Accept: "application/json" },
+				credentials: "same-origin",
+			})
+				.then((r) => {
+					if (!r.ok) throw new Error(`HTTP ${r.status}`);
+					return r.json();
+				})
+				.then((j) => Array.isArray(j.cells) ? j.cells.map((c) => ({
+					layerId: c.layer_id, x: c.x, y: c.y,
+					entityTypeId: c.entity_type_id, rotationDegrees: c.rotation_degrees || 0,
+				})) : []);
+		}
+		function postLocks(cells) {
+			if (cells.length === 0) return Promise.resolve();
+			state.pending++;
+			updateStatus(state);
+			const wire = cells.map((c) => ({
+				layer_id: c.layerId, x: c.x, y: c.y,
+				entity_type_id: c.entityTypeId, rotation_degrees: c.rotationDegrees || 0,
+			}));
+			return fetchJSON(`/design/maps/${mapId}/locks`, "POST", { cells: wire })
+				.finally(() => { state.pending--; updateStatus(state); broadcastLockCount(); });
+		}
+		function deleteLocks(layerId, points) {
+			if (points.length === 0) return Promise.resolve();
+			state.pending++;
+			updateStatus(state);
+			return fetchJSON(`/design/maps/${mapId}/locks`, "DELETE", { layer_id: layerId, points })
+				.finally(() => { state.pending--; updateStatus(state); broadcastLockCount(); });
+		}
+		function broadcastLockCount() {
+			document.dispatchEvent(new CustomEvent("bx:locks-changed", {
+				detail: { count: state.lockedCells.size },
+			}));
+		}
+
 		// Stamp = the meaning of "click here" for the current tool.
-		// Returns { placed: [...], erased: [...] }, applied optimistically.
-		function stamp(cellX, cellY) {
+		// Returns { placed: [...], erased: [...], locked: [...], unlocked: [...] }
+		// Mutations are optimistic; the network roundtrip happens in finishStroke.
+		function stamp(cellX, cellY, modifiers) {
 			const layerId = state.activeLayer;
 			if (!layerId) {
 				flash("Pick a layer first.");
-				return { placed: [], erased: [] };
+				return emptyStamp();
 			}
-			if (cellX < 0 || cellY < 0 || cellX >= mapW || cellY >= mapH) return { placed: [], erased: [] };
+			if (cellX < 0 || cellY < 0 || cellX >= mapW || cellY >= mapH) return emptyStamp();
+			modifiers = modifiers || {};
 
 			if (state.tool === "eraser") {
 				const k = tileKey({ layerId, x: cellX, y: cellY });
-				if (!state.tiles.has(k)) return { placed: [], erased: [] };
+				if (!state.tiles.has(k)) return emptyStamp();
 				state.tiles.delete(k);
-				return { placed: [], erased: [{ layerId, x: cellX, y: cellY }] };
+				return { placed: [], erased: [{ layerId, x: cellX, y: cellY }], locked: [], unlocked: [] };
 			}
 			if (state.tool === "eyedrop") {
 				const k = tileKey({ layerId, x: cellX, y: cellY });
@@ -171,15 +232,46 @@
 					setActiveEntity(state, t.entityTypeId);
 					setRotation(state, t.rotationDegrees || 0);
 				}
-				return { placed: [], erased: [] };
+				return emptyStamp();
+			}
+			if (state.tool === "lock") {
+				const key = tileKey({ layerId, x: cellX, y: cellY });
+				// Modifiers: shift = unlock only (leave the tile);
+				// alt = unlock and erase the tile beneath; default = paint+lock.
+				if (modifiers.shift || modifiers.alt) {
+					const had = state.lockedCells.has(key);
+					if (!had && !modifiers.alt) return emptyStamp();
+					state.lockedCells.delete(key);
+					const out = { placed: [], erased: [], locked: [], unlocked: [] };
+					if (had) out.unlocked.push({ layerId, x: cellX, y: cellY });
+					if (modifiers.alt && state.tiles.has(key)) {
+						state.tiles.delete(key);
+						out.erased.push({ layerId, x: cellX, y: cellY });
+					}
+					return out;
+				}
+				if (!state.activeEntity) {
+					flash("Pick an entity to lock here.");
+					return emptyStamp();
+				}
+				// Lock = place the tile AND mark it locked. Re-locking the
+				// same cell with a new entity replaces both.
+				const t = { layerId, x: cellX, y: cellY, entityTypeId: state.activeEntity, rotationDegrees: state.activeRotation };
+				state.tiles.set(key, t);
+				state.lockedCells.set(key, t);
+				return { placed: [t], erased: [], locked: [t], unlocked: [] };
 			}
 			if (!state.activeEntity) {
 				flash("Pick an entity from the palette.");
-				return { placed: [], erased: [] };
+				return emptyStamp();
 			}
 			const t = { layerId, x: cellX, y: cellY, entityTypeId: state.activeEntity, rotationDegrees: state.activeRotation };
 			state.tiles.set(tileKey(t), t);
-			return { placed: [t], erased: [] };
+			return { placed: [t], erased: [], locked: [], unlocked: [] };
+		}
+
+		function emptyStamp() {
+			return { placed: [], erased: [], locked: [], unlocked: [] };
 		}
 
 		// ---------- Tool dispatch ----------------------------------------
@@ -189,6 +281,8 @@
 			let dragStart = null;     // {x, y}  for rect tool
 			let strokePlaced = [];    // accumulator for brush + rect
 			let strokeErased = [];
+			let strokeLocked = [];
+			let strokeUnlocked = [];
 
 			canvas.addEventListener("pointermove", (e) => {
 				const cell = pointerToCell(e, canvas);
@@ -201,6 +295,7 @@
 				canvas.setPointerCapture(e.pointerId);
 				dragging = true;
 				const cell = pointerToCell(e, canvas);
+				const mods = { shift: e.shiftKey, alt: e.altKey };
 
 				if (state.tool === "fill") {
 					floodFill(state, cell.x, cell.y, mapW, mapH).then(() => draw(state, ctx, canvas));
@@ -212,9 +307,11 @@
 					draw(state, ctx, canvas, { rectFrom: dragStart, rectTo: cell });
 					return;
 				}
-				const out = stamp(cell.x, cell.y);
+				const out = stamp(cell.x, cell.y, mods);
 				strokePlaced.push(...out.placed);
 				strokeErased.push(...out.erased);
+				strokeLocked.push(...out.locked);
+				strokeUnlocked.push(...out.unlocked);
 				draw(state, ctx, canvas);
 			});
 
@@ -225,10 +322,13 @@
 					draw(state, ctx, canvas, { rectFrom: dragStart, rectTo: cell });
 					return;
 				}
-				if (state.tool === "brush" || state.tool === "eraser") {
-					const out = stamp(cell.x, cell.y);
+				if (state.tool === "brush" || state.tool === "eraser" || state.tool === "lock") {
+					const mods = { shift: e.shiftKey, alt: e.altKey };
+					const out = stamp(cell.x, cell.y, mods);
 					strokePlaced.push(...out.placed);
 					strokeErased.push(...out.erased);
+					strokeLocked.push(...out.locked);
+					strokeUnlocked.push(...out.unlocked);
 					draw(state, ctx, canvas);
 				}
 			});
@@ -246,6 +346,8 @@
 							const out = stamp(x, y);
 							strokePlaced.push(...out.placed);
 							strokeErased.push(...out.erased);
+							strokeLocked.push(...out.locked);
+							strokeUnlocked.push(...out.unlocked);
 						}
 					}
 					dragStart = null;
@@ -253,14 +355,20 @@
 
 				const placedWire = strokePlaced.map(toWire);
 				const erasedPoints = strokeErased.map((t) => [t.x, t.y]);
+				const lockedWire = strokeLocked.slice();
+				const unlockedPoints = strokeUnlocked.map((t) => [t.x, t.y]);
 				const layerId = state.activeLayer;
 				strokePlaced = [];
 				strokeErased = [];
+				strokeLocked = [];
+				strokeUnlocked = [];
 				draw(state, ctx, canvas);
 
 				const tasks = [];
 				if (placedWire.length > 0) tasks.push(postTiles(placedWire));
 				if (erasedPoints.length > 0) tasks.push(deleteTiles(layerId, erasedPoints));
+				if (lockedWire.length > 0) tasks.push(postLocks(lockedWire));
+				if (unlockedPoints.length > 0) tasks.push(deleteLocks(layerId, unlockedPoints));
 				if (tasks.length > 0) {
 					Promise.all(tasks).catch((err) => {
 						flash(`Save failed: ${err.message || err}`);
@@ -272,13 +380,16 @@
 			canvas.addEventListener("pointerleave",  (e) => { if (dragging) finishStroke(e); });
 		}
 
-		// Hotkeys: B / R / F / I / E mirror the toolbar tooltips.
+		// Hotkeys: B / R / F / I / E / L mirror the toolbar tooltips.
+		// L is only meaningful on procedural maps (the toolbar omits the
+		// button on authored maps); the hotkey still flips state safely
+		// because stamp() flashes "pick a layer first" if there's nothing
+		// to lock onto.
 		// T rotates the active tile stamp.
-		// H opens the per-realm HUD editor (matches docs/hotkeys.md
-		// + the chip-link in mapmaker.templ).
+		// H opens the per-realm HUD editor.
 		document.addEventListener("keydown", (e) => {
 			if (isTextEditingTarget(e.target)) return;
-			const map = { b: "brush", r: "rect", f: "fill", i: "eyedrop", e: "eraser" };
+			const map = { b: "brush", r: "rect", f: "fill", i: "eyedrop", e: "eraser", l: "lock" };
 			const k = e.key.toLowerCase();
 			if (map[k]) { setTool(state, map[k]); e.preventDefault(); return; }
 			if (k === "t" && !e.ctrlKey && !e.metaKey && !e.altKey) { cycleRotation(state); e.preventDefault(); return; }
@@ -556,6 +667,33 @@
 					if (t.layerId !== layerId) continue;
 					drawTile(ctx, state, t);
 				}
+			}
+
+			// Locked-cell highlight: subtle yellow corner bracket on each
+			// locked cell so designers can see at a glance what survives
+			// procedural generation. Brackets sit just inside the tile
+			// borders so they don't obscure the sprite.
+			if (state.lockedCells.size > 0) {
+				ctx.save();
+				ctx.strokeStyle = "rgba(255, 221, 74, 0.85)"; // var(--bx-accent) at 85%
+				ctx.lineWidth = 2;
+				const inset = 2;
+				const armLen = Math.max(4, Math.floor(TILE_PX / 4));
+				for (const c of state.lockedCells.values()) {
+					const px = c.x * TILE_PX;
+					const py = c.y * TILE_PX;
+					ctx.beginPath();
+					// top-left
+					ctx.moveTo(px + inset, py + inset + armLen); ctx.lineTo(px + inset, py + inset); ctx.lineTo(px + inset + armLen, py + inset);
+					// top-right
+					ctx.moveTo(px + TILE_PX - inset - armLen, py + inset); ctx.lineTo(px + TILE_PX - inset, py + inset); ctx.lineTo(px + TILE_PX - inset, py + inset + armLen);
+					// bottom-right
+					ctx.moveTo(px + TILE_PX - inset, py + TILE_PX - inset - armLen); ctx.lineTo(px + TILE_PX - inset, py + TILE_PX - inset); ctx.lineTo(px + TILE_PX - inset - armLen, py + TILE_PX - inset);
+					// bottom-left
+					ctx.moveTo(px + inset + armLen, py + TILE_PX - inset); ctx.lineTo(px + inset, py + TILE_PX - inset); ctx.lineTo(px + inset, py + TILE_PX - inset - armLen);
+					ctx.stroke();
+				}
+				ctx.restore();
 			}
 
 			// Ghost preview from procedural module: yellow tint, 50% alpha.

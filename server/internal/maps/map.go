@@ -32,6 +32,12 @@ type Map struct {
 	RefreshWindowSeconds *int32          `db:"refresh_window_seconds"                json:"refresh_window_seconds,omitempty"`
 	ResetRulesJSON       json.RawMessage `db:"reset_rules_json"                      json:"reset_rules"`
 	Mode                 string          `db:"mode"                                  json:"mode"`
+	// GenAlgorithm only matters when Mode == "procedural". Picks between
+	// the strict "socket" engine (edge-socket WFC with backtracking) and
+	// the relaxed "pixel_wfc" engine (sample-based, no socket setup).
+	// Stored even when Mode == "authored" so flipping back and forth
+	// preserves the designer's preference. See migration 0036.
+	GenAlgorithm         string          `db:"gen_algorithm"                         json:"gen_algorithm"`
 	Seed                 *int64          `db:"seed"                                  json:"seed,omitempty"`
 	SpectatorPolicy      string          `db:"spectator_policy"                      json:"spectator_policy"`
 	CreatedBy            int64           `db:"created_by"                            json:"created_by"`
@@ -91,6 +97,13 @@ var (
 type Service struct {
 	Pool *pgxpool.Pool
 	Repo *repo.Repo[Map]
+
+	// pixelLoader is the optional dependency for pixel-WFC mode. Wired
+	// at boot via SetPixelLoader; nil keeps the maps package free of
+	// asset-pipeline imports. When nil, pixel-mode generations fall
+	// back to a socket-style "exact match only" pass and emit a slog
+	// warning so ops can spot the misconfiguration.
+	pixelLoader TilePixelLoader
 }
 
 // New constructs a Service.
@@ -107,6 +120,7 @@ type CreateInput struct {
 	InstancingMode  string
 	PersistenceMode string
 	Mode            string // "authored" | "procedural"
+	GenAlgorithm    string // "socket" (default) | "pixel_wfc"; only meaningful when Mode == "procedural"
 	Seed            *int64
 	SpectatorPolicy string
 	CreatedBy       int64
@@ -131,6 +145,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Map, error) {
 		InstancingMode:  defaultStr(in.InstancingMode, "shared"),
 		PersistenceMode: defaultStr(in.PersistenceMode, "persistent"),
 		Mode:            defaultStr(in.Mode, "authored"),
+		GenAlgorithm:    defaultStr(in.GenAlgorithm, "socket"),
 		Seed:            in.Seed,
 		SpectatorPolicy: defaultStr(in.SpectatorPolicy, "public"),
 		ResetRulesJSON:  []byte("{}"),
@@ -142,17 +157,20 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Map, error) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	if !ValidGenAlgorithm(row.GenAlgorithm) {
+		return nil, fmt.Errorf("maps: gen_algorithm %q invalid", row.GenAlgorithm)
+	}
 	insertSQL := `
 		INSERT INTO maps
 			(name, width, height, public, instancing_mode, persistence_mode,
-			 reset_rules_json, mode, seed, spectator_policy, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11)
+			 reset_rules_json, mode, gen_algorithm, seed, spectator_policy, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12)
 		RETURNING id, created_at, updated_at
 	`
 	if err := tx.QueryRow(ctx, insertSQL,
 		row.Name, row.Width, row.Height, row.Public,
 		row.InstancingMode, row.PersistenceMode, row.ResetRulesJSON,
-		row.Mode, row.Seed, row.SpectatorPolicy, row.CreatedBy,
+		row.Mode, row.GenAlgorithm, row.Seed, row.SpectatorPolicy, row.CreatedBy,
 	).Scan(&row.ID, &row.CreatedAt, &row.UpdatedAt); err != nil {
 		if isUniqueViolation(err, "maps_name_key") {
 			return nil, fmt.Errorf("%w: %q", ErrNameInUse, in.Name)
@@ -420,6 +438,43 @@ func (s *Service) PlaceLightingCells(ctx context.Context, cells []LightingCell) 
 }
 
 // ---- helpers ----
+
+// Generation-algorithm constants used by procedural maps. Mirrors the
+// CHECK constraint in migration 0036; keep both in sync.
+const (
+	GenAlgorithmSocket   = "socket"
+	GenAlgorithmPixelWFC = "pixel_wfc"
+)
+
+// ValidGenAlgorithm reports whether v is one of the recognised values.
+func ValidGenAlgorithm(v string) bool {
+	switch v {
+	case GenAlgorithmSocket, GenAlgorithmPixelWFC:
+		return true
+	default:
+		return false
+	}
+}
+
+// SetGenAlgorithm flips the algorithm column for one map. Only meaningful
+// for procedural maps but accepted on authored ones too so designers can
+// pre-configure before switching modes.
+func (s *Service) SetGenAlgorithm(ctx context.Context, mapID int64, algo string) error {
+	if !ValidGenAlgorithm(algo) {
+		return fmt.Errorf("maps: gen_algorithm %q invalid", algo)
+	}
+	tag, err := s.Pool.Exec(ctx,
+		`UPDATE maps SET gen_algorithm = $2, updated_at = now() WHERE id = $1`,
+		mapID, algo,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrMapNotFound
+	}
+	return nil
+}
 
 func ValidRotationDegrees(v int16) bool {
 	switch v {

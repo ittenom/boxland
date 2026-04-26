@@ -23,6 +23,12 @@ type MapmakerProps struct {
 	// the designer hits Push to Live. The chip in the palette panel
 	// makes that gap visible.
 	EntityDraftCount int
+
+	// LockedCellCount is the number of designer-locked cells on this
+	// map. Procedural generation flows around them. The procedural
+	// panel surfaces this so designers can see at a glance how much
+	// of the map is hand-authored vs procedural.
+	LockedCellCount int
 }
 
 // PaletteEntry is one tile selectable from the toolbar. The atlas
@@ -187,6 +193,9 @@ templ MapmakerToolbar(p MapmakerProps) {
 			@toolButton("fill", "F", "Fill")
 			@toolButton("eyedrop", "I", "Eyedrop")
 			@toolButton("eraser", "E", "Eraser")
+			if p.Map.Mode == "procedural" {
+				@toolButton("lock", "L", "Lock")
+			}
 			<button type="button" class="bx-btn bx-btn--ghost bx-btn--small" data-bx-rotate-tile title="Rotate tile (T)">⟳ 0°</button>
 		</div>
 	</section>
@@ -301,19 +310,36 @@ templ MapmakerToolbar(p MapmakerProps) {
 	}
 }
 
-// MapmakerProceduralPanel is the WFC-driven procedural-mode controls
-// (PLAN.md §4g, task 112). Only rendered when the map's mode is
-// "procedural". Drives /design/maps/{id}/preview asynchronously; the
-// result overlays the canvas as a ghost layer.
+// MapmakerProceduralPanel is the procedural-mode controls (PLAN.md §4g).
+// Only rendered when the map's mode is "procedural". Drives
+// /design/maps/{id}/preview asynchronously; the result overlays the
+// canvas as a ghost layer.
+//
+// The algorithm picker lets designers pick between socket-driven WFC
+// (precise, needs edge sockets — best for collision/pathing) and
+// pixel-WFC (auto from tile pixels, no socket setup — best for flat
+// decorative tiles).
+//
+// The lock-cell panel exposes the count of designer-locked cells; the
+// "Lock" tool in the left-hand toolbar paints/clears them. Locked cells
+// always survive Generate/Reroll/Commit.
 templ MapmakerProceduralPanel(p MapmakerProps) {
 	<script src="/static/js/mapmaker-procedural.js" defer></script>
-	<section class="bx-panel" data-bx-procedural data-map-id={ fmt.Sprintf("%d", p.Map.ID) } style="padding: var(--bx-s2);">
+	<section class="bx-panel" data-bx-procedural data-map-id={ fmt.Sprintf("%d", p.Map.ID) } data-bx-gen-algorithm={ proceduralAlgorithm(p.Map) } style="padding: var(--bx-s2);">
 		<h3 class="bx-panel__title" data-copy-slot="mapmaker.proc.title">Procedural</h3>
 		<p class="bx-small bx-muted" data-copy-slot="mapmaker.proc.help">
 			Pick a seed, then Generate to preview. Lock the seed to keep it.
 		</p>
 
 		<div class="bx-stack-tight" style="margin-top: var(--bx-s2);">
+			<fieldset class="bx-stack-tight" style="border:0;padding:0;margin:0;">
+				<legend class="bx-small bx-muted" data-copy-slot="mapmaker.proc.algorithm.title">Algorithm</legend>
+				<div class="bx-segmented" role="radiogroup" aria-label="Generation algorithm" data-bx-proc-algorithm>
+					@procAlgorithmOption(p.Map, "socket", "Socket", "Strict edge sockets, perfect for collisions and pathable areas.")
+					@procAlgorithmOption(p.Map, "pixel_wfc", "Pixel WFC", "Auto-derived from tile pixels — no socket setup needed; best for flat decorative tiles.")
+				</div>
+			</fieldset>
+
 			<label class="bx-row" style="gap: 8px;">
 				<span class="bx-small">Seed</span>
 				<input
@@ -336,13 +362,14 @@ templ MapmakerProceduralPanel(p MapmakerProps) {
 					type="button"
 					class="bx-btn bx-btn--primary bx-btn--small"
 					data-bx-proc-generate
+					title="Generate (G)"
 					data-copy-slot="mapmaker.proc.generate"
 				>Generate</button>
 				<button
 					type="button"
 					class="bx-btn bx-btn--ghost bx-btn--small"
 					data-bx-proc-reroll
-					title="Pick a new random seed and generate"
+					title="Pick a new random seed and generate (R+Shift)"
 					data-copy-slot="mapmaker.proc.reroll"
 				>Reroll</button>
 				<button
@@ -359,7 +386,7 @@ templ MapmakerProceduralPanel(p MapmakerProps) {
 					type="button"
 					class="bx-btn bx-btn--push bx-btn--small"
 					data-bx-proc-commit
-					title="Persist the previewed layout to map_tiles. Replaces the base layer's existing tiles."
+					title="Persist the previewed layout to map_tiles. Locked cells are preserved."
 					data-copy-slot="mapmaker.proc.commit"
 				>Commit to map</button>
 			} else {
@@ -368,10 +395,68 @@ templ MapmakerProceduralPanel(p MapmakerProps) {
 				</p>
 			}
 
+			<div class="bx-row" style="gap: var(--bx-s1); align-items: center;">
+				<span class="bx-dot" style="background: var(--bx-warn, #f5b800); width:10px;height:10px;border-radius:2px;"></span>
+				<span class="bx-small bx-muted" data-bx-locked-count>
+					{ lockedCountLabel(p.LockedCellCount) }
+				</span>
+				if p.LockedCellCount > 0 {
+					<button
+						type="button"
+						class="bx-btn bx-btn--ghost bx-btn--small"
+						data-bx-locks-clear
+						title="Remove every lock on this map"
+						data-copy-slot="mapmaker.proc.locks.clear"
+					>Clear all</button>
+				}
+			</div>
+
 			<p class="bx-small bx-muted" data-bx-proc-status aria-live="polite"></p>
 			<p class="bx-small" data-bx-proc-error role="alert" style="color: var(--bx-danger); display: none;"></p>
 		</div>
 	</section>
+}
+
+// procAlgorithmOption renders one segment of the algorithm picker.
+templ procAlgorithmOption(m maps.Map, value, label, hint string) {
+	<label
+		class={ procAlgorithmOptionClass(m, value) }
+		title={ hint }
+	>
+		<input
+			type="radio"
+			name="bx-proc-algorithm"
+			value={ value }
+			if proceduralAlgorithm(m) == value { checked }
+			class="bx-sr-only"
+		/>
+		<span>{ label }</span>
+	</label>
+}
+
+func procAlgorithmOptionClass(m maps.Map, value string) string {
+	if proceduralAlgorithm(m) == value {
+		return "bx-segmented__option bx-segmented__option--on"
+	}
+	return "bx-segmented__option"
+}
+
+// proceduralAlgorithm returns the map's stored gen_algorithm or the
+// "socket" default when the column is empty (legacy rows pre-migration).
+func proceduralAlgorithm(m maps.Map) string {
+	if m.GenAlgorithm == "" {
+		return maps.GenAlgorithmSocket
+	}
+	return m.GenAlgorithm
+}
+
+// lockedCountLabel pluralizes the count chip; matches the staged-changes
+// convention in the palette panel.
+func lockedCountLabel(n int) string {
+	if n == 1 {
+		return "1 cell locked"
+	}
+	return fmt.Sprintf("%d cells locked", n)
 }
 
 // MapPublicBadgeProps drives the public/private toggle badge in the

@@ -1,0 +1,353 @@
+package maps_test
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"boxland/server/internal/entities"
+	"boxland/server/internal/entities/components"
+	"boxland/server/internal/maps"
+	"boxland/server/internal/maps/wfc"
+)
+
+// procFixture creates a procedural+persistent map with two tile-kind
+// entity types (already socketed so generation always succeeds) and
+// returns the map id, both entity-type ids, and the base tile layer id.
+func procFixture(t *testing.T, ctx context.Context, designerID, baseEtID int64, ents *entities.Service, svc *maps.Service, algo string) (mapID int64, et1, et2, layerID int64) {
+	t.Helper()
+	if _, err := svc.Pool.Exec(ctx, `UPDATE entity_types SET tags = ARRAY['tile'] WHERE id = $1`, baseEtID); err != nil {
+		t.Fatalf("tag base entity: %v", err)
+	}
+	floor, err := ents.Create(ctx, entities.CreateInput{Name: "floor", CreatedBy: designerID, Tags: []string{"tile"}})
+	if err != nil {
+		t.Fatalf("create floor: %v", err)
+	}
+	sock, err := ents.CreateSocket(ctx, "open", 0xffffffff, designerID)
+	if err != nil {
+		t.Fatalf("create socket: %v", err)
+	}
+	if err := ents.SetTileEdges(ctx, baseEtID, &sock.ID, &sock.ID, &sock.ID, &sock.ID); err != nil {
+		t.Fatalf("base edges: %v", err)
+	}
+	if err := ents.SetTileEdges(ctx, floor.ID, &sock.ID, &sock.ID, &sock.ID, &sock.ID); err != nil {
+		t.Fatalf("floor edges: %v", err)
+	}
+	m, err := svc.Create(ctx, maps.CreateInput{
+		Name: "proc-map", Width: 4, Height: 4,
+		Mode: "procedural", PersistenceMode: "persistent",
+		GenAlgorithm: algo,
+		CreatedBy:    designerID,
+	})
+	if err != nil {
+		t.Fatalf("create map: %v", err)
+	}
+	layers, err := svc.Layers(ctx, m.ID)
+	if err != nil {
+		t.Fatalf("layers: %v", err)
+	}
+	for _, l := range layers {
+		if l.Kind == "tile" {
+			layerID = l.ID
+			break
+		}
+	}
+	return m.ID, baseEtID, floor.ID, layerID
+}
+
+func TestLockCells_PersistsAndRoundTrips(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	designerID, baseEtID := resetDB(t, pool)
+	ents := entities.New(pool, components.Default())
+	svc := maps.New(pool)
+	mapID, et1, et2, layerID := procFixture(t, ctx, designerID, baseEtID, ents, svc, maps.GenAlgorithmSocket)
+
+	// Small batch path (< 32 cells).
+	if err := svc.LockCells(ctx, []maps.LockedCell{
+		{MapID: mapID, LayerID: layerID, X: 0, Y: 0, EntityTypeID: et1},
+		{MapID: mapID, LayerID: layerID, X: 1, Y: 0, EntityTypeID: et2, RotationDegrees: 90},
+	}); err != nil {
+		t.Fatalf("LockCells: %v", err)
+	}
+	got, err := svc.LockedCells(ctx, mapID)
+	if err != nil {
+		t.Fatalf("LockedCells: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 locks, got %d", len(got))
+	}
+	if got[1].RotationDegrees != 90 {
+		t.Errorf("rotation lost: %+v", got[1])
+	}
+
+	// Re-locking the same cell should overwrite.
+	if err := svc.LockCells(ctx, []maps.LockedCell{
+		{MapID: mapID, LayerID: layerID, X: 0, Y: 0, EntityTypeID: et2, RotationDegrees: 180},
+	}); err != nil {
+		t.Fatalf("re-lock: %v", err)
+	}
+	got, _ = svc.LockedCells(ctx, mapID)
+	for _, c := range got {
+		if c.X == 0 && c.Y == 0 {
+			if c.EntityTypeID != et2 || c.RotationDegrees != 180 {
+				t.Errorf("re-lock did not update: %+v", c)
+			}
+		}
+	}
+
+	// Count helper.
+	n, err := svc.LockedCellCount(ctx, mapID)
+	if err != nil || n != 2 {
+		t.Errorf("LockedCellCount got %d (err %v), want 2", n, err)
+	}
+
+	// Unlock one.
+	if err := svc.UnlockCells(ctx, mapID, layerID, [][2]int32{{1, 0}}); err != nil {
+		t.Fatalf("UnlockCells: %v", err)
+	}
+	if n, _ := svc.LockedCellCount(ctx, mapID); n != 1 {
+		t.Errorf("after unlock count = %d, want 1", n)
+	}
+
+	// Bulk path (>= 32 cells via CopyFrom).
+	bulk := make([]maps.LockedCell, 0, 40)
+	for i := int32(0); i < 40; i++ {
+		bulk = append(bulk, maps.LockedCell{
+			MapID: mapID, LayerID: layerID, X: i % 4, Y: 1 + i/4, EntityTypeID: et1,
+		})
+	}
+	if err := svc.LockCells(ctx, bulk); err != nil {
+		t.Fatalf("bulk LockCells: %v", err)
+	}
+
+	// ClearLockedCells wipes the lot.
+	if err := svc.ClearLockedCells(ctx, mapID, 0); err != nil {
+		t.Fatalf("ClearLockedCells: %v", err)
+	}
+	if n, _ := svc.LockedCellCount(ctx, mapID); n != 0 {
+		t.Errorf("after clear count = %d, want 0", n)
+	}
+}
+
+func TestLockCells_RejectsInvalidRotation(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	designerID, baseEtID := resetDB(t, pool)
+	ents := entities.New(pool, components.Default())
+	svc := maps.New(pool)
+	mapID, et1, _, layerID := procFixture(t, ctx, designerID, baseEtID, ents, svc, maps.GenAlgorithmSocket)
+
+	err := svc.LockCells(ctx, []maps.LockedCell{
+		{MapID: mapID, LayerID: layerID, X: 0, Y: 0, EntityTypeID: et1, RotationDegrees: 45},
+	})
+	if !errors.Is(err, maps.ErrLockedCellInvalid) {
+		t.Fatalf("want ErrLockedCellInvalid, got %v", err)
+	}
+}
+
+func TestLockCells_TenantIsolated(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	designerID, baseEtID := resetDB(t, pool)
+	ents := entities.New(pool, components.Default())
+	svc := maps.New(pool)
+	mapA, et1, _, layerA := procFixture(t, ctx, designerID, baseEtID, ents, svc, maps.GenAlgorithmSocket)
+	// Second map. Reuse the same designer + tiles; we just need a fresh maps.id.
+	mB, err := svc.Create(ctx, maps.CreateInput{
+		Name: "proc-map-2", Width: 4, Height: 4, Mode: "procedural",
+		PersistenceMode: "persistent", CreatedBy: designerID,
+	})
+	if err != nil {
+		t.Fatalf("create map B: %v", err)
+	}
+	if err := svc.LockCells(ctx, []maps.LockedCell{
+		{MapID: mapA, LayerID: layerA, X: 0, Y: 0, EntityTypeID: et1},
+	}); err != nil {
+		t.Fatalf("lock A: %v", err)
+	}
+	got, err := svc.LockedCells(ctx, mB.ID)
+	if err != nil {
+		t.Fatalf("query B: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("locks bled across maps: %+v", got)
+	}
+}
+
+func TestMaterialize_LockedCellsSurviveAndAnchor(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	designerID, baseEtID := resetDB(t, pool)
+	ents := entities.New(pool, components.Default())
+	svc := maps.New(pool)
+	mapID, et1, et2, layerID := procFixture(t, ctx, designerID, baseEtID, ents, svc, maps.GenAlgorithmSocket)
+
+	// Lock a couple of specific cells.
+	if err := svc.LockCells(ctx, []maps.LockedCell{
+		{MapID: mapID, LayerID: layerID, X: 1, Y: 1, EntityTypeID: et1, RotationDegrees: 90},
+		{MapID: mapID, LayerID: layerID, X: 2, Y: 2, EntityTypeID: et2, RotationDegrees: 180},
+	}); err != nil {
+		t.Fatalf("lock: %v", err)
+	}
+
+	res, err := svc.MaterializeProcedural(ctx, maps.MaterializeProceduralInput{MapID: mapID, Seed: 7, LayerID: layerID})
+	if err != nil {
+		t.Fatalf("materialize: %v", err)
+	}
+	if res.TilesWritten != 16 {
+		t.Errorf("wrote %d tiles, expected 16 (4x4)", res.TilesWritten)
+	}
+
+	// The persisted base layer should contain our locks at the exact
+	// coordinates with the correct entity + rotation.
+	tiles, err := svc.ChunkTiles(ctx, mapID, 0, 0, 3, 3)
+	if err != nil {
+		t.Fatalf("chunk tiles: %v", err)
+	}
+	found := map[[2]int32]maps.Tile{}
+	for _, tt := range tiles {
+		found[[2]int32{tt.X, tt.Y}] = tt
+	}
+	if got := found[[2]int32{1, 1}]; got.EntityTypeID != et1 || got.RotationDegrees != 90 {
+		t.Errorf("lock at (1,1) not preserved: %+v", got)
+	}
+	if got := found[[2]int32{2, 2}]; got.EntityTypeID != et2 || got.RotationDegrees != 180 {
+		t.Errorf("lock at (2,2) not preserved: %+v", got)
+	}
+
+	// Re-materializing with a different seed must still preserve the locks.
+	if _, err := svc.MaterializeProcedural(ctx, maps.MaterializeProceduralInput{MapID: mapID, Seed: 9999, LayerID: layerID}); err != nil {
+		t.Fatalf("re-materialize: %v", err)
+	}
+	tiles, _ = svc.ChunkTiles(ctx, mapID, 0, 0, 3, 3)
+	found = map[[2]int32]maps.Tile{}
+	for _, tt := range tiles {
+		found[[2]int32{tt.X, tt.Y}] = tt
+	}
+	if got := found[[2]int32{1, 1}]; got.EntityTypeID != et1 || got.RotationDegrees != 90 {
+		t.Errorf("after reroll lock at (1,1) lost: %+v", got)
+	}
+}
+
+func TestPreview_MergesLockAnchors(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	designerID, baseEtID := resetDB(t, pool)
+	ents := entities.New(pool, components.Default())
+	svc := maps.New(pool)
+	mapID, et1, _, layerID := procFixture(t, ctx, designerID, baseEtID, ents, svc, maps.GenAlgorithmSocket)
+
+	if err := svc.LockCells(ctx, []maps.LockedCell{
+		{MapID: mapID, LayerID: layerID, X: 0, Y: 0, EntityTypeID: et1},
+	}); err != nil {
+		t.Fatalf("lock: %v", err)
+	}
+	res, err := svc.GenerateProceduralPreview(ctx, maps.ProceduralPreviewInput{
+		MapID: mapID, Width: 4, Height: 4, Seed: 1,
+	})
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	if res.Region.Cells[0].EntityType != wfc.EntityTypeID(et1) {
+		t.Errorf("lock not honored at (0,0): %+v", res.Region.Cells[0])
+	}
+	if res.Algorithm != maps.GenAlgorithmSocket {
+		t.Errorf("algorithm = %q, want %q", res.Algorithm, maps.GenAlgorithmSocket)
+	}
+}
+
+func TestPreview_PixelAlgorithmFallsBackWithoutLoader(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	designerID, baseEtID := resetDB(t, pool)
+	ents := entities.New(pool, components.Default())
+	svc := maps.New(pool) // no SetPixelLoader
+	mapID, _, _, _ := procFixture(t, ctx, designerID, baseEtID, ents, svc, maps.GenAlgorithmPixelWFC)
+
+	res, err := svc.GenerateProceduralPreview(ctx, maps.ProceduralPreviewInput{
+		MapID: mapID, Width: 4, Height: 4, Seed: 1,
+	})
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	// Loader missing → falls back to socket.
+	if res.Algorithm != maps.GenAlgorithmSocket {
+		t.Errorf("expected fallback to socket, got %q", res.Algorithm)
+	}
+}
+
+func TestPreview_PixelAlgorithmUsesLoader(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	designerID, baseEtID := resetDB(t, pool)
+	ents := entities.New(pool, components.Default())
+	svc := maps.New(pool)
+	svc.SetPixelLoader(stubPixelLoader{})
+	mapID, _, _, _ := procFixture(t, ctx, designerID, baseEtID, ents, svc, maps.GenAlgorithmPixelWFC)
+
+	res, err := svc.GenerateProceduralPreview(ctx, maps.ProceduralPreviewInput{
+		MapID: mapID, Width: 4, Height: 4, Seed: 1,
+	})
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	if res.Algorithm != maps.GenAlgorithmPixelWFC {
+		t.Errorf("algorithm = %q, want pixel_wfc", res.Algorithm)
+	}
+	if res.Region == nil || len(res.Region.Cells) != 16 {
+		t.Errorf("region empty/wrong size: %+v", res.Region)
+	}
+}
+
+// stubPixelLoader returns a single-colour fingerprint per entity type so
+// every tile is "compatible enough" with every other tile. Lets the
+// pixel-WFC service path execute end-to-end without hitting object
+// storage.
+type stubPixelLoader struct{}
+
+func (stubPixelLoader) FingerprintFor(_ context.Context, entityTypeID int64) ([4]wfc.EdgeFingerprint, error) {
+	var fp [4]wfc.EdgeFingerprint
+	c := uint8(entityTypeID & 0xff)
+	for e := 0; e < 4; e++ {
+		for s := 0; s < wfc.EdgeSamples; s++ {
+			fp[e][s] = [3]uint8{c, c, c}
+		}
+	}
+	return fp, nil
+}
+
+func TestSetGenAlgorithm_RoundTrips(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	designerID, _ := resetDB(t, pool)
+	svc := maps.New(pool)
+	m, err := svc.Create(ctx, maps.CreateInput{
+		Name: "x", Width: 4, Height: 4, Mode: "procedural", CreatedBy: designerID,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if m.GenAlgorithm != maps.GenAlgorithmSocket {
+		t.Errorf("default = %q, want socket", m.GenAlgorithm)
+	}
+	if err := svc.SetGenAlgorithm(ctx, m.ID, maps.GenAlgorithmPixelWFC); err != nil {
+		t.Fatalf("SetGenAlgorithm: %v", err)
+	}
+	got, _ := svc.FindByID(ctx, m.ID)
+	if got.GenAlgorithm != maps.GenAlgorithmPixelWFC {
+		t.Errorf("after set = %q, want pixel_wfc", got.GenAlgorithm)
+	}
+
+	if err := svc.SetGenAlgorithm(ctx, m.ID, "weird"); err == nil {
+		t.Error("expected validation error for weird algorithm")
+	}
+}

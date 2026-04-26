@@ -1883,3 +1883,46 @@ body[data-bx-spectator="1"] [data-bx-camera-mode][data-bx-camera-mode="free-cam"
     min-width: 0;
 }
 .bx-btn--block { width: 100%; text-align: left; }
+
+
+/* ---------------------------------------------------------------- */
+/* Segmented picker (procedural-mode algorithm: Socket vs Pixel WFC) */
+/* ---------------------------------------------------------------- */
+.bx-segmented {
+    display: inline-flex;
+    border: var(--bx-px) solid var(--bx-line);
+    background: var(--bx-bg-2);
+    padding: 1px;
+    gap: 1px;
+    border-radius: 2px;
+}
+.bx-segmented__option {
+    cursor: pointer;
+    user-select: none;
+    padding: 2px var(--bx-s2);
+    font-size: 11px;
+    color: var(--bx-fg-2);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    background: transparent;
+    line-height: 1.6;
+    transition: background 80ms ease-out, color 80ms ease-out;
+}
+.bx-segmented__option:hover { background: var(--bx-bg-3); }
+.bx-segmented__option--on {
+    background: var(--bx-accent);
+    color: var(--bx-accent-fg);
+    font-weight: 600;
+}
+.bx-segmented__option:focus-within {
+    outline: var(--bx-px) solid var(--bx-accent);
+    outline-offset: 1px;
+}
+
+/* Locked-cell highlight overlay drawn by mapmaker.js. The CSS variable
+   exposes the colour so other surfaces (commit-summary, settings) can
+   match without re-declaring. */
+:root {
+    --bx-lock-overlay: rgba(255, 221, 74, 0.55); /* same hue as --bx-accent at 55% */
+    --bx-lock-stroke:  #ffd220;
+}

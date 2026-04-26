@@ -194,6 +194,10 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /design/maps/{id}", auth(getMapmakerPage(d)))
 	mux.Handle("POST /design/maps/{id}/preview", auth(postMapPreview(d)))
 	mux.Handle("POST /design/maps/{id}/materialize", auth(postMapMaterialize(d)))
+	mux.Handle("POST /design/maps/{id}/gen-algorithm", auth(postMapGenAlgorithm(d)))
+	mux.Handle("GET /design/maps/{id}/locks", auth(getMapLocks(d)))
+	mux.Handle("POST /design/maps/{id}/locks", auth(postMapLocks(d)))
+	mux.Handle("DELETE /design/maps/{id}/locks", auth(deleteMapLocks(d)))
 	mux.Handle("DELETE /design/maps/{id}", auth(deleteMap(d)))
 	mux.Handle("GET /design/maps/{id}/settings", auth(getMapSettingsModal(d)))
 	mux.Handle("POST /design/maps/{id}/draft", auth(postMapDraft(d)))
@@ -2625,6 +2629,18 @@ func getMapmakerPage(d Deps) http.HandlerFunc {
 			`SELECT COUNT(*) FROM drafts WHERE artifact_kind = 'entity_type'`,
 		).Scan(&entityDrafts)
 
+		// Count locked cells for the procedural panel chip. Cheap;
+		// an indexed COUNT on the map_id fk.
+		var lockedCount int
+		if m.Mode == "procedural" {
+			n, lerr := d.Maps.LockedCellCount(r.Context(), m.ID)
+			if lerr != nil {
+				slog.Warn("locked cell count", "err", lerr, "map_id", m.ID)
+			} else {
+				lockedCount = n
+			}
+		}
+
 		layout := BuildChrome(r, d)
 		layout.Title = "Mapmaker · " + m.Name
 		layout.Surface = "mapmaker"
@@ -2638,6 +2654,7 @@ func getMapmakerPage(d Deps) http.HandlerFunc {
 			Layers:             layers,
 			PaletteEntityTypes: palette,
 			EntityDraftCount:   entityDrafts,
+			LockedCellCount:    lockedCount,
 		}))
 	}
 }
@@ -2651,7 +2668,10 @@ type previewRequest struct {
 	Width      int32  `json:"width,omitempty"`
 	Height     int32  `json:"height,omitempty"`
 	MaxReseeds int    `json:"max_reseeds,omitempty"`
-	Anchors    []struct {
+	// Algorithm override: pass "socket" or "pixel_wfc" to preview a
+	// different engine without flipping the map's stored value.
+	Algorithm string `json:"algorithm,omitempty"`
+	Anchors   []struct {
 		X            int32 `json:"x"`
 		Y            int32 `json:"y"`
 		EntityTypeID int64 `json:"entity_type_id"`
@@ -2664,6 +2684,8 @@ type previewResponse struct {
 	Width       int32             `json:"width"`
 	Height      int32             `json:"height"`
 	TileSetSize int               `json:"tileset_size"`
+	Algorithm   string            `json:"algorithm"`
+	Fallbacks   int               `json:"fallbacks"`
 	Cells       []previewCellJSON `json:"cells"`
 }
 
@@ -2715,11 +2737,13 @@ func postMapPreview(d Deps) http.HandlerFunc {
 		}
 
 		res, err := d.Maps.GenerateProceduralPreview(r.Context(), mapsservice.ProceduralPreviewInput{
-			Width:      width,
-			Height:     height,
-			Seed:       req.Seed,
-			Anchors:    anchors,
-			MaxReseeds: req.MaxReseeds,
+			MapID:             m.ID,
+			Width:             width,
+			Height:            height,
+			Seed:              req.Seed,
+			Anchors:           anchors,
+			MaxReseeds:        req.MaxReseeds,
+			AlgorithmOverride: req.Algorithm,
 		})
 		if err != nil {
 			switch {
@@ -2740,6 +2764,8 @@ func postMapPreview(d Deps) http.HandlerFunc {
 			Width:       res.Region.Width,
 			Height:      res.Region.Height,
 			TileSetSize: res.TileSetSize,
+			Algorithm:   res.Algorithm,
+			Fallbacks:   res.Fallbacks,
 			Cells:       make([]previewCellJSON, 0, len(res.Region.Cells)),
 		}
 		for _, c := range res.Region.Cells {
@@ -2810,6 +2836,183 @@ func postMapMaterialize(d Deps) http.HandlerFunc {
 			LayerID:      res.LayerID,
 			Seed:         res.Seed,
 		})
+	}
+}
+
+// ---- Procedural: gen-algorithm + locked cells ----
+
+type genAlgorithmRequest struct {
+	Algorithm string `json:"algorithm"`
+}
+
+func postMapGenAlgorithm(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := pathID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		var req genAlgorithmRequest
+		// Accept either JSON body or a "?algorithm=..." form param so the
+		// settings drawer's plain form post and the panel's JSON fetch
+		// both work.
+		if r.Header.Get("Content-Type") == "application/json" {
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+		} else {
+			if err := r.ParseForm(); err != nil {
+				http.Error(w, "bad form: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			req.Algorithm = r.Form.Get("algorithm")
+		}
+		if !mapsservice.ValidGenAlgorithm(req.Algorithm) {
+			http.Error(w, "invalid algorithm", http.StatusBadRequest)
+			return
+		}
+		if err := d.Maps.SetGenAlgorithm(r.Context(), id, req.Algorithm); err != nil {
+			if errors.Is(err, mapsservice.ErrMapNotFound) {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			slog.Error("set gen algorithm", "err", err, "map_id", id)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// lockedCellJSON mirrors mapsservice.LockedCell on the wire.
+type lockedCellJSON struct {
+	LayerID         int64 `json:"layer_id"`
+	X               int32 `json:"x"`
+	Y               int32 `json:"y"`
+	EntityTypeID    int64 `json:"entity_type_id"`
+	RotationDegrees int16 `json:"rotation_degrees,omitempty"`
+}
+
+type locksResponse struct {
+	MapID int64            `json:"map_id"`
+	Count int              `json:"count"`
+	Cells []lockedCellJSON `json:"cells"`
+}
+
+func getMapLocks(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := pathID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		cells, err := d.Maps.LockedCells(r.Context(), id)
+		if err != nil {
+			slog.Error("locked cells", "err", err, "map_id", id)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		out := locksResponse{MapID: id, Count: len(cells), Cells: make([]lockedCellJSON, 0, len(cells))}
+		for _, c := range cells {
+			out.Cells = append(out.Cells, lockedCellJSON{
+				LayerID: c.LayerID, X: c.X, Y: c.Y,
+				EntityTypeID: c.EntityTypeID, RotationDegrees: c.RotationDegrees,
+			})
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(w).Encode(out)
+	}
+}
+
+type postLocksRequest struct {
+	Cells []lockedCellJSON `json:"cells"`
+}
+
+func postMapLocks(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := pathID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		var req postLocksRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if len(req.Cells) == 0 {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		// Reject brushes longer than a sensible safety cap so a runaway
+		// drag can't hammer the DB. Designers brushing 4k cells in one
+		// stroke means something's broken upstream.
+		const maxBrushCells = 4096
+		if len(req.Cells) > maxBrushCells {
+			http.Error(w, "too many cells in one request", http.StatusRequestEntityTooLarge)
+			return
+		}
+		out := make([]mapsservice.LockedCell, 0, len(req.Cells))
+		for _, c := range req.Cells {
+			out = append(out, mapsservice.LockedCell{
+				MapID: id, LayerID: c.LayerID, X: c.X, Y: c.Y,
+				EntityTypeID: c.EntityTypeID, RotationDegrees: c.RotationDegrees,
+			})
+		}
+		if err := d.Maps.LockCells(r.Context(), out); err != nil {
+			if errors.Is(err, mapsservice.ErrLockedCellInvalid) {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			slog.Error("lock cells", "err", err, "map_id", id, "n", len(out))
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+type deleteLocksRequest struct {
+	LayerID int64    `json:"layer_id"`
+	Points  [][2]int32 `json:"points"`
+	// All=true wipes every lock on the map (or layer when LayerID is set).
+	All bool `json:"all,omitempty"`
+}
+
+func deleteMapLocks(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := pathID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		var req deleteLocksRequest
+		if r.ContentLength > 0 {
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+		if req.All {
+			if err := d.Maps.ClearLockedCells(r.Context(), id, req.LayerID); err != nil {
+				slog.Error("clear locked cells", "err", err, "map_id", id)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if req.LayerID == 0 || len(req.Points) == 0 {
+			http.Error(w, "layer_id and points are required (or set all=true)", http.StatusBadRequest)
+			return
+		}
+		if err := d.Maps.UnlockCells(r.Context(), id, req.LayerID, req.Points); err != nil {
+			slog.Error("unlock cells", "err", err, "map_id", id, "n", len(req.Points))
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 
