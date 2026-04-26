@@ -1087,9 +1087,9 @@ func postEntityDeleteBulk(d Deps) http.HandlerFunc {
 // endpoint is generic so other tag operations can ride on it without a
 // schema change). Form fields:
 //
-//   ids=1,2,3   comma-joined entity ids (or repeated query params)
-//   tag=tile    the tag to add/remove
-//   op=add      "add" (default) or "remove"
+//	ids=1,2,3   comma-joined entity ids (or repeated query params)
+//	tag=tile    the tag to add/remove
+//	op=add      "add" (default) or "remove"
 //
 // Returns the refreshed grid HTML so HTMX outerHTML swaps re-render in
 // place.
@@ -3342,17 +3342,17 @@ func jsonFromFormByDescriptor(fields []configurable.FieldDescriptor, form map[st
 
 // postAssetReplace accepts an exported PNG buffer from the pixel editor.
 // Behavior:
-//   * Treats the upload as a fresh asset of the same kind (new
+//   - Treats the upload as a fresh asset of the same kind (new
 //     content-addressed path; the original asset row is unchanged).
-//   * Triggers re-bake of the new asset's palette variants (it has none
+//   - Triggers re-bake of the new asset's palette variants (it has none
 //     unless the designer copied them later — handled by a separate
 //     "duplicate variants" surface).
 //
 // Why a NEW asset row rather than mutating the existing one?
-//   * Content-addressed paths are immutable — the old row's path keeps its
+//   - Content-addressed paths are immutable — the old row's path keeps its
 //     bytes intact for any in-flight references.
-//   * Designers can compare old vs new before swapping references.
-//   * Avoids a destructive flow that's hard to undo.
+//   - Designers can compare old vs new before swapping references.
+//   - Avoids a destructive flow that's hard to undo.
 //
 // The original asset id is returned alongside the new one so the UI can
 // surface a "Replace references with the new asset?" follow-up.
@@ -3625,10 +3625,11 @@ func diffChangesToView(d configurable.StructuredDiff) []views.DiffChange {
 // shape, snake_case, all numbers; matches what the canvas needs to
 // render and what PlaceTiles takes server-side.
 type tileWireFmt struct {
-	LayerID      int64 `json:"layer_id"`
-	X            int32 `json:"x"`
-	Y            int32 `json:"y"`
-	EntityTypeID int64 `json:"entity_type_id"`
+	LayerID         int64 `json:"layer_id"`
+	X               int32 `json:"x"`
+	Y               int32 `json:"y"`
+	EntityTypeID    int64 `json:"entity_type_id"`
+	RotationDegrees int16 `json:"rotation_degrees"`
 }
 
 // getMapTiles returns every tile across every layer of the map. The
@@ -3656,7 +3657,7 @@ func getMapTiles(d Deps) http.HandlerFunc {
 		out := make([]tileWireFmt, 0, len(tiles))
 		for _, t := range tiles {
 			out = append(out, tileWireFmt{
-				LayerID: t.LayerID, X: t.X, Y: t.Y, EntityTypeID: t.EntityTypeID,
+				LayerID: t.LayerID, X: t.X, Y: t.Y, EntityTypeID: t.EntityTypeID, RotationDegrees: t.RotationDegrees,
 			})
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -3696,8 +3697,12 @@ func postMapTiles(d Deps) http.HandlerFunc {
 		}
 		tiles := make([]mapsservice.Tile, 0, len(body.Tiles))
 		for _, t := range body.Tiles {
+			if !mapsservice.ValidRotationDegrees(t.RotationDegrees) {
+				http.Error(w, fmt.Sprintf("invalid rotation_degrees: %d", t.RotationDegrees), http.StatusBadRequest)
+				return
+			}
 			tiles = append(tiles, mapsservice.Tile{
-				MapID: id, LayerID: t.LayerID, X: t.X, Y: t.Y, EntityTypeID: t.EntityTypeID,
+				MapID: id, LayerID: t.LayerID, X: t.X, Y: t.Y, EntityTypeID: t.EntityTypeID, RotationDegrees: t.RotationDegrees,
 			})
 		}
 		if err := d.Maps.PlaceTiles(r.Context(), tiles); err != nil {
@@ -3915,10 +3920,12 @@ func buildEntitySpritePreviews(
 // show "asset name (#5)" instead of "currently #5" on first render.
 //
 // Querystring shape:
-//   ?asset=1,2,3&entity=10,11
+//
+//	?asset=1,2,3&entity=10,11
 //
 // Response:
-//   { "asset": {"1":"Goblin","2":"Tile A"}, "entity": {"10":"Tree"} }
+//
+//	{ "asset": {"1":"Goblin","2":"Tile A"}, "entity": {"10":"Tree"} }
 //
 // Missing ids simply omit themselves from the response so the JS
 // fallback ("currently #N") still applies. Bound to ~64 ids per kind

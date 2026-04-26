@@ -15,7 +15,7 @@ import (
 // column already, so this component is for entities whose sprite differs
 // from the type's default (e.g. a unique boss outfit).
 type Sprite struct {
-	AssetID   uint32 `json:"asset_id"`
+	AssetID uint32 `json:"asset_id"`
 	// Frame is the atlas-cell index inside AssetID — row-major, 32x32
 	// cells, top-left origin. 0 = first cell (the only cell on a plain
 	// 32x32 sprite). Populated from entity_types.atlas_index at load
@@ -23,15 +23,16 @@ type Sprite struct {
 	Frame     uint16 `json:"frame"`
 	AnimID    uint32 `json:"anim_id"`
 	VariantID uint16 `json:"variant_id"`
-	Tint      uint32 `json:"tint"`        // 0xRRGGBBAA, 0 = none
-	Layer     int16  `json:"layer"`       // render layer; higher draws on top
+	Tint      uint32 `json:"tint"`  // 0xRRGGBBAA, 0 = none
+	Layer     int16  `json:"layer"` // render layer; higher draws on top
 	// Facing matches the EntityState.facing wire encoding (0=N, 1=E,
 	// 2=S, 3=W). Set by the animation system from the entity's
 	// velocity each tick; stays sticky on a zero-velocity tick so a
 	// stationary entity keeps its last-walked direction. Encoded into
 	// the broadcast Diff so the renderer (and any spectator) can pick
 	// the correct directional walk clip on its own.
-	Facing    uint8  `json:"facing"`
+	Facing          uint8 `json:"facing"`
+	RotationDegrees int16 `json:"rotation_degrees"`
 }
 
 func (s Sprite) Validate() error {

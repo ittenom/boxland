@@ -22,30 +22,30 @@ import (
 
 // Map is one row from the maps table.
 type Map struct {
-	ID                    int64           `db:"id"                          pk:"auto" json:"id"`
-	Name                  string          `db:"name"                                  json:"name"`
-	Width                 int32           `db:"width"                                 json:"width"`
-	Height                int32           `db:"height"                                json:"height"`
-	Public                bool            `db:"public"                                json:"public"`
-	InstancingMode        string          `db:"instancing_mode"                       json:"instancing_mode"`
-	PersistenceMode       string          `db:"persistence_mode"                      json:"persistence_mode"`
-	RefreshWindowSeconds  *int32          `db:"refresh_window_seconds"                json:"refresh_window_seconds,omitempty"`
-	ResetRulesJSON        json.RawMessage `db:"reset_rules_json"                      json:"reset_rules"`
-	Mode                  string          `db:"mode"                                  json:"mode"`
-	Seed                  *int64          `db:"seed"                                  json:"seed,omitempty"`
-	SpectatorPolicy       string          `db:"spectator_policy"                      json:"spectator_policy"`
-	CreatedBy             int64           `db:"created_by"                            json:"created_by"`
-	CreatedAt             time.Time       `db:"created_at" repo:"readonly"            json:"created_at"`
-	UpdatedAt             time.Time       `db:"updated_at" repo:"readonly"            json:"updated_at"`
+	ID                   int64           `db:"id"                          pk:"auto" json:"id"`
+	Name                 string          `db:"name"                                  json:"name"`
+	Width                int32           `db:"width"                                 json:"width"`
+	Height               int32           `db:"height"                                json:"height"`
+	Public               bool            `db:"public"                                json:"public"`
+	InstancingMode       string          `db:"instancing_mode"                       json:"instancing_mode"`
+	PersistenceMode      string          `db:"persistence_mode"                      json:"persistence_mode"`
+	RefreshWindowSeconds *int32          `db:"refresh_window_seconds"                json:"refresh_window_seconds,omitempty"`
+	ResetRulesJSON       json.RawMessage `db:"reset_rules_json"                      json:"reset_rules"`
+	Mode                 string          `db:"mode"                                  json:"mode"`
+	Seed                 *int64          `db:"seed"                                  json:"seed,omitempty"`
+	SpectatorPolicy      string          `db:"spectator_policy"                      json:"spectator_policy"`
+	CreatedBy            int64           `db:"created_by"                            json:"created_by"`
+	CreatedAt            time.Time       `db:"created_at" repo:"readonly"            json:"created_at"`
+	UpdatedAt            time.Time       `db:"updated_at" repo:"readonly"            json:"updated_at"`
 }
 
 // Layer is one row from map_layers.
 type Layer struct {
-	ID        int64     `db:"id"        pk:"auto" json:"id"`
-	MapID     int64     `db:"map_id"              json:"map_id"`
-	Name      string    `db:"name"                json:"name"`
-	Kind      string    `db:"kind"                json:"kind"` // "tile" | "lighting"
-	Ord       int32     `db:"ord"                 json:"ord"`
+	ID    int64  `db:"id"        pk:"auto" json:"id"`
+	MapID int64  `db:"map_id"              json:"map_id"`
+	Name  string `db:"name"                json:"name"`
+	Kind  string `db:"kind"                json:"kind"` // "tile" | "lighting"
+	Ord   int32  `db:"ord"                 json:"ord"`
 	// YSortEntities turns on foot-position y-sorting for entities on
 	// this layer. Designers opt this in for the layer the player walks
 	// on (so trees, columns, etc. z-fight by y); leave off for terrain,
@@ -62,6 +62,7 @@ type Tile struct {
 	X                      int32           `json:"x"`
 	Y                      int32           `json:"y"`
 	EntityTypeID           int64           `json:"entity_type_id"`
+	RotationDegrees        int16           `json:"rotation_degrees"`
 	AnimOverride           *int16          `json:"anim_override,omitempty"`
 	CollisionShapeOverride *int16          `json:"collision_shape_override,omitempty"`
 	CollisionMaskOverride  *int64          `json:"collision_mask_override,omitempty"`
@@ -99,16 +100,16 @@ func New(pool *pgxpool.Pool) *Service {
 
 // CreateInput drives Create.
 type CreateInput struct {
-	Name             string
-	Width            int32
-	Height           int32
-	Public           bool
-	InstancingMode   string
-	PersistenceMode  string
-	Mode             string // "authored" | "procedural"
-	Seed             *int64
-	SpectatorPolicy  string
-	CreatedBy        int64
+	Name            string
+	Width           int32
+	Height          int32
+	Public          bool
+	InstancingMode  string
+	PersistenceMode string
+	Mode            string // "authored" | "procedural"
+	Seed            *int64
+	SpectatorPolicy string
+	CreatedBy       int64
 }
 
 // Create inserts a new map row. Default layer set ("base", "decoration",
@@ -319,18 +320,22 @@ func (s *Service) PlaceTiles(ctx context.Context, tiles []Tile) error {
 		if len(flags) == 0 {
 			flags = []byte("null")
 		}
+		if !ValidRotationDegrees(t.RotationDegrees) {
+			return fmt.Errorf("place tile (%d,%d): invalid rotation %d", t.X, t.Y, t.RotationDegrees)
+		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO map_tiles (map_id, layer_id, x, y, entity_type_id,
-			                       anim_override, collision_shape_override,
+			                       rotation_degrees, anim_override, collision_shape_override,
 			                       collision_mask_override, custom_flags_json)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
 			ON CONFLICT (map_id, layer_id, x, y) DO UPDATE
 			SET entity_type_id            = EXCLUDED.entity_type_id,
+			    rotation_degrees         = EXCLUDED.rotation_degrees,
 			    anim_override             = EXCLUDED.anim_override,
 			    collision_shape_override  = EXCLUDED.collision_shape_override,
 			    collision_mask_override   = EXCLUDED.collision_mask_override,
 			    custom_flags_json         = EXCLUDED.custom_flags_json
-		`, t.MapID, t.LayerID, t.X, t.Y, t.EntityTypeID,
+		`, t.MapID, t.LayerID, t.X, t.Y, t.EntityTypeID, t.RotationDegrees,
 			t.AnimOverride, t.CollisionShapeOverride, t.CollisionMaskOverride, flags,
 		); err != nil {
 			return fmt.Errorf("place tile (%d,%d): %w", t.X, t.Y, err)
@@ -366,7 +371,7 @@ func (s *Service) EraseTiles(ctx context.Context, mapID, layerID int64, points [
 // query.
 func (s *Service) ChunkTiles(ctx context.Context, mapID int64, x0, y0, x1, y1 int32) ([]Tile, error) {
 	rows, err := s.Pool.Query(ctx, `
-		SELECT map_id, layer_id, x, y, entity_type_id, anim_override,
+		SELECT map_id, layer_id, x, y, entity_type_id, rotation_degrees, anim_override,
 		       collision_shape_override, collision_mask_override, custom_flags_json
 		FROM map_tiles
 		WHERE map_id = $1 AND x BETWEEN $2 AND $3 AND y BETWEEN $4 AND $5
@@ -378,7 +383,7 @@ func (s *Service) ChunkTiles(ctx context.Context, mapID int64, x0, y0, x1, y1 in
 	var out []Tile
 	for rows.Next() {
 		var t Tile
-		if err := rows.Scan(&t.MapID, &t.LayerID, &t.X, &t.Y, &t.EntityTypeID,
+		if err := rows.Scan(&t.MapID, &t.LayerID, &t.X, &t.Y, &t.EntityTypeID, &t.RotationDegrees,
 			&t.AnimOverride, &t.CollisionShapeOverride, &t.CollisionMaskOverride, &t.CustomFlagsJSON,
 		); err != nil {
 			return nil, err
@@ -415,6 +420,15 @@ func (s *Service) PlaceLightingCells(ctx context.Context, cells []LightingCell) 
 }
 
 // ---- helpers ----
+
+func ValidRotationDegrees(v int16) bool {
+	switch v {
+	case 0, 90, 180, 270:
+		return true
+	default:
+		return false
+	}
+}
 
 func defaultStr(v, def string) string {
 	if v == "" {

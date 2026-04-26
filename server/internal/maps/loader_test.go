@@ -92,12 +92,12 @@ func TestLoadChunk_HonorsTileOverrides(t *testing.T) {
 	maskOverride := int64(0x0a)
 	animOverride := int16(7)
 	tile := maps.Tile{
-		MapID:                  m.ID,
-		LayerID:                baseLayerID,
-		X:                      0, Y: 0,
-		EntityTypeID:           etID,
-		AnimOverride:           &animOverride,
-		CollisionMaskOverride:  &maskOverride,
+		MapID:   m.ID,
+		LayerID: baseLayerID,
+		X:       0, Y: 0,
+		EntityTypeID:          etID,
+		AnimOverride:          &animOverride,
+		CollisionMaskOverride: &maskOverride,
 	}
 	_ = svc.PlaceTiles(ctx, []maps.Tile{tile})
 
@@ -116,6 +116,37 @@ func TestLoadChunk_HonorsTileOverrides(t *testing.T) {
 	sp, _ := world.Stores().Sprite.Get(owners[0])
 	if sp.AnimID != 7 {
 		t.Errorf("sprite anim: got %d, want 7 (override)", sp.AnimID)
+	}
+}
+
+func TestLoadChunk_AppliesTileRotationToSpriteAndCollider(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	designerID, etID := resetDB(t, pool)
+	svc := maps.New(pool)
+	ctx := context.Background()
+
+	m, _ := svc.Create(ctx, maps.CreateInput{Name: "rot-load", Width: 4, Height: 4, CreatedBy: designerID})
+	layers, _ := svc.Layers(ctx, m.ID)
+	baseLayerID := layers[0].ID
+
+	if err := svc.PlaceTiles(ctx, []maps.Tile{{
+		MapID: m.ID, LayerID: baseLayerID, X: 0, Y: 0, EntityTypeID: etID, RotationDegrees: 90,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	world := ecs.NewWorld()
+	if _, err := svc.LoadChunk(ctx, world, &stubLookup{}, m.ID, 0, 0, 4, 4); err != nil {
+		t.Fatal(err)
+	}
+	owners := world.Stores().Sprite.Owners()
+	if len(owners) != 1 {
+		t.Fatalf("expected 1 sprite, got %d", len(owners))
+	}
+	sp, _ := world.Stores().Sprite.Get(owners[0])
+	if sp.RotationDegrees != 90 {
+		t.Fatalf("sprite rotation: got %d, want 90", sp.RotationDegrees)
 	}
 }
 

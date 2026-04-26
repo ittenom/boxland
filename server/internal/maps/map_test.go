@@ -137,6 +137,54 @@ func TestPlaceTiles_RoundTripAndChunkQuery(t *testing.T) {
 	}
 }
 
+func TestPlaceTiles_RoundTripsRotationDegrees(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	designerID, etID := resetDB(t, pool)
+	svc := maps.New(pool)
+	ctx := context.Background()
+
+	m, _ := svc.Create(ctx, maps.CreateInput{Name: "rot", Width: 4, Height: 4, CreatedBy: designerID})
+	layers, _ := svc.Layers(ctx, m.ID)
+	baseLayerID := layers[0].ID
+
+	if err := svc.PlaceTiles(ctx, []maps.Tile{{
+		MapID: m.ID, LayerID: baseLayerID, X: 1, Y: 2, EntityTypeID: etID, RotationDegrees: 90,
+	}}); err != nil {
+		t.Fatalf("PlaceTiles: %v", err)
+	}
+
+	got, err := svc.ChunkTiles(ctx, m.ID, 0, 0, 3, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d tiles, want 1", len(got))
+	}
+	if got[0].RotationDegrees != 90 {
+		t.Fatalf("rotation: got %d, want 90", got[0].RotationDegrees)
+	}
+}
+
+func TestPlaceTiles_RejectsInvalidRotationDegrees(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	designerID, etID := resetDB(t, pool)
+	svc := maps.New(pool)
+	ctx := context.Background()
+
+	m, _ := svc.Create(ctx, maps.CreateInput{Name: "bad-rot", Width: 4, Height: 4, CreatedBy: designerID})
+	layers, _ := svc.Layers(ctx, m.ID)
+	baseLayerID := layers[0].ID
+
+	err := svc.PlaceTiles(ctx, []maps.Tile{{
+		MapID: m.ID, LayerID: baseLayerID, X: 1, Y: 2, EntityTypeID: etID, RotationDegrees: 45,
+	}})
+	if err == nil {
+		t.Fatal("expected invalid rotation error")
+	}
+}
+
 func TestPlaceTiles_OverwritesOnSameCell(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()

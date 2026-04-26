@@ -104,9 +104,10 @@ func (s *Service) LoadChunk(
 			animID = uint32(*meta.DefaultAnimationID)
 		}
 		stores.Sprite.Set(e, components.Sprite{
-			AssetID: assetID,
-			Frame:   uint16(meta.AtlasIndex),
-			AnimID:  animID,
+			AssetID:         assetID,
+			Frame:           uint16(meta.AtlasIndex),
+			AnimID:          animID,
+			RotationDegrees: t.RotationDegrees,
 		})
 
 		// Collider. Mask override (per-tile) wins over the type default.

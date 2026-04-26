@@ -56,6 +56,7 @@
 			tool:        "brush", // brush | rect | fill | eyedrop | eraser
 			activeLayer: Number(canvas.getAttribute("data-default-layer-id")) || 0,
 			activeEntity: 0,
+			activeRotation: 0,
 			tiles: new Map(),    // key="L:x:y" -> { layerId, x, y, entityTypeId }
 			// images keyed by SOURCE URL (not entity id) so a tile sheet
 			// referenced by 24 tile entities loads exactly once and every
@@ -73,6 +74,7 @@
 		readPalette(state);
 		renderPaletteThumbs(state);
 		bindTools(state);
+		bindRotation(state);
 		bindLayers(state, canvas);
 		bindPalette(state);
 		bindCanvas(state, canvas, ctx);
@@ -165,14 +167,17 @@
 			if (state.tool === "eyedrop") {
 				const k = tileKey({ layerId, x: cellX, y: cellY });
 				const t = state.tiles.get(k);
-				if (t && t.entityTypeId) setActiveEntity(state, t.entityTypeId);
+				if (t && t.entityTypeId) {
+					setActiveEntity(state, t.entityTypeId);
+					setRotation(state, t.rotationDegrees || 0);
+				}
 				return { placed: [], erased: [] };
 			}
 			if (!state.activeEntity) {
 				flash("Pick an entity from the palette.");
 				return { placed: [], erased: [] };
 			}
-			const t = { layerId, x: cellX, y: cellY, entityTypeId: state.activeEntity };
+			const t = { layerId, x: cellX, y: cellY, entityTypeId: state.activeEntity, rotationDegrees: state.activeRotation };
 			state.tiles.set(tileKey(t), t);
 			return { placed: [t], erased: [] };
 		}
@@ -268,6 +273,7 @@
 		}
 
 		// Hotkeys: B / R / F / I / E mirror the toolbar tooltips.
+		// T rotates the active tile stamp.
 		// H opens the per-realm HUD editor (matches docs/hotkeys.md
 		// + the chip-link in mapmaker.templ).
 		document.addEventListener("keydown", (e) => {
@@ -275,6 +281,7 @@
 			const map = { b: "brush", r: "rect", f: "fill", i: "eyedrop", e: "eraser" };
 			const k = e.key.toLowerCase();
 			if (map[k]) { setTool(state, map[k]); e.preventDefault(); return; }
+			if (k === "t" && !e.ctrlKey && !e.metaKey && !e.altKey) { cycleRotation(state); e.preventDefault(); return; }
 			if (k === "h" && !e.ctrlKey && !e.metaKey && !e.altKey) {
 				const host = document.querySelector("[data-bx-mapmaker-canvas]");
 				const mapId = host && host.getAttribute("data-map-id");
@@ -313,7 +320,7 @@
 				if (target === 0) {
 					if (cur) { state.tiles.delete(k); erased.push({ layerId, x, y }); }
 				} else {
-					const t = { layerId, x, y, entityTypeId: target };
+					const t = { layerId, x, y, entityTypeId: target, rotationDegrees: state.activeRotation };
 					state.tiles.set(k, t);
 					placed.push(t);
 				}
@@ -334,6 +341,23 @@
 				btn.addEventListener("click", () => setTool(state, btn.getAttribute("data-bx-tool")));
 			});
 			highlightTool(state.tool);
+		}
+		function bindRotation(state) {
+			const btn = $("[data-bx-rotate-tile]");
+			if (btn) btn.addEventListener("click", () => cycleRotation(state));
+			updateRotationButton(state);
+		}
+		function cycleRotation(state) {
+			setRotation(state, (state.activeRotation + 90) % 360);
+		}
+		function setRotation(state, degrees) {
+			state.activeRotation = normalizeRotation(degrees);
+			updateRotationButton(state);
+			updateStatus(state);
+		}
+		function updateRotationButton(state) {
+			const btn = $("[data-bx-rotate-tile]");
+			if (btn) btn.textContent = `⟳ ${state.activeRotation}°`;
 		}
 		function setTool(state, tool) {
 			state.tool = tool;
@@ -598,10 +622,10 @@
 				drawPendingCell(ctx, px, py);
 				return;
 			}
-			drawAtlasCell(ctx, img, meta, px, py, TILE_PX, TILE_PX);
+			drawAtlasCell(ctx, img, meta, px, py, TILE_PX, TILE_PX, t.rotationDegrees || 0);
 		}
 
-		function drawAtlasCell(ctx, img, meta, dx, dy, dw, dh) {
+		function drawAtlasCell(ctx, img, meta, dx, dy, dw, dh, rotationDegrees) {
 			// Slice the source sheet to the entity's atlas cell.
 			// (cellPx, cols) come from the asset's tile-sheet metadata
 			// at upload time; single-frame sprites collapse to (32, 1).
@@ -609,7 +633,16 @@
 			const cols = Math.max(1, meta.atlasCols || 1);
 			const sx = (meta.atlasIndex % cols) * cellPx;
 			const sy = Math.floor(meta.atlasIndex / cols) * cellPx;
-			ctx.drawImage(img, sx, sy, cellPx, cellPx, dx, dy, dw, dh);
+			const rot = normalizeRotation(rotationDegrees || 0);
+			if (!rot) {
+				ctx.drawImage(img, sx, sy, cellPx, cellPx, dx, dy, dw, dh);
+				return;
+			}
+			ctx.save();
+			ctx.translate(dx + dw / 2, dy + dh / 2);
+			ctx.rotate(rot * Math.PI / 180);
+			ctx.drawImage(img, sx, sy, cellPx, cellPx, -dw / 2, -dh / 2, dw, dh);
+			ctx.restore();
 		}
 
 		// drawPendingCell renders a 1px dashed outline so an unloaded /
@@ -632,8 +665,9 @@
 				if (state.pending > 0) dirty.textContent = `saving ${state.pending}…`;
 				else if (state.activeEntity) {
 					const meta = state.paletteByEntity.get(state.activeEntity);
-					dirty.textContent = meta ? `painting: ${meta.name}` : `painting: #${state.activeEntity}`;
-				} else dirty.textContent = "pick an entity";
+					const label = meta ? meta.name : `#${state.activeEntity}`;
+					dirty.textContent = `painting: ${label} · ${state.activeRotation}°`;
+				} else dirty.textContent = `pick an entity · ${state.activeRotation}°`;
 			}
 		}
 	}
@@ -645,13 +679,20 @@
 		if (!t) return null;
 		const layerId = Number(t.layerId ?? t.layer_id);
 		const entityTypeId = Number(t.entityTypeId ?? t.entity_type_id);
+		const rotationDegrees = normalizeRotation(t.rotationDegrees ?? t.rotation_degrees ?? 0);
 		const x = Number(t.x);
 		const y = Number(t.y);
 		if (!layerId || !entityTypeId || !Number.isFinite(x) || !Number.isFinite(y)) return null;
-		return { layerId, x, y, entityTypeId };
+		return { layerId, x, y, entityTypeId, rotationDegrees };
 	}
 	function toWire(t) {
-		return { layer_id: t.layerId, x: t.x, y: t.y, entity_type_id: t.entityTypeId };
+		return { layer_id: t.layerId, x: t.x, y: t.y, entity_type_id: t.entityTypeId, rotation_degrees: normalizeRotation(t.rotationDegrees || 0) };
+	}
+
+	function normalizeRotation(degrees) {
+		const n = Number(degrees) || 0;
+		const r = ((n % 360) + 360) % 360;
+		return r === 90 || r === 180 || r === 270 ? r : 0;
 	}
 
 	function pointerToCell(e, canvas) {

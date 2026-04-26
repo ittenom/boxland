@@ -57,6 +57,7 @@ table Tile {
     gy:int32;
     asset_id:uint32;
     frame:uint16;
+    rotation_degrees:int16 = 0;
     collision_shape:CollisionShape;
     edge_collisions:uint8;          // 4 bits derived from collision_shape (N=1, E=2, S=4, W=8)
     collision_layer_mask:uint32;
