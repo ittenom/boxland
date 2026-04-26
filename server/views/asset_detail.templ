@@ -12,32 +12,37 @@ import (
 type AssetDetailProps struct {
 	Asset     assets.Asset
 	PublicURL func(string) string
+
+	// Used-by data — populated by the handler when available. Empty
+	// list = orphan; the modal flags it.
+	UsedBy []RailRef
 }
 
 templ AssetDetail(p AssetDetailProps) {
 	<div class="bx-modal-backdrop" data-bx-dismissible role="dialog" aria-modal="true">
-		<div class="bx-modal">
+		<div class="bx-modal" style="width: min(720px, 95vw);">
 			<header class="bx-modal__header">
-				<h2 data-copy-slot="assets.detail.title">{ p.Asset.Name }</h2>
+				<div class="bx-row" style="gap: var(--bx-s2);">
+					<span class="bx-dot bx-dot--asset"></span>
+					<h2 data-copy-slot="assets.detail.title" style="margin:0;">{ p.Asset.Name }</h2>
+					<span class="bx-badge">{ string(p.Asset.Kind) }</span>
+				</div>
 				<button
 					type="button"
-					class="bx-btn bx-btn--ghost"
+					class="bx-btn bx-btn--ghost bx-btn--small"
 					hx-on:click="this.closest('.bx-modal-backdrop').remove()"
 					aria-label="Close"
-				>
-					Esc
-				</button>
+				>Esc</button>
 			</header>
 			<div class="bx-modal__body bx-stack">
-				<div class="bx-row" style="align-items: flex-start;">
-					<div class="bx-asset-detail__preview" style="flex: 0 0 192px;">
-						if p.Asset.Kind == assets.KindAudio {
-							@AudioPreview(p.Asset, p.PublicURL)
-						} else if p.PublicURL != nil {
-							<img src={ p.PublicURL(p.Asset.ContentAddressedPath) } alt={ p.Asset.Name }/>
-						}
+				<div class="bx-asset-detail">
+					<div>
+						@assetDetailPreview(p)
+						<p class="bx-tiny" style="margin-top: var(--bx-s2); text-align: center;">
+							format <code class="bx-mono">{ p.Asset.OriginalFormat }</code>
+						</p>
 					</div>
-					<div style="flex: 1;">
+					<div class="bx-stack">
 						@Form(FormProps{
 							Action:      fmt.Sprintf("/design/assets/%d/draft", p.Asset.ID),
 							SubmitLabel: "Save draft",
@@ -49,6 +54,30 @@ templ AssetDetail(p AssetDetailProps) {
 							},
 						})
 						<div id="asset-draft-status" aria-live="polite"></div>
+
+						<section>
+							<div class="bx-rail__head" style="margin-bottom: var(--bx-s2);">Used by</div>
+							if len(p.UsedBy) == 0 {
+								<p class="bx-small" style="color: var(--bx-danger);">
+									orphan · zero entities reference this asset
+								</p>
+								<p class="bx-tiny bx-muted" style="margin-top: var(--bx-s1);">
+									Safe to delete, or assign it as a sprite on a new entity.
+								</p>
+							} else {
+								<ul class="bx-rail__list">
+									for _, r := range p.UsedBy {
+										<li>
+											<a class="bx-rail__item" href={ templ.SafeURL(r.Href) }>
+												<span class={ "bx-rail__item__icon bx-dot bx-dot--" + r.Kind }></span>
+												<span class="bx-rail__item__name">{ r.Label }</span>
+												<span class="bx-rail__item__meta">{ r.Meta }</span>
+											</a>
+										</li>
+									}
+								</ul>
+							}
+						</section>
 					</div>
 				</div>
 			</div>
@@ -63,17 +92,35 @@ templ AssetDetail(p AssetDetailProps) {
 					hx-on:htmx:after-request="document.querySelector('.bx-modal-backdrop')?.remove()"
 					data-copy-slot="assets.detail.delete"
 				>
-					Delete
+					Delete asset
 				</button>
+				<button
+					type="button"
+					class="bx-btn bx-btn--ghost bx-btn--small"
+					hx-on:click="this.closest('.bx-modal-backdrop').remove()"
+				>Done</button>
 			</footer>
 		</div>
 	</div>
 }
 
-// AudioPreview renders the chunky-pixel waveform plus playback controls.
-// The waveform decodes via Web Audio (in waveform.ts); playback uses the
-// browser's native <audio> element so we get loop / volume controls for
-// free without bespoke JS.
+// assetDetailPreview picks the right preview surface (sprite/tile image,
+// audio waveform + transport, or an empty pane for unknown kinds).
+templ assetDetailPreview(p AssetDetailProps) {
+	if p.Asset.Kind == assets.KindAudio {
+		@AudioPreview(p.Asset, p.PublicURL)
+	} else if p.PublicURL != nil {
+		<div class="bx-asset-detail__preview bx-pixel">
+			<img src={ p.PublicURL(p.Asset.ContentAddressedPath) } alt={ p.Asset.Name }/>
+		</div>
+	} else {
+		<div class="bx-asset-detail__preview"></div>
+	}
+}
+
+// AudioPreview renders the waveform + native playback controls. The
+// waveform decodes via Web Audio in waveform.ts; playback uses
+// <audio> so we get loop / volume controls for free.
 templ AudioPreview(a assets.Asset, publicURL func(string) string) {
 	<div class="bx-panel bx-asset-detail__audio bx-stack-tight">
 		<canvas
@@ -93,9 +140,6 @@ templ AudioPreview(a assets.Asset, publicURL func(string) string) {
 		>
 			Audio playback unsupported in this browser.
 		</audio>
-		<p class="bx-small bx-muted">
-			Format <code>{ a.OriginalFormat }</code>
-		</p>
 	</div>
 }
 

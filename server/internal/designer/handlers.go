@@ -550,7 +550,9 @@ func getAssetUploadModal(_ Deps) http.HandlerFunc {
 	}
 }
 
-// getAssetDetail renders the per-asset modal.
+// getAssetDetail renders the per-asset modal. Loads the connections
+// rail data inline so the modal carries "used by" context without an
+// extra round trip.
 func getAssetDetail(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := assetIDFromPath(r)
@@ -563,9 +565,16 @@ func getAssetDetail(d Deps) http.HandlerFunc {
 			http.Error(w, "asset not found", http.StatusNotFound)
 			return
 		}
+		var usedBy []views.RailRef
+		if rail, err := ConnectionsForAsset(r.Context(), d, id); err == nil && rail != nil {
+			usedBy = rail.UsedBy
+		} else if err != nil {
+			slog.Warn("connections for asset", "err", err, "id", id)
+		}
 		renderHTML(w, r, views.AssetDetail(views.AssetDetailProps{
 			Asset:     *a,
 			PublicURL: d.ObjectStore.PublicURL,
+			UsedBy:    usedBy,
 		}))
 	}
 }

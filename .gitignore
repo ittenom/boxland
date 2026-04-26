@@ -53,6 +53,10 @@ vendor/
 # Probe / scratch scripts
 _*.ps1
 _*.txt
+_*.html
+_*.bat
+_*.pid
+_*.err
 server/migrate.out
 server/migrate.err
 server/server.log
