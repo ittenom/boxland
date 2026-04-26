@@ -63,6 +63,15 @@ func RequireDesigner(next http.Handler) http.Handler {
 	})
 }
 
+// isHTMXRequest reports whether the request is an htmx-driven swap (and
+// therefore a fragment response is expected). False for any direct
+// browser navigation: new-tab/middle-click on an `<a hx-get …>` link,
+// bookmarks, address-bar refreshes, or htmx HX-Redirect landings —
+// all of which need a full styled page, not a bare fragment.
+func isHTMXRequest(r *http.Request) bool {
+	return r.Header.Get("HX-Request") == "true"
+}
+
 func wantsHTML(r *http.Request) bool {
 	for _, accept := range r.Header.Values("Accept") {
 		if accept == "" {

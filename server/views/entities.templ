@@ -16,6 +16,14 @@ type EntitiesListProps struct {
 	// (only entities with SpriteAssetID == nil). The toolbar shows
 	// what's active so the trim is never invisible to the user.
 	ActiveFilter string
+
+	// ModalSlot is an optional pre-rendered modal that gets injected
+	// into #modal-host on first paint. Used when a deep link to an
+	// entity (full-page navigation, new tab, bookmark, or an
+	// HX-Redirect landing) has to render the styled list page AND
+	// open the detail modal at the same time. Nil for normal list
+	// renders, where #modal-host stays empty until htmx fills it.
+	ModalSlot templ.Component
 }
 
 templ EntitiesList(p EntitiesListProps) {
@@ -83,7 +91,11 @@ templ EntitiesList(p EntitiesListProps) {
 			@EntitiesGrid(p)
 		</div>
 
-		<div id="modal-host"></div>
+		<div id="modal-host">
+			if p.ModalSlot != nil {
+				@p.ModalSlot
+			}
+		</div>
 	}
 }
 

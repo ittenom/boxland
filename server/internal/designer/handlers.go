@@ -758,10 +758,47 @@ func getAssetDetail(d Deps) http.HandlerFunc {
 		} else if err != nil {
 			slog.Warn("connections for asset", "err", err, "id", id)
 		}
-		renderHTML(w, r, views.AssetDetail(views.AssetDetailProps{
+		modal := views.AssetDetail(views.AssetDetailProps{
 			Asset:     *a,
 			PublicURL: assetPublicURLFunc([]assets.Asset{*a}),
 			UsedBy:    usedBy,
+		})
+
+		// HTMX swap into #modal-host — fragment-only response.
+		if isHTMXRequest(r) {
+			renderHTML(w, r, modal)
+			return
+		}
+
+		// Full-page navigation: render the Asset Manager list with the
+		// detail modal pre-injected, so deep links / bookmarks / new
+		// tabs land on a fully styled page instead of a bare fragment.
+		items, err := d.Assets.List(r.Context(), assets.ListOpts{})
+		if err != nil {
+			slog.Error("assets list (detail full-page)", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		usage, err := AssetUsageMap(r.Context(), d, assetIDs(items))
+		if err != nil {
+			slog.Warn("asset usage map (detail full-page)", "err", err)
+		}
+		layout := BuildChrome(r, d)
+		layout.Title = a.Name
+		layout.Surface = "asset-manager"
+		layout.ActiveKind = "asset"
+		layout.ActiveID = a.ID
+		layout.Variant = "no-rail"
+		layout.Crumbs = []views.Crumb{
+			{Label: "Assets", Href: "/design/assets"},
+			{Label: a.Name},
+		}
+		renderHTML(w, r, views.AssetsList(views.AssetsListProps{
+			Layout:    layout,
+			Items:     items,
+			PublicURL: assetPublicURLFunc(items),
+			UsageByID: usage,
+			ModalSlot: modal,
 		}))
 	}
 }
@@ -1616,7 +1653,40 @@ func getEntityDetail(d Deps) http.HandlerFunc {
 			props.AutomationActions = d.AutomationActions
 		}
 
-		renderHTML(w, r, views.EntityDetail(props))
+		modal := views.EntityDetail(props)
+
+		// HTMX swap target (#modal-host) — return just the modal markup.
+		// The list page is already on screen; styles + scripts already loaded.
+		if isHTMXRequest(r) {
+			renderHTML(w, r, modal)
+			return
+		}
+
+		// Full-page navigation (new tab, bookmark, refresh, or HX-Redirect
+		// landing from postEntityCreate). Render the styled list page with
+		// the detail modal seeded into #modal-host so the user sees the
+		// real Entity Manager — not an unstyled fragment.
+		items, err := d.Entities.List(r.Context(), entities.ListOpts{})
+		if err != nil {
+			slog.Error("entities list (detail full-page)", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		layout := BuildChrome(r, d)
+		layout.Title = et.Name
+		layout.Surface = "entity-manager"
+		layout.ActiveKind = "entity"
+		layout.ActiveID = et.ID
+		layout.Variant = "no-rail"
+		layout.Crumbs = []views.Crumb{
+			{Label: "Entities", Href: "/design/entities"},
+			{Label: et.Name},
+		}
+		renderHTML(w, r, views.EntitiesList(views.EntitiesListProps{
+			Layout:    layout,
+			Items:     items,
+			ModalSlot: modal,
+		}))
 	}
 }
 

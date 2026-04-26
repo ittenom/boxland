@@ -109,6 +109,73 @@ func TestEntityDetail_RendersFormAndComponents(t *testing.T) {
 	}
 }
 
+// TestEntityDetail_FullPage_WrapsInShell guards against the regression
+// where /design/entities/{id} (opened in a new tab, bookmarked, or
+// landed via HX-Redirect from create) returned only the bare modal
+// fragment without any of the page chrome / stylesheet. Customer
+// reports filed this as "entity details render outside the
+// stylesheet".
+func TestEntityDetail_FullPage_WrapsInShell(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	resetDB(t, pool)
+	deps, designerID := fullDepsWithEntities(t, pool)
+	srv := buildHandler(deps)
+	ctx := context.Background()
+	tok, _ := deps.Auth.OpenSession(ctx, designerID, "ua", nil)
+
+	et, _ := deps.Entities.Create(ctx, entities.CreateInput{Name: "ranger", CreatedBy: designerID})
+
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, authedReq(http.MethodGet, "/design/entities/"+itoa(et.ID), tok, nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("detail status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	// Full page: doctype + entity-manager surface + stylesheet link.
+	for _, want := range []string{
+		`<!doctype html>`,
+		`data-surface="entity-manager"`,
+		`/static/css/pixel.css`,
+		`bx-modal-backdrop`, // detail modal seeded into #modal-host
+		`>ranger<`,          // entity name in the modal header
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in full-page detail body", want)
+		}
+	}
+}
+
+// TestEntityDetail_HTMX_ReturnsFragmentOnly confirms the HTMX swap
+// path stays a fragment — no <head>, no shell — so #modal-host gets
+// only the modal markup, as before.
+func TestEntityDetail_HTMX_ReturnsFragmentOnly(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	resetDB(t, pool)
+	deps, designerID := fullDepsWithEntities(t, pool)
+	srv := buildHandler(deps)
+	ctx := context.Background()
+	tok, _ := deps.Auth.OpenSession(ctx, designerID, "ua", nil)
+
+	et, _ := deps.Entities.Create(ctx, entities.CreateInput{Name: "ranger", CreatedBy: designerID})
+
+	req := authedReq(http.MethodGet, "/design/entities/"+itoa(et.ID), tok, nil)
+	req.Header.Set("HX-Request", "true")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("detail status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if strings.Contains(body, "<!doctype html>") || strings.Contains(body, "data-surface=") {
+		t.Errorf("HTMX response should be fragment-only; got full page:\n%s", body)
+	}
+	if !strings.Contains(body, "bx-modal-backdrop") || !strings.Contains(body, ">ranger<") {
+		t.Errorf("HTMX response missing modal markup; body=%s", body)
+	}
+}
+
 func TestEntityComponentLifecycle(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()

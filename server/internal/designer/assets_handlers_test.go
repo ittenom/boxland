@@ -285,6 +285,76 @@ func TestAssetDetail_ShowsForm(t *testing.T) {
 	}
 }
 
+// TestAssetDetail_FullPage_WrapsInShell guards against the regression
+// where /design/assets/{id} returned a bare modal fragment (no
+// stylesheet, no chrome) when reached via direct browser navigation
+// — new tab, bookmark, or refresh.
+func TestAssetDetail_FullPage_WrapsInShell(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	resetDB(t, pool)
+	deps, designerID := fullDeps(t, pool)
+	srv := buildHandler(deps)
+	ctx := context.Background()
+
+	a, _ := deps.Assets.Create(ctx, assets.CreateInput{
+		Kind: assets.KindSprite, Name: "rune", ContentAddressedPath: "p",
+		OriginalFormat: "png", CreatedBy: designerID,
+	})
+
+	tok, _ := deps.Auth.OpenSession(ctx, designerID, "ua", nil)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, authedReq(http.MethodGet, "/design/assets/"+itoa(a.ID), tok, nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("detail status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		`<!doctype html>`,
+		`data-surface="asset-manager"`,
+		`/static/css/pixel.css`,
+		`bx-modal-backdrop`,
+		`>rune<`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in full-page asset-detail body", want)
+		}
+	}
+}
+
+// TestAssetDetail_HTMX_ReturnsFragmentOnly confirms HTMX swaps still
+// get just the modal — same shape clients have relied on since day
+// one of the Asset Manager.
+func TestAssetDetail_HTMX_ReturnsFragmentOnly(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	resetDB(t, pool)
+	deps, designerID := fullDeps(t, pool)
+	srv := buildHandler(deps)
+	ctx := context.Background()
+
+	a, _ := deps.Assets.Create(ctx, assets.CreateInput{
+		Kind: assets.KindSprite, Name: "rune", ContentAddressedPath: "p",
+		OriginalFormat: "png", CreatedBy: designerID,
+	})
+
+	tok, _ := deps.Auth.OpenSession(ctx, designerID, "ua", nil)
+	req := authedReq(http.MethodGet, "/design/assets/"+itoa(a.ID), tok, nil)
+	req.Header.Set("HX-Request", "true")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("detail status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if strings.Contains(body, "<!doctype html>") || strings.Contains(body, "data-surface=") {
+		t.Errorf("HTMX response should be fragment-only; got full page:\n%s", body)
+	}
+	if !strings.Contains(body, "bx-modal-backdrop") || !strings.Contains(body, ">rune<") {
+		t.Errorf("HTMX response missing modal markup; body=%s", body)
+	}
+}
+
 func TestAssetsGrid_TileSheetShowsCellPreview(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()

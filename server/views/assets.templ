@@ -27,6 +27,13 @@ type AssetsListProps struct {
 	// chip + clear-filter affordance in the toolbar so the user always
 	// knows what's active.
 	ActiveFilter string
+
+	// ModalSlot is an optional pre-rendered modal that gets injected
+	// into #modal-host on first paint. Used when a deep link to an
+	// asset (full-page navigation, new tab, bookmark) has to render
+	// the styled list page AND open the detail modal at the same
+	// time. Nil for normal list renders.
+	ModalSlot templ.Component
 }
 
 templ AssetsList(p AssetsListProps) {
@@ -83,7 +90,11 @@ templ AssetsList(p AssetsListProps) {
 			@AssetsGrid(p)
 		</div>
 
-		<div id="modal-host"></div>
+		<div id="modal-host">
+			if p.ModalSlot != nil {
+				@p.ModalSlot
+			}
+		</div>
 	}
 }
 
