@@ -1,22 +1,30 @@
-// Package tli renders the Boxland Terminal Launch Interface — the menu you
-// see when you run `boxland` with no arguments.
+// Package tli renders the Boxland Terminal Launch Interface — the menu
+// you see when you run `boxland` with no arguments.
 //
 // The TLI is built on Charmbracelet's bubbles + lipgloss components:
 //
-//   - viewport.Model holds the gradient logo header so it stays anchored at
-//     the top and gracefully overflows on tiny terminals.
+//   - viewport.Model holds the gradient logo header so it stays anchored
+//     at the top and gracefully overflows on tiny terminals.
 //   - list.Model owns the menu items, with a custom ItemDelegate that
 //     renders each row in clean tabular form (no background pills, color
 //     applied to text, ▎ as the selection bar).
 //   - spinner.Model ticks in the footer to show the program is alive.
-//   - stopwatch.Model times the running subcommand (install, design, …).
+//   - stopwatch.Model times the running indefinite job.
 //   - list.NewStatusMessage flashes a "✓ done in 1m 23s" toast in the list
 //     status bar after a run returns.
-//   - viewport.Model (a second one) tails captured stdout/stderr while a
-//     non-interactive command is running.
+//   - viewport.Model (a second one) tails captured stdout/stderr while
+//     non-interactive jobs are running.
 //
-// Style cues come from the lipgloss "layout" example: thin underline rules,
-// columns aligned without dividers, and color carried by foreground only.
+// Layout: while a long-running job is live we split the body into a left
+// menu pane and a right logs pane (composed with lipgloss.JoinHorizontal,
+// no extra layout dep). At most one *indefinite* job (Design, Serve) can
+// run at a time; quick jobs (Migrate, Up, Down, Backup, Test) can run
+// alongside it and stream their output into the same pane prefixed with
+// "[Title] …" so it's clear what emitted what.
+//
+// Style cues come from the lipgloss "layout" example: thin underline
+// rules, columns aligned without dividers, color carried by foreground
+// only.
 package tli
 
 import (
@@ -25,6 +33,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -39,12 +48,12 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// phase tracks which view the model is currently rendering.
-type phase int
+// focus tracks which pane keystrokes route to.
+type focus int
 
 const (
-	phaseMenu phase = iota
-	phaseRun
+	focusMenu focus = iota
+	focusLogs
 )
 
 // item is a single launchable command in the menu. It satisfies list.Item.
@@ -63,10 +72,21 @@ func (i item) FilterValue() string {
 	return i.title + " " + i.badge + " " + i.desc + " " + strings.Join(i.cmd, " ")
 }
 
+// job tracks one in-flight subprocess. We keep finished jobs around just
+// long enough to flash a toast on the next Update; appendTail prefixes
+// lines from non-indefinite jobs with the title so it's obvious in the
+// shared logs pane which command emitted what.
+type job struct {
+	id          string
+	it          item
+	runner      *runner // nil for jobs run via tea.ExecProcess
+	started     time.Time
+	cancelArmed bool
+	listening   bool // server detected as accepting connections
+}
+
 // model wires the bubbles components together.
 type model struct {
-	phase phase
-
 	list      list.Model
 	spinner   spinner.Model
 	header    viewport.Model
@@ -76,18 +96,18 @@ type model struct {
 	width  int
 	height int
 	ready  bool
+	focus  focus
 
-	// Run state.
-	running     item       // item currently executing (valid in phaseRun)
-	runner      *runner    // captured-pipe runner (nil for interactive items)
-	runErr      error      // last run's exit error
-	runDone     bool       // subprocess has exited
-	runElapsed  time.Duration
-	cancelArmed bool // user pressed cancel once; another press force-kills
+	// Active jobs keyed by id (item.title). currentIndefinite, when set,
+	// is the one job whose stopwatch and ctrl+c handling drive the run
+	// footer; quick jobs are tracked in jobs but don't get the spotlight.
+	jobs              map[string]*job
+	currentIndefinite *job
 
-	// run is set true on successful exit from phaseMenu so RunAndExec knows
-	// not to re-shell out (we already ran the command in-loop).
-	exitChosen bool
+	// Aggregated tail across all live and recently-finished jobs. We
+	// rebuild from per-job runners on every output batch — cheap because
+	// each runner caps its own buffer at tailMaxLines.
+	tailLines []string
 }
 
 // ANSI 256-color palette. We avoid truecolor so the TLI looks consistent
@@ -140,8 +160,28 @@ var (
 	statusErr      = lipgloss.NewStyle().Foreground(cRed).Bold(true)
 	tailStyle      = lipgloss.NewStyle().Foreground(cMuted)
 
+	// Logs pane bubble. Rounded border in cSubtle keeps it quiet next to
+	// the menu; the title (running item name) carries the colour.
+	bubbleBorder       = lipgloss.RoundedBorder()
+	bubbleStyle        = lipgloss.NewStyle().Border(bubbleBorder).BorderForeground(cSubtle).Padding(0, 1)
+	bubbleStyleFocused = lipgloss.NewStyle().Border(bubbleBorder).BorderForeground(cPink).Padding(0, 1)
+	bubbleTitleStyle   = lipgloss.NewStyle().Foreground(cPink).Bold(true)
+
+	// Pinned-services strip styles. Note: we render the URL with a raw
+	// ANSI sequence (foreground + underline) rather than a lipgloss
+	// style, because lipgloss's word-wrapper splits styled text that
+	// contains ESC bytes (the OSC-8 hyperlink wrapper) into per-character
+	// runs, which breaks substring assertions and bloats output ~50x.
+	pinLabelStyle = lipgloss.NewStyle().Foreground(cCyan).Bold(true)
+	pinWaitStyle  = lipgloss.NewStyle().Foreground(cMuted).Italic(true)
+
 	docStyle = lipgloss.NewStyle().Padding(1, 2)
 )
+
+// menuPaneWidth is the fixed left-pane width while a job is running. The
+// list still gets scrollable rows; pegging this makes the logs pane reflow
+// predictably across terminal sizes.
+const menuPaneWidth = 52
 
 // delegate is our custom list.ItemDelegate for the menu.
 type delegate struct{}
@@ -189,7 +229,14 @@ func (delegate) Render(w io.Writer, m list.Model, index int, listItem list.Item)
 
 	headerRow := gutter + name + badge + gap + desc
 	indent := strings.Repeat(" ", used)
-	cmdRow := indent + cmdStyle.Render("$ "+strings.Join(it.cmd, " "))
+	// Clip the command row to the list width so a long backup path
+	// doesn't blow out the layout when the menu sits beside the logs
+	// pane.
+	cmdMax := m.Width() - used - 2
+	if cmdMax < 12 {
+		cmdMax = 12
+	}
+	cmdRow := indent + cmdStyle.Render("$ "+truncate(strings.Join(it.cmd, " "), cmdMax))
 
 	fmt.Fprint(w, headerRow+"\n"+cmdRow)
 }
@@ -252,12 +299,13 @@ func newModel() model {
 	sw := stopwatch.NewWithInterval(100 * time.Millisecond)
 
 	return model{
-		phase:     phaseMenu,
 		list:      l,
 		spinner:   s,
 		header:    header,
 		tail:      tail,
 		stopwatch: sw,
+		focus:     focusMenu,
+		jobs:      map[string]*job{},
 	}
 }
 
@@ -270,52 +318,79 @@ func headerHeight() int {
 
 func (m model) Init() tea.Cmd { return m.spinner.Tick }
 
+// ---------------------------------------------------------------------------
+// Update
+// ---------------------------------------------------------------------------
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch m.phase {
-	case phaseMenu:
-		return m.updateMenu(msg)
-	case phaseRun:
-		return m.updateRun(msg)
-	}
-	return m, nil
-}
-
-// ---------------------------------------------------------------------------
-// Menu phase
-// ---------------------------------------------------------------------------
-
-func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.applySize(msg.Width, msg.Height)
 
+	case runOutputMsg:
+		m.appendOutput(msg)
+		if j, ok := m.jobs[msg.jobID]; ok && j.runner != nil {
+			cmds = append(cmds, j.runner.poll())
+		}
+
 	case runDoneMsg:
-		// Returned from an interactive (tea.ExecProcess) run.
 		return m.handleRunDone(msg)
+
+	case runStartFailedMsg:
+		return m.handleRunDone(runDoneMsg{jobID: msg.jobID, err: msg.err})
 
 	case tea.KeyMsg:
 		// Don't intercept keys while the list's filter input is active.
-		if m.list.FilterState() != list.Filtering {
+		filtering := m.focus == focusMenu && m.list.FilterState() == list.Filtering
+		if !filtering {
 			switch {
 			case key.Matches(msg, key.NewBinding(key.WithKeys("ctrl+c"))):
-				return m, tea.Quit
-			case key.Matches(msg, key.NewBinding(key.WithKeys("q", "esc"))):
+				return m.handleCtrlC()
+			case key.Matches(msg, key.NewBinding(key.WithKeys("tab"))):
+				m.toggleFocus()
+				return m, nil
+			case key.Matches(msg, key.NewBinding(key.WithKeys("shift+tab"))):
+				m.toggleFocus()
+				return m, nil
+			case m.focus == focusMenu && key.Matches(msg, key.NewBinding(key.WithKeys("q", "esc"))):
 				if m.list.FilterState() == list.Unfiltered {
 					return m, tea.Quit
 				}
-			case key.Matches(msg, key.NewBinding(key.WithKeys("enter"))):
+			case m.focus == focusMenu && key.Matches(msg, key.NewBinding(key.WithKeys("enter"))):
 				return m.startSelected()
 			}
 		}
 	}
 
+	// Route arrow/page keys to the focused pane. The menu's list.Model
+	// always gets non-key messages (like its own filter/help cmds).
 	var cmd tea.Cmd
-	m.list, cmd = m.list.Update(msg)
-	cmds = append(cmds, cmd)
+	switch m.focus {
+	case focusLogs:
+		// Send keys (and ticks) to the tail viewport.
+		m.tail, cmd = m.tail.Update(msg)
+		cmds = append(cmds, cmd)
+		// Still let the list see non-key messages.
+		if _, isKey := msg.(tea.KeyMsg); !isKey {
+			m.list, cmd = m.list.Update(msg)
+			cmds = append(cmds, cmd)
+		}
+	default:
+		m.list, cmd = m.list.Update(msg)
+		cmds = append(cmds, cmd)
+		// Tail still ticks (animations, etc.) on non-key messages.
+		if _, isKey := msg.(tea.KeyMsg); !isKey {
+			m.tail, cmd = m.tail.Update(msg)
+			cmds = append(cmds, cmd)
+		}
+	}
 
 	m.spinner, cmd = m.spinner.Update(msg)
+	cmds = append(cmds, cmd)
+
+	m.stopwatch, cmd = m.stopwatch.Update(msg)
 	cmds = append(cmds, cmd)
 
 	m.header, cmd = m.header.Update(msg)
@@ -324,48 +399,96 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// startSelected transitions to phaseRun and either spawns a captured-pipe
-// runner or delegates to tea.ExecProcess for items that need a real TTY.
+// toggleFocus flips between menu and logs panes. Logs focus is a no-op
+// when no jobs are running (there's nothing to scroll).
+func (m *model) toggleFocus() {
+	if !m.hasJobs() {
+		m.focus = focusMenu
+		return
+	}
+	if m.focus == focusMenu {
+		m.focus = focusLogs
+	} else {
+		m.focus = focusMenu
+	}
+}
+
+// handleCtrlC: cancel the current indefinite job if any (first press =
+// graceful, second = the runner's WaitDelay forces a kill); otherwise
+// quit the TLI.
+func (m model) handleCtrlC() (tea.Model, tea.Cmd) {
+	if m.currentIndefinite != nil {
+		j := m.currentIndefinite
+		if j.runner != nil {
+			j.runner.Cancel()
+			j.cancelArmed = true
+		}
+		return m, nil
+	}
+	return m, tea.Quit
+}
+
+// hasJobs reports whether any subprocess is live or any tail content is
+// worth showing.
+func (m model) hasJobs() bool {
+	return len(m.jobs) > 0 || len(m.tailLines) > 0
+}
+
+// startSelected validates the request, registers a job, and either spawns
+// a captured-pipe runner or hands off to tea.ExecProcess. Quick jobs may
+// run in parallel with one indefinite job; a second indefinite or any
+// interactive job is rejected with a status-bar toast while a job is
+// live.
 func (m model) startSelected() (tea.Model, tea.Cmd) {
 	it, ok := m.list.SelectedItem().(item)
 	if !ok || len(it.cmd) == 0 {
 		return m, nil
 	}
 
+	if _, dup := m.jobs[it.title]; dup {
+		return m, m.list.NewStatusMessage(it.title + " is already running.")
+	}
+
+	if m.currentIndefinite != nil {
+		if it.indefinite {
+			return m, m.list.NewStatusMessage("Stop " + m.currentIndefinite.it.title + " first (ctrl+c).")
+		}
+		if it.interactive {
+			return m, m.list.NewStatusMessage("Stop " + m.currentIndefinite.it.title + " before running " + it.title + ".")
+		}
+	}
+
 	bin, args := resolveCmd(it.cmd)
 
-	m.phase = phaseRun
-	m.running = it
-	m.runner = nil
-	m.runErr = nil
-	m.runDone = false
-	m.runElapsed = 0
-	m.cancelArmed = false
-	m.tail.GotoTop()
-	m.tail.SetContent("")
-
-	// Reset + start the stopwatch.
-	resetCmd := m.stopwatch.Reset()
-	startCmd := m.stopwatch.Start()
-
 	if it.interactive {
-		// Hand the terminal over directly; bubbletea suspends the TUI for
-		// the duration of the subprocess and resumes after.
-		started := time.Now()
+		// Hand the terminal over directly; bubbletea suspends the TUI
+		// for the duration of the subprocess and resumes after.
+		j := &job{id: it.title, it: it, started: time.Now()}
+		m.jobs[it.title] = j
 		c := exec.Command(bin, args...)
 		execCmd := tea.ExecProcess(c, func(err error) tea.Msg {
-			return runDoneMsg{err: err, elapsed: time.Since(started)}
+			return runDoneMsg{jobID: it.title, err: err, elapsed: time.Since(j.started)}
 		})
-		return m, tea.Batch(resetCmd, startCmd, execCmd)
+		return m, execCmd
 	}
 
-	// Non-interactive: capture pipes and stream into the runner view.
-	r, pollCmd, err := startRunner(bin, args)
+	r, pollCmd, err := startRunner(it.title, bin, args)
 	if err != nil {
-		return m, func() tea.Msg { return runStartFailedMsg{err: err} }
+		return m, func() tea.Msg { return runStartFailedMsg{jobID: it.title, err: err} }
 	}
-	m.runner = r
-	return m, tea.Batch(resetCmd, startCmd, pollCmd)
+	j := &job{id: it.title, it: it, runner: r, started: time.Now()}
+	m.jobs[it.title] = j
+
+	var extra []tea.Cmd
+	if it.indefinite {
+		m.currentIndefinite = j
+		// Reset + start the stopwatch for the new spotlight job.
+		extra = append(extra, m.stopwatch.Reset(), m.stopwatch.Start())
+		// Auto-focus the logs pane so the user sees output immediately.
+		m.focus = focusLogs
+	}
+	extra = append(extra, pollCmd)
+	return m, tea.Batch(extra...)
 }
 
 // resolveCmd substitutes the calling executable for any literal "boxland"
@@ -382,106 +505,64 @@ func resolveCmd(cmd []string) (string, []string) {
 }
 
 // ---------------------------------------------------------------------------
-// Run phase
+// Output handling
 // ---------------------------------------------------------------------------
 
-func (m model) updateRun(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmds []tea.Cmd
-
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.applySize(msg.Width, msg.Height)
-
-	case runOutputMsg:
-		m.appendTail(msg.lines)
-		if m.runner != nil {
-			cmds = append(cmds, m.runner.poll())
+// appendOutput merges the new batch into the aggregated tail, prefixing
+// quick-job lines with the job title, and detects the listening marker
+// for service-URL pinning.
+func (m *model) appendOutput(msg runOutputMsg) {
+	j, ok := m.jobs[msg.jobID]
+	if !ok || len(msg.lines) == 0 {
+		return
+	}
+	prefix := ""
+	// Prefix lines from quick jobs running alongside an indefinite one
+	// so users can tell what's printing what.
+	if !j.it.indefinite && m.currentIndefinite != nil {
+		prefix = lipgloss.NewStyle().Foreground(cTeal).Render("["+j.it.title+"] ") + " "
+	}
+	for _, line := range msg.lines {
+		if !j.listening && j.it.indefinite && DetectListening(line) {
+			j.listening = true
 		}
-
-	case runDoneMsg:
-		return m.handleRunDone(msg)
-
-	case runStartFailedMsg:
-		return m.handleRunDone(runDoneMsg{err: msg.err})
-
-	case tea.KeyMsg:
-		switch {
-		case key.Matches(msg, key.NewBinding(key.WithKeys("ctrl+c"))):
-			return m.handleCancel()
-		case m.runDone && key.Matches(msg, key.NewBinding(key.WithKeys("enter", " "))):
-			return m.returnToMenu()
-		case m.runDone && key.Matches(msg, key.NewBinding(key.WithKeys("q", "esc"))):
-			return m, tea.Quit
-		case key.Matches(msg, key.NewBinding(key.WithKeys("q"))):
-			// While running, q forwards a graceful cancel.
-			return m.handleCancel()
-		}
+		m.tailLines = append(m.tailLines, prefix+line)
 	}
-
-	var cmd tea.Cmd
-	m.spinner, cmd = m.spinner.Update(msg)
-	cmds = append(cmds, cmd)
-
-	m.stopwatch, cmd = m.stopwatch.Update(msg)
-	cmds = append(cmds, cmd)
-
-	m.tail, cmd = m.tail.Update(msg)
-	cmds = append(cmds, cmd)
-
-	return m, tea.Batch(cmds...)
-}
-
-func (m model) handleCancel() (tea.Model, tea.Cmd) {
-	if m.runDone {
-		// Already finished — just go back to the menu.
-		return m.returnToMenu()
+	if len(m.tailLines) > tailMaxLines {
+		m.tailLines = m.tailLines[len(m.tailLines)-tailMaxLines:]
 	}
-	if m.runner == nil {
-		// Interactive run; tea.ExecProcess owns the terminal already.
-		return m, nil
-	}
-	m.runner.Cancel()
-	m.cancelArmed = true
-	return m, nil
+	m.tail.SetContent(tailStyle.Render(strings.Join(m.tailLines, "\n")))
+	m.tail.GotoBottom()
 }
 
 func (m model) handleRunDone(msg runDoneMsg) (tea.Model, tea.Cmd) {
-	m.runDone = true
-	m.runErr = msg.err
-	m.runElapsed = msg.elapsed
-	stopCmd := m.stopwatch.Stop()
-	// For indefinite items the user explicitly cancelled, so an error is
+	j, ok := m.jobs[msg.jobID]
+	if !ok {
+		return m, nil
+	}
+	delete(m.jobs, msg.jobID)
+
+	// For indefinite items the user explicitly cancelled, an error is
 	// expected and we shouldn't shout about it.
-	if m.running.indefinite && m.cancelArmed {
-		m.runErr = nil
+	err := msg.err
+	if j.it.indefinite && j.cancelArmed {
+		err = nil
 	}
-	return m, stopCmd
-}
 
-func (m model) returnToMenu() (tea.Model, tea.Cmd) {
-	toast := summaryToast(m.running, m.runErr, m.runElapsed)
-	statusCmd := m.list.NewStatusMessage(toast)
+	toast := summaryToast(j.it, err, msg.elapsed)
+	cmds := []tea.Cmd{m.list.NewStatusMessage(toast)}
 
-	m.phase = phaseMenu
-	m.runner = nil
-	m.runDone = false
-	m.cancelArmed = false
-	m.tail.SetContent("")
-	resetCmd := m.stopwatch.Reset()
-
-	return m, tea.Batch(resetCmd, statusCmd)
-}
-
-// appendTail rebuilds the tail viewport from the runner's rolling buffer.
-// We rebuild rather than appending because the buffer drops oldest lines
-// once it exceeds tailMaxLines, and a viewport doesn't have a "drop top"
-// primitive of its own.
-func (m *model) appendTail(lines []string) {
-	if len(lines) == 0 || m.runner == nil {
-		return
+	if m.currentIndefinite != nil && m.currentIndefinite.id == msg.jobID {
+		m.currentIndefinite = nil
+		cmds = append(cmds, m.stopwatch.Stop(), m.stopwatch.Reset())
+		// Drop logs focus once the spotlight job ends and there's
+		// nothing left to read interactively.
+		if !m.hasJobs() {
+			m.focus = focusMenu
+		}
 	}
-	m.tail.SetContent(tailStyle.Render(strings.Join(m.runner.Tail(), "\n")))
-	m.tail.GotoBottom()
+
+	return m, tea.Batch(cmds...)
 }
 
 // ---------------------------------------------------------------------------
@@ -500,18 +581,34 @@ func (m *model) applySize(w, h int) {
 	m.header.Height = headerHeight()
 	m.header.SetContent(renderHeader(contentWidth))
 
-	listHeight := h - headerHeight() - 5
-	if listHeight < 8 {
-		listHeight = 8
+	bodyHeight := h - headerHeight() - 5
+	if bodyHeight < 10 {
+		bodyHeight = 10
 	}
-	m.list.SetSize(contentWidth, listHeight)
 
-	tailHeight := h - headerHeight() - 8
-	if tailHeight < 6 {
-		tailHeight = 6
+	// Two-column body when the terminal is wide enough; otherwise the
+	// list takes the whole width and the logs pane drops below it.
+	listWidth := contentWidth
+	if contentWidth >= menuPaneWidth+30 {
+		listWidth = menuPaneWidth
 	}
-	m.tail.Width = contentWidth
-	m.tail.Height = tailHeight
+	m.list.SetSize(listWidth, bodyHeight)
+
+	// Tail viewport sits inside a 1-cell rounded border with 1 col of
+	// padding on each side, plus a 2-line title block above. We size
+	// the inner viewport so the bordered bubble matches the list.
+	tailWidth := contentWidth - listWidth - 1
+	if tailWidth < 30 {
+		tailWidth = 30
+	}
+	m.tail.Width = tailWidth - 4 // border (2) + padding (2)
+	if m.tail.Width < 10 {
+		m.tail.Width = 10
+	}
+	m.tail.Height = bodyHeight - 4 // border + title area
+	if m.tail.Height < 4 {
+		m.tail.Height = 4
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -523,61 +620,126 @@ func (m model) View() string {
 		return "\n  " + m.spinner.View() + " Loading Boxland…\n"
 	}
 
-	switch m.phase {
-	case phaseRun:
-		return m.viewRun()
-	default:
-		return m.viewMenu()
-	}
-}
+	body := m.viewBody()
+	footer := m.renderFooter(m.header.Width)
 
-func (m model) viewMenu() string {
-	footer := m.renderMenuFooter(m.header.Width)
 	return docStyle.Render(lipgloss.JoinVertical(lipgloss.Left,
 		m.header.View(),
-		m.list.View(),
+		body,
 		footer,
 	))
 }
 
-func (m model) viewRun() string {
-	width := m.header.Width
-	it := m.running
+// viewBody composes the always-visible menu pane with the optional logs
+// pane. The two are joined horizontally — no extra layout dep needed.
+func (m model) viewBody() string {
+	menu := m.list.View()
+	if !m.hasJobs() {
+		return menu
+	}
+	logs := m.renderLogsPane()
+	return lipgloss.JoinHorizontal(lipgloss.Top, menu, " ", logs)
+}
 
-	// Run header: name + badge on the left, stopwatch on the right.
-	nameStyleRun := nameUnsel
-	if it.featured {
-		nameStyleRun = nameFeat
+// renderLogsPane builds the right-hand bubble with a pinned services
+// strip on top of the streaming tail viewport.
+func (m model) renderLogsPane() string {
+	bubble := bubbleStyle
+	if m.focus == focusLogs {
+		bubble = bubbleStyleFocused
+	}
+
+	title := m.renderLogsTitle()
+	pinned := m.renderPinnedServices()
+	tail := m.tail.View()
+	if strings.TrimSpace(tail) == "" {
+		tail = footerLabel.Render("(waiting for output…)")
+	}
+
+	parts := []string{title}
+	if pinned != "" {
+		parts = append(parts, pinned)
+	}
+	parts = append(parts, renderRule(m.tail.Width), tail)
+
+	return bubble.
+		Width(m.tail.Width + 2).
+		Height(m.tail.Height + 4).
+		Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
+}
+
+// renderLogsTitle shows the spotlight job's title + badge + stopwatch on
+// the first line of the bubble.
+func (m model) renderLogsTitle() string {
+	if m.currentIndefinite == nil {
+		// At least one quick job is live — show "Logs" plus a little
+		// summary of who's running.
+		titles := make([]string, 0, len(m.jobs))
+		for _, j := range m.jobs {
+			titles = append(titles, j.it.title)
+		}
+		sort.Strings(titles)
+		left := bubbleTitleStyle.Render("Logs")
+		right := footerLabel.Render(strings.Join(titles, " · "))
+		return alignBetween(left, right, m.tail.Width)
+	}
+	j := m.currentIndefinite
+	nameStyle := nameUnsel
+	if j.it.featured {
+		nameStyle = nameFeat
 	}
 	bstyle := badgeStyle
-	if it.featured {
+	if j.it.featured {
 		bstyle = badgeFeatStyle
 	}
-	left := chevSel.Render("◆ Running ") + nameStyleRun.Render(it.title) + bstyle.Render(it.badge)
+	left := chevSel.Render("◆ ") + nameStyle.Render(j.it.title) + bstyle.Render(j.it.badge)
 	right := stopwatchStyle.Render(formatElapsed(m.stopwatch.Elapsed()))
+	return alignBetween(left, right, m.tail.Width)
+}
+
+// renderPinnedServices is the strip of HTTP service URLs at the top of
+// the logs bubble. Returns "" when no service-URLs apply (e.g. the
+// running job isn't Design/Serve, or nothing is running).
+func (m model) renderPinnedServices() string {
+	if m.currentIndefinite == nil {
+		return ""
+	}
+	j := m.currentIndefinite
+	links := ServiceLinks(j.it.title)
+	if len(links) == 0 {
+		return ""
+	}
+	if !j.listening {
+		return pinWaitStyle.Render("waiting for server…")
+	}
+	rows := make([]string, 0, len(links))
+	for _, l := range links {
+		row := pinLabelStyle.Render(padOrTruncate(l.Label, 14)) +
+			"  " +
+			styledHyperlink(l.URL)
+		rows = append(rows, row)
+	}
+	return strings.Join(rows, "\n")
+}
+
+// styledHyperlink emits an OSC-8 hyperlink whose visible text is colored
+// + underlined via raw ANSI SGR (94 = bright blue, 4 = underline). We use
+// raw codes here, not lipgloss, because lipgloss's word-wrapper interacts
+// poorly with the OSC-8 escape (it splits styled text into per-char runs).
+func styledHyperlink(url string) string {
+	const sgrOn = "\x1b[4;94m"
+	const sgrOff = "\x1b[0m"
+	return "\x1b]8;;" + url + "\x1b\\" + sgrOn + url + sgrOff + "\x1b]8;;\x1b\\"
+}
+
+// alignBetween renders left + spaces + right exactly width cells wide,
+// preserving lipgloss styling. Used for run header and logs title.
+func alignBetween(left, right string, width int) string {
 	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {
 		gap = 1
 	}
-	headRow := left + strings.Repeat(" ", gap) + right
-
-	cmdRow := cmdStyle.Render("$ " + strings.Join(it.cmd, " "))
-
-	body := m.tail.View()
-	if strings.TrimSpace(body) == "" {
-		body = footerLabel.Render("  (waiting for output…)")
-	}
-
-	footer := m.renderRunFooter(width)
-
-	return docStyle.Render(lipgloss.JoinVertical(lipgloss.Left,
-		m.header.View(),
-		headRow,
-		cmdRow,
-		renderRule(width),
-		body,
-		footer,
-	))
+	return left + strings.Repeat(" ", gap) + right
 }
 
 func renderHeader(width int) string {
@@ -613,23 +775,37 @@ func renderLogo() string {
 	return strings.Join(out, "\n")
 }
 
-func (m model) renderMenuFooter(width int) string {
+// renderFooter shows different hint sets depending on whether jobs are
+// running. We keep the same key vocabulary across menu and logs so the
+// muscle memory carries over.
+func (m model) renderFooter(width int) string {
 	hint := func(k, label string) string {
 		return footerKey.Render(k) + footerLabel.Render(" "+label)
 	}
-	hints := strings.Join([]string{
-		hint("↑/↓", "move"),
-		hint("/", "filter"),
-		hint("enter", "run"),
-		hint("q", "quit"),
-	}, footerLabel.Render("   "))
 
-	left := m.spinner.View() + footerLabel.Render(" ready")
-	gap := width - lipgloss.Width(left) - lipgloss.Width(hints)
+	var hintRow string
+	if !m.hasJobs() {
+		hintRow = strings.Join([]string{
+			hint("↑/↓", "move"),
+			hint("/", "filter"),
+			hint("enter", "run"),
+			hint("q", "quit"),
+		}, footerLabel.Render("   "))
+	} else {
+		hintRow = strings.Join([]string{
+			hint("tab", "switch pane"),
+			hint("↑/↓", "scroll"),
+			hint("enter", "run"),
+			hint("ctrl+c", cancelHint(m)),
+		}, footerLabel.Render("   "))
+	}
+
+	left := m.renderRunStatus()
+	gap := width - lipgloss.Width(left) - lipgloss.Width(hintRow)
 	if gap < 1 {
 		gap = 1
 	}
-	bar := left + strings.Repeat(" ", gap) + hints
+	bar := left + strings.Repeat(" ", gap) + hintRow
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		renderRule(width),
@@ -637,31 +813,45 @@ func (m model) renderMenuFooter(width int) string {
 	)
 }
 
-func (m model) renderRunFooter(width int) string {
-	var statusLeft string
-	switch {
-	case m.runDone && m.runErr == nil:
-		statusLeft = statusOK.Render("✓ done in "+formatElapsed(m.runElapsed)) +
-			footerLabel.Render("   enter return to menu · q quit")
-	case m.runDone:
-		statusLeft = statusErr.Render("✗ "+errMessage(m.runErr)) +
-			footerLabel.Render(" after "+formatElapsed(m.runElapsed)+
-				"   enter return to menu · q quit")
-	case m.cancelArmed:
-		statusLeft = m.spinner.View() +
-			footerLabel.Render(" cancelling · ctrl+c again to force kill")
-	case m.running.indefinite:
-		statusLeft = m.spinner.View() +
-			footerLabel.Render(" running for "+formatElapsed(m.stopwatch.Elapsed())+
-				"   ctrl+c stop · q stop")
-	default:
-		statusLeft = m.spinner.View() +
-			footerLabel.Render(" running…   ctrl+c cancel")
+// cancelHint is the verb shown next to ctrl+c in the running footer.
+func cancelHint(m model) string {
+	if m.currentIndefinite != nil && m.currentIndefinite.cancelArmed {
+		return "force kill"
 	}
-	return lipgloss.JoinVertical(lipgloss.Left,
-		renderRule(width),
-		statusLeft,
-	)
+	if m.currentIndefinite != nil {
+		return "stop"
+	}
+	return "quit"
+}
+
+// renderRunStatus is the left half of the footer bar. It reflects what's
+// currently happening: idle, indefinite running with elapsed time, or
+// quick jobs in flight.
+func (m model) renderRunStatus() string {
+	if !m.hasJobs() {
+		return m.spinner.View() + footerLabel.Render(" ready")
+	}
+	if m.currentIndefinite == nil {
+		// Quick jobs only.
+		return m.spinner.View() + footerLabel.Render(" "+pluralizeJobs(len(m.jobs))+" running")
+	}
+	j := m.currentIndefinite
+	main := m.spinner.View() + footerLabel.Render(" "+j.it.title+" · ") +
+		stopwatchStyle.Render(formatElapsed(m.stopwatch.Elapsed()))
+	if extras := len(m.jobs) - 1; extras > 0 {
+		main += footerLabel.Render(" + " + pluralizeJobs(extras))
+	}
+	if j.cancelArmed {
+		main += footerLabel.Render("   cancelling…")
+	}
+	return main
+}
+
+func pluralizeJobs(n int) string {
+	if n == 1 {
+		return "1 job"
+	}
+	return fmt.Sprintf("%d jobs", n)
 }
 
 // ---------------------------------------------------------------------------
@@ -688,9 +878,11 @@ func formatElapsed(d time.Duration) string {
 
 func summaryToast(it item, err error, elapsed time.Duration) string {
 	if err == nil {
-		return fmt.Sprintf("✓ %s completed in %s", it.title, formatElapsed(elapsed))
+		return statusOK.Render("✓") + " " +
+			fmt.Sprintf("%s completed in %s", it.title, formatElapsed(elapsed))
 	}
-	return fmt.Sprintf("✗ %s failed (%s) after %s", it.title, errMessage(err), formatElapsed(elapsed))
+	return statusErr.Render("✗") + " " +
+		fmt.Sprintf("%s failed (%s) after %s", it.title, errMessage(err), formatElapsed(elapsed))
 }
 
 func errMessage(err error) string {
@@ -704,8 +896,9 @@ func errMessage(err error) string {
 	return msg
 }
 
-// truncate clips s to a visible cell width of w, appending an ellipsis when
-// it had to cut. Inputs are plain text (no ANSI), so a rune walk is fine.
+// truncate clips s to a visible cell width of w, appending an ellipsis
+// when it had to cut. Inputs are plain text (no ANSI), so a rune walk is
+// fine.
 func truncate(s string, w int) string {
 	if w <= 0 {
 		return ""
@@ -745,8 +938,8 @@ func Run() (tea.Model, error) {
 	return tea.NewProgram(newModel()).Run()
 }
 
-// RunAndExec drives the TLI; selected commands are executed in-loop, so by
-// the time we return there's nothing further to do.
+// RunAndExec drives the TLI; selected commands are executed in-loop, so
+// by the time we return there's nothing further to do.
 func RunAndExec() error {
 	_, err := Run()
 	return err

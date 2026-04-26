@@ -19,30 +19,33 @@ import (
 const tailMaxLines = 200
 
 // runOutputMsg delivers a batch of merged stdout/stderr lines from the
-// running subprocess to the bubbletea Update loop.
+// running subprocess to the bubbletea Update loop. jobID identifies which
+// job emitted them so the model can route output to the right buffer when
+// multiple jobs are live (e.g. a quick Migrate alongside a long-running
+// Design).
 type runOutputMsg struct {
+	jobID string
 	lines []string
 }
 
 // runDoneMsg fires once when the subprocess exits.
 type runDoneMsg struct {
+	jobID   string
 	err     error
 	elapsed time.Duration
 }
 
-// runStartedMsg confirms the runner has been spawned. Used so Update can
-// kick off the first poll cmd before any output arrives.
-type runStartedMsg struct{}
-
 // runStartFailedMsg surfaces a failure to even spawn the subprocess.
 type runStartFailedMsg struct {
-	err error
+	jobID string
+	err   error
 }
 
 // runner owns a forked subprocess plus a tailing buffer of its merged
 // stdout + stderr. It's the model's bridge between the OS-level command
 // and the bubbletea event loop.
 type runner struct {
+	id      string
 	cmd     *exec.Cmd
 	cancel  context.CancelFunc
 	started time.Time
@@ -61,7 +64,10 @@ type runner struct {
 // Cancellation: r.Cancel() sends SIGINT on Unix and Kill() on Windows
 // (the only supported signal). cmd.WaitDelay is set to 5s so a stuck
 // subprocess gets force-killed after the grace window.
-func startRunner(name string, args []string) (*runner, tea.Cmd, error) {
+//
+// jobID is opaque to the runner; it's echoed back on every emitted
+// message so the model can demux output across concurrent jobs.
+func startRunner(jobID, name string, args []string) (*runner, tea.Cmd, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, name, args...)
 
@@ -106,6 +112,7 @@ func startRunner(name string, args []string) (*runner, tea.Cmd, error) {
 	}()
 
 	r := &runner{
+		id:      jobID,
 		cmd:     cmd,
 		cancel:  cancel,
 		started: time.Now(),
@@ -136,11 +143,12 @@ func scanInto(r io.Reader, out chan<- string) {
 // runOutputMsg. When the channel is closed it emits runDoneMsg with the
 // final exit error and elapsed time.
 func (r *runner) poll() tea.Cmd {
+	id := r.id
 	return func() tea.Msg {
 		line, ok := <-r.out
 		if !ok {
 			err := <-r.doneCh
-			return runDoneMsg{err: err, elapsed: time.Since(r.started)}
+			return runDoneMsg{jobID: id, err: err, elapsed: time.Since(r.started)}
 		}
 		batch := []string{line}
 	drain:
@@ -158,7 +166,7 @@ func (r *runner) poll() tea.Cmd {
 		for _, l := range batch {
 			r.appendTail(l)
 		}
-		return runOutputMsg{lines: batch}
+		return runOutputMsg{jobID: id, lines: batch}
 	}
 }
 

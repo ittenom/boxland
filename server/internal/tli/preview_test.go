@@ -20,7 +20,7 @@ var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 //	go test -tags preview -run TestPreviewMenu -v ./internal/tli/...
 func TestPreviewMenu(t *testing.T) {
 	m := newModel()
-	updated, _ := m.Update(tea.WindowSizeMsg{Width: 110, Height: 50})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 130, Height: 50})
 	m = updated.(model)
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = updated.(model)
@@ -28,24 +28,26 @@ func TestPreviewMenu(t *testing.T) {
 	fmt.Println(plain)
 }
 
-// TestPreviewRun fakes a phaseRun state with a tail buffer and a partially-
-// elapsed stopwatch so the runner view layout is visible without spinning
-// up a real subprocess.
+// TestPreviewSplit synthesizes a live Design job + a couple of tail
+// lines (including the listening marker) so the split layout, pinned
+// services strip, and stopwatch all render without spawning a real
+// subprocess.
 //
-//	go test -tags preview -run TestPreviewRun -v ./internal/tli/...
-func TestPreviewRun(t *testing.T) {
+//	go test -tags preview -run TestPreviewSplit -v ./internal/tli/...
+func TestPreviewSplit(t *testing.T) {
+	t.Setenv("BOXLAND_HTTP_ADDR", ":8080")
+
 	m := newModel()
-	updated, _ := m.Update(tea.WindowSizeMsg{Width: 110, Height: 50})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 130, Height: 50})
 	m = updated.(model)
 
-	// Synthesize phaseRun.
-	m.phase = phaseRun
-	m.running = item{
-		title: "Design", badge: "quick start", featured: true,
-		cmd:        []string{"boxland", "design"},
-		indefinite: true,
-	}
-	m.tail.SetContent(strings.Join([]string{
+	design := defaultItems()[1]
+	live := &job{id: design.title, it: design, started: time.Now()}
+	m.jobs[design.title] = live
+	m.currentIndefinite = live
+	m.focus = focusLogs
+
+	for _, line := range []string{
 		"  postgres   ✓ Container boxland-postgres   Started",
 		"  redis      ✓ Container boxland-redis      Started",
 		"  mailpit    ✓ Container boxland-mailpit    Started",
@@ -54,27 +56,30 @@ func TestPreviewRun(t *testing.T) {
 		"  migrate    applying 004_hud.sql",
 		"  npm        added 312 packages in 18s",
 		"  build      compiled web/ in 4.7s",
-		"  serve      http listening on :8080",
-	}, "\n"))
-	// Spoof a stopwatch elapsed value via successive ticks would be tedious;
-	// just print the layout assuming 0:00.0 — the structure is the point.
+		"time=2026-04-26T12:00:00Z level=INFO msg=\"http listening\" addr=:8080",
+	} {
+		m.appendOutput(runOutputMsg{jobID: design.title, lines: []string{line}})
+	}
 
 	plain := ansiRE.ReplaceAllString(m.View(), "")
 	fmt.Println(plain)
 }
 
-// TestPreviewRunDone shows the post-completion summary state.
-func TestPreviewRunDone(t *testing.T) {
+// TestPreviewIdleAfterRun shows the menu reverting to single-pane after
+// a job finishes, with the toast in the list status bar.
+func TestPreviewIdleAfterRun(t *testing.T) {
 	m := newModel()
-	updated, _ := m.Update(tea.WindowSizeMsg{Width: 110, Height: 50})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 130, Height: 50})
 	m = updated.(model)
 
-	m.phase = phaseRun
-	m.running = item{title: "Test", badge: "quality", cmd: []string{"boxland", "test"}}
-	m.runDone = true
-	m.runElapsed = 47*time.Second + 300*time.Millisecond
-	m.tail.SetContent("  ok   boxland/server/internal/maps     0.318s\n  ok   boxland/server/internal/assets    0.224s\n  ok   boxland/server/internal/entities  0.451s")
+	test := defaultItems()[8]
+	m.jobs[test.title] = &job{id: test.title, it: test, started: time.Now().Add(-47 * time.Second)}
+	updated, _ = m.Update(runDoneMsg{jobID: test.title, elapsed: 47*time.Second + 300*time.Millisecond})
+	m = updated.(model)
 
 	plain := ansiRE.ReplaceAllString(m.View(), "")
+	if strings.Contains(plain, "Logs") {
+		t.Logf("(unexpected) Logs pane still rendering after run done:\n%s", plain)
+	}
 	fmt.Println(plain)
 }

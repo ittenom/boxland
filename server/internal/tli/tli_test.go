@@ -30,7 +30,28 @@ func readyModel(t *testing.T) model {
 	return m
 }
 
-// TestViewRendersEveryItem exercises the menu-phase render path.
+// drainToCompletion polls the runner of the named job until it emits
+// runDoneMsg. Used by tests that want to clean up subprocesses spawned
+// by go's own toolchain.
+func drainToCompletion(t *testing.T, m model, jobID string) model {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		j, ok := m.jobs[jobID]
+		if !ok {
+			return m
+		}
+		if j.runner == nil {
+			return m
+		}
+		msg := j.runner.poll()()
+		m, _ = step(t, m, msg)
+	}
+	t.Fatalf("job %q did not complete within 10s", jobID)
+	return m
+}
+
+// TestViewRendersEveryItem exercises the menu-only render path.
 func TestViewRendersEveryItem(t *testing.T) {
 	m := readyModel(t)
 	out := m.View()
@@ -70,9 +91,6 @@ func TestFilterDoesNotQuitOnQ(t *testing.T) {
 	}
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	m = updated.(model)
-	if m.exitChosen {
-		t.Error("filter input 'q' must not arm exitChosen")
-	}
 	if m.list.FilterState() != list.Filtering {
 		t.Errorf("filter state changed unexpectedly to %v", m.list.FilterState())
 	}
@@ -85,59 +103,41 @@ func TestQuitOnQWhenNotFiltering(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected a tea.Cmd (Quit) on q press, got nil")
 	}
-	if m.phase != phaseMenu {
-		t.Errorf("phase must remain phaseMenu on quit, got %v", m.phase)
+	// hasJobs is false; layout should still be menu-only.
+	if m.hasJobs() {
+		t.Error("hasJobs must be false on quit press")
 	}
 }
 
-// TestEnterEntersRunPhaseAndStartsStopwatch confirms a non-interactive item
-// transitions to phaseRun and the stopwatch is started.
-//
-// We pick "Test" so we don't actually shell out to anything heavy — the
-// runner spawns Go's own go.exe but we cancel immediately.
-func TestEnterEntersRunPhaseAndStartsStopwatch(t *testing.T) {
+// TestEnterStartsRunnerAndSplitsLayout confirms a non-interactive item
+// registers a job and the View now contains both menu and logs panes.
+func TestEnterStartsRunnerAndSplitsLayout(t *testing.T) {
 	m := readyModel(t)
 
-	// Replace the items with a single trivial command we know is fast and
-	// available on every CI runner: `go version`.
 	tinyItem := item{
 		title: "Probe", badge: "smoke", desc: "echo style probe",
-		cmd: []string{"go", "version"},
+		cmd:        []string{"go", "version"},
+		indefinite: true,
 	}
-	li := []list.Item{tinyItem}
-	cmd := m.list.SetItems(li)
-	_ = cmd
+	m.list.SetItems([]list.Item{tinyItem})
 
 	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.phase != phaseRun {
-		t.Fatalf("after enter: want phaseRun, got %v", m.phase)
+	if _, ok := m.jobs["Probe"]; !ok {
+		t.Fatal("expected Probe job to be registered")
 	}
-	if m.running.title != "Probe" {
-		t.Errorf("expected m.running=Probe, got %q", m.running.title)
+	if m.currentIndefinite == nil || m.currentIndefinite.it.title != "Probe" {
+		t.Errorf("expected currentIndefinite=Probe, got %+v", m.currentIndefinite)
 	}
-	if m.runner == nil {
-		t.Error("expected a captured-pipe runner for non-interactive item")
+	// Auto-focus jumps to logs pane on indefinite launch.
+	if m.focus != focusLogs {
+		t.Errorf("expected focusLogs after launching indefinite, got %v", m.focus)
 	}
-
-	// Drain whatever the runner emits, with a generous safety timeout, until
-	// runDoneMsg lands. We're not asserting on output content here — just
-	// that the lifecycle completes.
-	deadline := time.Now().Add(10 * time.Second)
-	for !m.runDone && time.Now().Before(deadline) {
-		if m.runner == nil {
-			t.Fatal("runner cleared before runDoneMsg")
-		}
-		msg := m.runner.poll()()
-		m, _ = step(t, m, msg)
-	}
-	if !m.runDone {
-		t.Fatal("subprocess did not complete within 10s")
-	}
+	// Drain so we don't leak the subprocess.
+	m = drainToCompletion(t, m, "Probe")
 }
 
-// TestInteractiveItemUsesExecProcess verifies that interactive items get a
-// tea.ExecProcess command rather than spawning a captured-pipe runner. The
-// resulting cmd is opaque, but we can verify the runner field stays nil.
+// TestInteractiveItemUsesExecProcess verifies that interactive items get
+// a tea.ExecProcess command rather than spawning a captured-pipe runner.
 func TestInteractiveItemUsesExecProcess(t *testing.T) {
 	m := readyModel(t)
 
@@ -149,32 +149,26 @@ func TestInteractiveItemUsesExecProcess(t *testing.T) {
 	m.list.SetItems([]list.Item{tinyItem})
 
 	m, cmd := step(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.phase != phaseRun {
-		t.Fatalf("after enter: want phaseRun, got %v", m.phase)
+	if _, ok := m.jobs["Probe"]; !ok {
+		t.Fatal("expected Probe job to be registered")
 	}
-	if m.runner != nil {
+	if j := m.jobs["Probe"]; j.runner != nil {
 		t.Error("interactive items must not spawn a captured-pipe runner")
 	}
 	if cmd == nil {
-		t.Error("expected a tea.Cmd batch carrying the ExecProcess command")
+		t.Error("expected a tea.Cmd carrying the ExecProcess command")
 	}
 }
 
-// TestRunDoneReturnsToMenuOnEnter confirms that pressing enter after a run
-// completes restores the menu and posts a status toast.
-func TestRunDoneReturnsToMenuOnEnter(t *testing.T) {
+// TestRunDoneClearsSpotlight confirms that finishing the indefinite job
+// clears currentIndefinite and posts a status toast.
+func TestRunDoneClearsSpotlight(t *testing.T) {
 	m := readyModel(t)
-	m.phase = phaseRun
-	m.running = defaultItems()[0]
-	m.runDone = true
-	m.runElapsed = 1500 * time.Millisecond
+	m.jobs["Install"] = &job{id: "Install", it: defaultItems()[0], started: time.Now().Add(-1500 * time.Millisecond)}
 
-	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.phase != phaseMenu {
-		t.Fatalf("after enter on done: want phaseMenu, got %v", m.phase)
-	}
-	if m.runner != nil {
-		t.Error("runner must be cleared on return")
+	m, _ = step(t, m, runDoneMsg{jobID: "Install", elapsed: 1500 * time.Millisecond})
+	if _, still := m.jobs["Install"]; still {
+		t.Error("job map should not contain finished job")
 	}
 
 	out := m.list.View()
@@ -183,20 +177,20 @@ func TestRunDoneReturnsToMenuOnEnter(t *testing.T) {
 	}
 }
 
-// TestRunDoneFailureToastFormat formats the failure toast distinctly from
-// the success toast.
+// TestRunDoneFailureToastFormat formats the failure toast distinctly
+// from the success toast.
 func TestRunDoneFailureToastFormat(t *testing.T) {
 	got := summaryToast(item{title: "Migrate"}, errors.New("exit status 2"), 4200*time.Millisecond)
-	if !strings.HasPrefix(got, "✗ Migrate failed") {
-		t.Errorf("failure toast prefix wrong: %q", got)
+	if !strings.Contains(got, "Migrate failed") {
+		t.Errorf("failure toast missing 'failed': %q", got)
 	}
 	if !strings.Contains(got, "0:04.2") {
 		t.Errorf("failure toast missing elapsed: %q", got)
 	}
 }
 
-// TestCancelKeyForwardsToRunner exercises the ctrl+c cancel path.
-func TestCancelKeyForwardsToRunner(t *testing.T) {
+// TestCancelKeyCancelsCurrentIndefinite exercises the ctrl+c path.
+func TestCancelKeyCancelsCurrentIndefinite(t *testing.T) {
 	m := readyModel(t)
 	tinyItem := item{
 		title: "Probe", badge: "smoke", desc: "long-running probe",
@@ -206,27 +200,207 @@ func TestCancelKeyForwardsToRunner(t *testing.T) {
 	m.list.SetItems([]list.Item{tinyItem})
 
 	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.runner == nil {
-		t.Fatal("expected a runner after enter")
+	if m.currentIndefinite == nil {
+		t.Fatal("expected currentIndefinite after enter")
 	}
 
 	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyCtrlC})
-	if !m.cancelArmed {
-		t.Error("ctrl+c during run must arm cancellation")
+	if m.currentIndefinite == nil || !m.currentIndefinite.cancelArmed {
+		t.Error("ctrl+c during run must arm cancellation on currentIndefinite")
 	}
+	m = drainToCompletion(t, m, "Probe")
+}
 
-	// Drain to completion to clean up.
-	deadline := time.Now().Add(10 * time.Second)
-	for !m.runDone && time.Now().Before(deadline) {
-		if m.runner == nil {
-			break
-		}
-		msg := m.runner.poll()()
-		m, _ = step(t, m, msg)
+// TestCtrlCWithNoJobsQuits — ctrl+c at the menu when nothing is running
+// should quit the TLI.
+func TestCtrlCWithNoJobsQuits(t *testing.T) {
+	m := readyModel(t)
+	_, cmd := step(t, m, tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("expected Quit cmd on ctrl+c with no jobs running")
 	}
 }
 
-// TestFormatElapsed verifies the M:SS.t / H:MM:SS rendering for both buckets.
+// TestTabSwitchesFocus confirms tab toggles between menu and logs panes
+// only when there's something to look at.
+func TestTabSwitchesFocus(t *testing.T) {
+	m := readyModel(t)
+
+	// Tab with no jobs is a no-op.
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	if m.focus != focusMenu {
+		t.Error("tab with no jobs should leave focus on menu")
+	}
+
+	// Pretend a job is running.
+	m.jobs["Design"] = &job{id: "Design", it: defaultItems()[1]}
+	m.currentIndefinite = m.jobs["Design"]
+
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	if m.focus != focusLogs {
+		t.Errorf("first tab: want focusLogs, got %v", m.focus)
+	}
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	if m.focus != focusMenu {
+		t.Errorf("second tab: want focusMenu, got %v", m.focus)
+	}
+}
+
+// TestSecondIndefiniteIsRejected verifies launching another indefinite
+// while one is live posts a toast and doesn't start a new job.
+func TestSecondIndefiniteIsRejected(t *testing.T) {
+	m := readyModel(t)
+
+	// Inject a fake live indefinite without actually shelling out.
+	live := &job{id: "Design", it: defaultItems()[1]}
+	m.jobs["Design"] = live
+	m.currentIndefinite = live
+
+	// Try to launch Serve (also indefinite).
+	serveItem := defaultItems()[2]
+	if !serveItem.indefinite {
+		t.Fatal("test fixture assumption: Serve is indefinite")
+	}
+	m.list.SetItems([]list.Item{serveItem})
+
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if _, started := m.jobs["Serve"]; started {
+		t.Error("Serve must not start while Design is indefinite-running")
+	}
+	if !strings.Contains(m.list.View(), "Stop Design first") {
+		t.Errorf("expected reject toast in list view; got:\n%s", m.list.View())
+	}
+}
+
+// TestQuickJobRunsAlongsideIndefinite — at most one indefinite, but
+// quick jobs run in parallel.
+func TestQuickJobRunsAlongsideIndefinite(t *testing.T) {
+	m := readyModel(t)
+
+	live := &job{id: "Design", it: defaultItems()[1]}
+	m.jobs["Design"] = live
+	m.currentIndefinite = live
+
+	quick := item{
+		title: "Probe", badge: "quick", desc: "quick probe",
+		cmd: []string{"go", "version"},
+	}
+	m.list.SetItems([]list.Item{quick})
+
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if _, ok := m.jobs["Probe"]; !ok {
+		t.Error("quick job must be allowed to start alongside indefinite")
+	}
+	if m.currentIndefinite == nil || m.currentIndefinite.id != "Design" {
+		t.Error("quick job must not steal the spotlight")
+	}
+	m = drainToCompletion(t, m, "Probe")
+}
+
+// TestServiceLinksDerivedFromAddr — the env-derived helper.
+func TestServiceLinksDerivedFromAddr(t *testing.T) {
+	t.Setenv("BOXLAND_HTTP_ADDR", ":8080")
+	links := ServiceLinks("Design")
+	if len(links) != 3 {
+		t.Fatalf("want 3 links, got %d (%+v)", len(links), links)
+	}
+	want := map[string]string{
+		"Design tools": "http://localhost:8080/design/login",
+		"Game client":  "http://localhost:8080/play/login",
+		"Health check": "http://localhost:8080/healthz",
+	}
+	for _, l := range links {
+		if want[l.Label] != l.URL {
+			t.Errorf("link %q: got %q, want %q", l.Label, l.URL, want[l.Label])
+		}
+	}
+
+	// Custom host:port overrides the default localhost.
+	t.Setenv("BOXLAND_HTTP_ADDR", "0.0.0.0:9999")
+	links = ServiceLinks("Serve")
+	for _, l := range links {
+		if !strings.HasPrefix(l.URL, "http://localhost:9999/") {
+			t.Errorf("0.0.0.0 must normalize to localhost; got %q", l.URL)
+		}
+	}
+
+	// Items that don't run the HTTP server get no links.
+	if got := ServiceLinks("Migrate"); got != nil {
+		t.Errorf("non-HTTP item must yield nil links, got %+v", got)
+	}
+}
+
+// TestDetectListening — the "http listening" line must trigger the pin,
+// and unrelated lines must not.
+func TestDetectListening(t *testing.T) {
+	cases := map[string]bool{
+		"":                                                    false,
+		"INFO postgres connected":                             false,
+		"time=... level=INFO msg=\"http listening\" addr=:80": true,
+		`{"level":"INFO","msg":"http listening","addr":":8080"}`: true,
+	}
+	for line, want := range cases {
+		if got := DetectListening(line); got != want {
+			t.Errorf("DetectListening(%q) = %v, want %v", line, got, want)
+		}
+	}
+}
+
+// TestServiceLinksPinnedAfterListening — the logs pane shows "waiting…"
+// before the listening line and the actual links after.
+func TestServiceLinksPinnedAfterListening(t *testing.T) {
+	t.Setenv("BOXLAND_HTTP_ADDR", ":8080")
+	m := readyModel(t)
+
+	live := &job{id: "Design", it: defaultItems()[1]}
+	m.jobs["Design"] = live
+	m.currentIndefinite = live
+
+	got := m.renderPinnedServices()
+	if !strings.Contains(got, "waiting") {
+		t.Errorf("before listening: want 'waiting' in pinned strip, got %q", got)
+	}
+
+	// Simulate output that contains the listening marker.
+	live.runner = nil // avoid poll() dispatch in appendOutput
+	m.appendOutput(runOutputMsg{jobID: "Design", lines: []string{"msg=\"http listening\" addr=:8080"}})
+	if !live.listening {
+		t.Fatal("listening flag should flip after marker line")
+	}
+	got = m.renderPinnedServices()
+	if !strings.Contains(got, "Design tools") || !strings.Contains(got, "/design/login") {
+		t.Errorf("after listening: pinned strip missing link; got:\n%s", got)
+	}
+}
+
+// TestQuickJobLinesArePrefixed — when a quick job runs alongside the
+// indefinite spotlight, its lines are tagged so users can tell what
+// emitted what.
+func TestQuickJobLinesArePrefixed(t *testing.T) {
+	m := readyModel(t)
+	live := &job{id: "Design", it: defaultItems()[1]}
+	m.jobs["Design"] = live
+	m.currentIndefinite = live
+
+	quick := &job{id: "Migrate", it: defaultItems()[5]}
+	m.jobs["Migrate"] = quick
+
+	m.appendOutput(runOutputMsg{jobID: "Migrate", lines: []string{"applying 003.sql"}})
+	tail := strings.Join(m.tailLines, "\n")
+	if !strings.Contains(tail, "[Migrate]") {
+		t.Errorf("quick-job line missing [Migrate] prefix; got %q", tail)
+	}
+
+	m.appendOutput(runOutputMsg{jobID: "Design", lines: []string{"booting design"}})
+	tail = strings.Join(m.tailLines, "\n")
+	// Indefinite (spotlight) lines stay untagged.
+	if strings.Contains(tail, "[Design]") {
+		t.Errorf("indefinite line should not be prefixed; got %q", tail)
+	}
+}
+
+// TestFormatElapsed verifies the M:SS.t / H:MM:SS rendering for both
+// buckets.
 func TestFormatElapsed(t *testing.T) {
 	cases := []struct {
 		in   time.Duration
