@@ -14,6 +14,7 @@ import {
 	EDGE_S,
 	EDGE_W,
 	TILE_SIZE_SUB,
+	isOneWay,
 	type AABB,
 	type Entity,
 	type MoveResult,
@@ -54,6 +55,17 @@ function sweepAxis(entity: Entity, axis: Axis, step: number, world: World): numb
 			if (!T) continue;
 			if ((T.collision_layer_mask & entity.mask) === 0) continue;
 			if ((T.edge_collisions & edgeBit) === 0) continue;
+
+			// One-way platform rule: a tile authored as OneWayN blocks
+			// downward motion ONLY when the entity's foot is already at
+			// or above the tile top. Otherwise pass through (entry from
+			// the side, or rising from below). Mirror of the Go rule
+			// in server/internal/sim/collision/move.go.
+			if (isOneWay(T.shape)) {
+				if (axis !== AXIS_Y || sign <= 0) continue;
+				const tileTop = gy * TILE_SIZE_SUB;
+				if (entity.aabb.bottom > tileTop) continue;
+			}
 
 			const contact = distanceToEdge(entity.aabb, gx, gy, axis, sign);
 			if (sign > 0) {

@@ -14,6 +14,7 @@
 import { Container, Sprite } from "pixi.js";
 
 import { DebugOverlay } from "./debug";
+import { Hud } from "./hud";
 import { LightingLayer, type LightingCell } from "./lighting";
 import { NameplateLayer } from "./nameplates";
 import { TextureCache } from "./textures";
@@ -27,14 +28,37 @@ export interface SceneOptions {
 	worldViewH: number;
 }
 
+/**
+ * SortKey is the parallel-stored ordering key for one entity sprite.
+ * Kept off the Pixi Sprite (which has no schema for it) so the
+ * comparator stays type-safe and fast (one map lookup per compare).
+ *
+ * Order: primary = layer (low draws first), secondary = drawAbove
+ * (true wins), tertiary = footY when defined (low = north = behind),
+ * quaternary = entity id (stable tiebreak so sort order doesn't churn
+ * frame to frame for stationary entities).
+ */
+interface SortKey {
+	layer: number;
+	drawAbove: 0 | 1;
+	footY: number;        // 0 when not opted in -- comparator uses ySort below
+	ySort: 0 | 1;         // 1 when footY is meaningful for this sprite
+	id: number;
+}
+
 export class Scene {
 	readonly root = new Container();
 	readonly lighting: LightingLayer;
 	readonly nameplates: NameplateLayer;
 	readonly debug: DebugOverlay;
+	/** Player-facing HUD. Lives outside `root` (which is camera-scaled)
+	 *  so widgets keep crisp viewport coords; mounted on `app.stage` as
+	 *  a sibling of `root` -- see web/src/render/app.ts and hud.ts. */
+	readonly hud: Hud;
 	private readonly entityRoot = new Container();
 	private readonly textures: TextureCache;
 	private readonly sprites = new Map<EntityId, Sprite>();
+	private readonly sortKeys = new Map<Sprite, SortKey>();
 	private layout: ViewportLayout;
 
 	constructor(catalog: AssetCatalog, private readonly opts: SceneOptions) {
@@ -51,9 +75,16 @@ export class Scene {
 			worldViewW: opts.worldViewW,
 			worldViewH: opts.worldViewH,
 		});
+		this.hud = new Hud({
+			worldViewW: opts.worldViewW,
+			worldViewH: opts.worldViewH,
+			textures: this.textures,
+			urlFor: (id) => catalog.urlFor(id),
+		});
 		// Entities, then lighting (multiply blend), then nameplates +
 		// debug overlay always on top so name/HP/collision boxes stay
-		// visible through lighting.
+		// visible through lighting. The HUD lives OUTSIDE root because
+		// root is camera-scaled; the HUD is viewport-pixel space.
 		this.root.addChild(this.entityRoot);
 		this.root.addChild(this.lighting.root);
 		this.root.addChild(this.nameplates.root);
@@ -92,12 +123,34 @@ export class Scene {
 		for (const id of [...this.sprites.keys()]) {
 			if (!seen.has(id)) {
 				const s = this.sprites.get(id);
+				if (s) this.sortKeys.delete(s);
 				s?.destroy();
 				this.sprites.delete(id);
 			}
 		}
-		// Sort entities by layer so painter's algorithm respects render order.
-		this.entityRoot.children.sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
+		// Multi-key painter's-algorithm sort:
+		//   1. layer            -- gross draw order (terrain < entities < FX)
+		//   2. drawAbove        -- pinned overlays always over peers
+		//   3. footY (if y-sorted) -- the walk-behind illusion
+		//   4. id               -- stable tiebreak; prevents per-frame churn
+		// See SortKey above + docs/indie-rpg-research-todo.md §P1 #8.
+		const keys = this.sortKeys;
+		this.entityRoot.children.sort((a, b) => {
+			const ka = keys.get(a as Sprite);
+			const kb = keys.get(b as Sprite);
+			if (!ka || !kb) return (a.zIndex ?? 0) - (b.zIndex ?? 0);
+			if (ka.layer !== kb.layer) return ka.layer - kb.layer;
+			if (ka.drawAbove !== kb.drawAbove) return ka.drawAbove - kb.drawAbove;
+			// Y-sort kicks in only when BOTH siblings opted in. Mixing
+			// y-sorted and non-y-sorted on the same layer is rare but
+			// the conservative choice ("y-sorted wins") avoids surprising
+			// non-opted-in tiles popping above the player.
+			if (ka.ySort && kb.ySort && ka.footY !== kb.footY) {
+				return ka.footY - kb.footY;
+			}
+			if (ka.ySort !== kb.ySort) return ka.ySort - kb.ySort;
+			return ka.id - kb.id;
+		});
 		// Nameplates + HP bars track the same Renderable list so they
 		// position with the (post-prediction) sprite + tear down when
 		// an entity drops out of AOI in the same pass.
@@ -143,6 +196,16 @@ export class Scene {
 		);
 		sprite.position.set(screen.x, screen.y);
 		sprite.zIndex = r.layer;
+		// Update the parallel sort key (consumed by the comparator above).
+		// Reused on every upsert so the GC pressure of per-frame allocation
+		// is bounded by entity count, not by tick count.
+		this.sortKeys.set(sprite, {
+			layer:     r.layer,
+			drawAbove: r.drawAbove ? 1 : 0,
+			footY:     r.footY ?? 0,
+			ySort:     r.footY === undefined ? 0 : 1,
+			id:        r.id,
+		});
 	}
 
 	/** Replace the lighting cells (passes through to the LightingLayer). */
@@ -161,5 +224,21 @@ export class Scene {
 	 */
 	entitySprites(): readonly Sprite[] {
 		return this.entityRoot.children as unknown as readonly Sprite[];
+	}
+
+	/**
+	 * Test-only: returns the EntityIds of sprites in their current
+	 * post-sort render order. Exists so the y-sort + draw-above tests
+	 * can assert ordering without exposing the SortKey internals.
+	 */
+	sortedEntityIds(): EntityId[] {
+		const reverse = new Map<Sprite, EntityId>();
+		for (const [id, sp] of this.sprites) reverse.set(sp, id);
+		const out: EntityId[] = [];
+		for (const child of this.entityRoot.children) {
+			const id = reverse.get(child as Sprite);
+			if (id !== undefined) out.push(id);
+		}
+		return out;
 	}
 }

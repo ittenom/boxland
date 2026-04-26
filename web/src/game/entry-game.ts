@@ -158,6 +158,31 @@ export async function bootGame(host: HTMLElement = document.getElementById("bx-g
 		hud.setCameraMode?.(loop.camera.getMode());
 		document.body.dataset.bxSpectator = "1";
 	}
+	// In-world HUD layer. Fetch the layout from the server (one HTTP
+	// hit on boot; cached "no-store" since publishes can change it),
+	// mount it on app.scene.hud, and pipe Mailbox HUD deltas through.
+	// Subscribe BEFORE the layout arrives so we don't miss the first
+	// few deltas (the player WS may emit them between Snapshot and
+	// the HUD HTTP completing).
+	const hudOff = loop.mailbox.onHud((id, value) => app.scene.hud.update(id, value));
+	void fetch(`/play/maps/${config.mapId}/hud`, { credentials: "same-origin" })
+		.then((r) => r.ok ? r.json() : null)
+		.then((layout) => {
+			if (!layout) return;
+			app.scene.hud.mount(layout);
+			// Wire the button handler to the shared command bus so a
+			// `button` widget firing dispatches the same way a hotkey
+			// does -- gives free undo/redo + rebinder support.
+			app.scene.hud.setOnButton((actionGroup) => {
+				// HUD button command-id convention: "hud.button.<action_group>".
+				// Dispatching is fire-and-forget; unknown command ids return
+				// false from the bus, no exception raised.
+				void loop.bus.dispatch(`hud.button.${actionGroup}`, undefined);
+			});
+		})
+		.catch(() => { /* HUD is optional; render the world either way */ });
+	window.addEventListener("pagehide", () => hudOff(), { once: true });
+
 	// First user gesture (a click) unblocks the AudioContext.
 	host.addEventListener("pointerdown", () => audio.resume(), { once: true });
 	// Expose the bus globally so the Settings page can list the

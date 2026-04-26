@@ -38,6 +38,14 @@ enum CollisionShape:uint8 {
     HalfEast   = 11,
     HalfSouth  = 12,
     HalfWest   = 13,
+    // One-way (passable from above): the tile blocks downward motion
+    // ONLY -- entities falling through the south edge are stopped, but
+    // jumping up through it from below or stepping out the sides is
+    // unimpeded. Implementation detail: at edge-bit expansion time
+    // OneWayN derives a south-only edge mask AND sets a runtime hint
+    // the move resolver consults to skip the block when the entity's
+    // foot is below the tile top. See PLAN.md §264 + research-todo §P1 #11.
+    OneWayN    = 14,
 }
 
 // A single tile cell. Tiles are also entities in the ECS (with Tile + Static
@@ -127,6 +135,42 @@ table Diff {
     lighting_changes:[LightingCell];
     audio:[AudioEvent];
     chunks:[ChunkVersion];
+    hud_data:[HudDataDelta];        // per-tick HUD binding updates; see HudDataDelta below
+}
+
+// HUD data update. One entry per binding whose value changed this tick.
+// `binding_id` is a stable index assigned by the server when it computes
+// the layout's binding list at JoinMap; the client mirrors that list out
+// of the layout it received and dereferences by id.
+//
+// `kind` discriminates which value field is meaningful — int_value for
+// numeric bindings (hp_pct, flag ints, tick), str_value for stringy
+// bindings (nameplate). Saves bytes vs. always sending both, and keeps
+// the wire size small enough to ride the existing per-tick AOI diff
+// without spawning a parallel channel (PLAN.md §1 broadcast model).
+enum HudValueKind:uint8 {
+    Int      = 0,
+    String   = 1,
+}
+
+table HudDataDelta {
+    binding_id:uint32;
+    kind:HudValueKind;
+    int_value:int64 = 0;
+    str_value:string;
+}
+
+// HudLayoutFrame is sent once on JoinMap accept (after the initial
+// MapState Snapshot). Carries the realm's HUD layout as a JSON string
+// (≤ 8 KB hard cap) plus the binding-id table so the client can
+// dereference HudDataDelta.binding_id back to a binding key without
+// re-parsing the layout. JSON keeps the schema stable as we add widget
+// kinds; layouts are not on the per-tick path so the cost is one-shot.
+table HudLayoutFrame {
+    protocol_version:ProtocolVersion (required);
+    map_id:uint32;
+    layout_json:string (required);
+    bindings:[string];              // index = binding_id sent in HudDataDelta
 }
 
 // ---- WAL ----

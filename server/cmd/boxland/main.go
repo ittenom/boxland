@@ -30,7 +30,9 @@ import (
 	designerhandlers "boxland/server/internal/designer"
 	"boxland/server/internal/entities"
 	"boxland/server/internal/entities/components"
+	"boxland/server/internal/flags"
 	"boxland/server/internal/httpserver"
+	"boxland/server/internal/hud"
 	"boxland/server/internal/logging"
 	mapsservice "boxland/server/internal/maps"
 	"boxland/server/internal/persistence"
@@ -164,6 +166,19 @@ func runServe() error {
 	automationActions := automations.DefaultActions()
 	automationsSvc := automations.New(pgPool, automationTriggers, automationActions)
 
+	// Per-realm extras: shared "common events" (callable trigger groups)
+	// and per-realm flags (switches + variables). Used by the HUD editor
+	// to populate the binding + action_group pickers, and by the publish
+	// pipeline's HUD validator to cross-check references at publish time.
+	actionGroupsRepo := automations.NewGroupsRepo(pgPool)
+	flagsSvc := flags.New(pgPool)
+
+	// HUD editor: per-realm widget catalog + repo. The widgets registry
+	// is shared between the form renderer (descriptors → editor UI) and
+	// the publish-time validator (one source of truth for kind → config).
+	hudWidgets := hud.DefaultRegistry()
+	hudRepo := &hud.Repo{Pool: pgPool}
+
 	// Live game runtime: per-(map, instance) MapInstances live here. Any
 	// JoinMap / DesignerCommand reaching the WS gateway gets routed
 	// through this manager.
@@ -217,6 +232,10 @@ func runServe() error {
 		Automations:        automationsSvc,
 		AutomationTriggers: automationTriggers,
 		AutomationActions:  automationActions,
+		ActionGroups:       actionGroupsRepo,
+		Flags:              flagsSvc,
+		HUD:                hudRepo,
+		HUDWidgets:         hudWidgets,
 	}
 	loadSessionMW := designerhandlers.LoadSession(designerDeps)
 	// Order matters: CSRF must run on every request to mint the cookie;
@@ -228,6 +247,7 @@ func runServe() error {
 		Auth:          playerAuthSvc,
 		Maps:          mapsSvc,
 		Settings:      settingsSvc,
+		HUD:           hudRepo,
 		SecureCookies: cfg.Env == "prod",
 		// WSURL left empty -> handlers derive ws://host/ws from the
 		// request. Production deployments behind a reverse proxy can

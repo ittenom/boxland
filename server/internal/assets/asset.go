@@ -22,9 +22,16 @@ import (
 type Kind string
 
 const (
-	KindSprite Kind = "sprite"
-	KindTile   Kind = "tile"
-	KindAudio  Kind = "audio"
+	KindSprite  Kind = "sprite"
+	KindTile    Kind = "tile"
+	KindAudio   Kind = "audio"
+	// KindUIPanel marks a PNG that is a 9-slice border source for
+	// player-facing chrome (HUD frames, dialog boxes, tooltips). The
+	// bytes are an ordinary PNG; the kind tells the upload pipeline
+	// to skip tile-sheet auto-slicing and tells the previewer to draw
+	// the border at the configured slice. See docs/adding-a-component.md
+	// "Nine-slice panels".
+	KindUIPanel Kind = "ui_panel"
 )
 
 // Asset is one row from the assets table.

@@ -42,6 +42,26 @@ export interface Renderable {
 	/** Render layer. Higher draws on top. */
 	layer: number;
 
+	/**
+	 * Optional foot-position y in *world sub-pixels*. When set, the scene
+	 * sorts entities sharing the same `layer` by ascending footY -- the
+	 * "walk-behind" illusion (Stardew, Undertale). Leave undefined to fall
+	 * back to layer-only ordering.
+	 *
+	 * The producer (catalog + cached entity adapter) decides which entities
+	 * opt in -- gated server-side by entity_type.y_sort_anchor +
+	 * map_layer.y_sort_entities (migrations 0027 / 0028). See
+	 * docs/indie-rpg-research-todo.md §P1 #8.
+	 */
+	footY?: number;
+
+	/**
+	 * Optional "always above the player layer" flag. When true, the
+	 * sprite sorts above any non-flagged sibling on the same layer
+	 * regardless of footY. Wire-side gating: entity_type.draw_above_player.
+	 */
+	drawAbove?: boolean;
+
 	/** Optional w/h hint for a sprite that needs tile-grid snapping (tiles). */
 	gridSnap?: boolean;
 

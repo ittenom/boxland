@@ -34,11 +34,16 @@ export function mailboxAsWorld(
 		const existing = byCell.get(k);
 		if (existing) {
 			// OR edges so walls on either layer block, prefer the wider mask.
+			// `shape` only carried when consistent across layers (different
+			// shapes on the same cell collapse to "no special-casing", which
+			// matches the conservative semantics of the OR'd edges).
+			const sameShape = existing.shape === t.collisionShape;
 			byCell.set(k, {
 				gx: t.gx,
 				gy: t.gy,
 				edge_collisions: existing.edge_collisions | t.edgeCollisions,
 				collision_layer_mask: existing.collision_layer_mask | t.collisionLayerMask,
+				...(sameShape && existing.shape !== undefined ? { shape: existing.shape } : {}),
 			});
 		} else {
 			byCell.set(k, {
@@ -46,6 +51,7 @@ export function mailboxAsWorld(
 				gy: t.gy,
 				edge_collisions: t.edgeCollisions,
 				collision_layer_mask: t.collisionLayerMask,
+				shape: t.collisionShape,
 			});
 		}
 	}

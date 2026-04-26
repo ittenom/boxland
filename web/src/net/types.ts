@@ -88,6 +88,9 @@ export interface AppliedDiff {
 	tileChangeCount: number;
 	lightingChangeCount: number;
 	audioCount: number;
+	/** HUD binding deltas applied this tick (per-binding listeners are
+	 *  fired separately via Mailbox.onHud). */
+	hudDataCount: number;
 	/** Chunk ids whose acked version was advanced by this diff. */
 	advancedChunks: bigint[];
 }

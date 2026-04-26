@@ -133,3 +133,56 @@ mutate per-tick. Wire your system in `Default()` (the same pattern
 `Default()` follows in `internal/sim/systems/`) when the behaviour is
 ready; the form renderer + persistence already work the moment the
 Definition exists.
+
+---
+
+## Nine-slice panels (player-facing chrome)
+
+The designer-side IDE is intentionally flat (Linear / Notion style),
+but **player-facing UI** — HUD frames, dialog boxes, item tooltips —
+should support pixel-art borders. The
+[indie-RPG research](indie-rpg-research.md) §4 #3 calls out the genre's
+single biggest chrome anti-pattern: stretching a background image so
+the corners distort. Boxland's answer is the `bx-9patch` utility.
+
+### Author the panel asset
+
+1. Make a small PNG in your pixel editor — typically 24×24 or 32×32
+   with an 8-pixel border region around a transparent or filled
+   center.
+2. Upload it from the Asset Manager, picking **kind = UI panel**.
+   Boxland skips tile-sheet auto-slicing for this kind and the asset
+   is filterable as `kind=ui_panel`.
+
+### Use it in any element
+
+```html
+<div
+    class="bx-9patch bx-9patch--fill"
+    style="--bx-9patch-src: url('/assets/123/raw'); --bx-9patch-slice: 8;"
+>
+    <p>Talk to the king first.</p>
+</div>
+```
+
+Variables:
+
+| Variable             | Default                             | Notes                                        |
+| -------------------- | ----------------------------------- | -------------------------------------------- |
+| `--bx-9patch-src`    | (required)                          | URL of a `kind=ui_panel` PNG.                |
+| `--bx-9patch-slice`  | `8`                                 | Pixels from each edge that count as border.  |
+| `--bx-9patch-width`  | `calc(var(--bx-9patch-slice) * 1px)` | Override only if your asset uses thick borders rendered at smaller CSS size. |
+
+Modifiers:
+
+- `bx-9patch` — transparent center (good for HUD frames over the world).
+- `bx-9patch--fill` — opaque interior using `--bx-bg-1`.
+- `bx-9patch--ghost` — explicitly transparent (override of `--fill` in cascades).
+
+### The one rule
+
+`border-image-repeat` is hardcoded to `round`. **Never override it to
+`stretch`** — that's the exact anti-pattern this helper exists to
+prevent. If a designer needs a stretched background, they're using the
+wrong asset; have them re-author at the right slice size.
+

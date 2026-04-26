@@ -1,6 +1,7 @@
 package playerweb
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"github.com/a-h/templ"
 
 	"boxland/server/internal/auth/player"
+	"boxland/server/internal/hud"
 	"boxland/server/internal/maps"
 	"boxland/server/internal/settings"
 	"boxland/server/views"
@@ -24,9 +26,10 @@ type Deps struct {
 	Auth          *player.Service
 	Maps          *maps.Service
 	Settings      *settings.Service
-	SecureCookies bool   // true in prod; false in dev so http://localhost works
-	WSURL         string // absolute ws://... or wss://... URL the client opens
-	ServerName    string // displayed under the top nav; "Default server" until multi-tenant
+	HUD           *hud.Repo // per-realm HUD layouts (read-only on the player surface)
+	SecureCookies bool      // true in prod; false in dev so http://localhost works
+	WSURL         string    // absolute ws://... or wss://... URL the client opens
+	ServerName    string    // displayed under the top nav; "Default server" until multi-tenant
 }
 
 // New returns the http.Handler with /play routes mounted. Caller wraps
@@ -44,6 +47,7 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /play/",              auth(getRoot(d)))
 	mux.Handle("GET /play/maps",          auth(getMaps(d)))
 	mux.Handle("GET /play/game/{id}",     auth(getGame(d)))
+	mux.Handle("GET /play/maps/{id}/hud", auth(getMapHUD(d)))
 	mux.Handle("POST /play/ws-ticket",    auth(postWSTicket(d)))
 	mux.Handle("GET /play/settings",      auth(getSettingsPage(d)))
 	if d.Settings != nil {
@@ -194,6 +198,49 @@ func getGame(d Deps) http.HandlerFunc {
 			WSURL:       resolveWSURL(d.WSURL, r),
 			AccessToken: jwt,
 		}))
+	}
+}
+
+// getMapHUD returns the realm's HUD layout as JSON. The play-game page
+// fetches this on boot and feeds it to the Pixi HUD layer (see
+// web/src/render/hud.ts). Reads the LIVE column on maps; a fresh map
+// with no HUD set returns the canonical empty layout rather than a
+// hard 404 so the client can mount an empty HUD without special-casing.
+//
+// Public-realm gating mirrors getGame: only public maps are reachable
+// from the player surface. Private maps return 404 so id-bumping can't
+// enumerate names.
+func getMapHUD(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			http.NotFound(w, r)
+			return
+		}
+		m, err := d.Maps.FindByID(r.Context(), id)
+		if err != nil || m == nil {
+			http.NotFound(w, r)
+			return
+		}
+		if !m.Public {
+			http.NotFound(w, r)
+			return
+		}
+		var layout hud.Layout
+		if d.HUD != nil {
+			l, err := d.HUD.GetForPlayer(r.Context(), id)
+			if err != nil {
+				http.Error(w, "load hud: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			layout = l
+		} else {
+			layout = hud.NewEmpty()
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store") // HUD changes on publish; never cache
+		_ = json.NewEncoder(w).Encode(layout)
 	}
 }
 

@@ -98,3 +98,65 @@ describe("Scene", () => {
 		expect(zs).toEqual([...zs].sort((a, b) => a - b));
 	});
 });
+
+describe("Scene y-sort + draw-above (indie-RPG research §P1 #8)", () => {
+	it("y-sorts siblings on the same layer by ascending footY", async () => {
+		const s = new Scene(stubCatalog, SCENE_OPTS);
+		// Three trees on layer 0 at increasing footY -- southern trees draw
+		// later (on top), matching the walk-behind illusion.
+		const north  = { ...rb(1), layer: 0, footY: 100 };
+		const middle = { ...rb(2), layer: 0, footY: 200 };
+		const south  = { ...rb(3), layer: 0, footY: 300 };
+		// Inserted out of order on purpose.
+		await s.update([south, north, middle], { cx: 0, cy: 0 });
+		expect(s.sortedEntityIds()).toEqual([1, 2, 3]);
+	});
+
+	it("draws the player on top when north of the tree, behind when south", async () => {
+		const s = new Scene(stubCatalog, SCENE_OPTS);
+		const tree = { ...rb(1), layer: 0, footY: 500 };
+		// Player north of tree -> player should draw FIRST (under).
+		await s.update([tree, { ...rb(2), layer: 0, footY: 200 }], { cx: 0, cy: 0 });
+		expect(s.sortedEntityIds()).toEqual([2, 1]);
+		// Player south of tree -> player should draw LAST (over).
+		await s.update([tree, { ...rb(2), layer: 0, footY: 800 }], { cx: 0, cy: 0 });
+		expect(s.sortedEntityIds()).toEqual([1, 2]);
+	});
+
+	it("draw-above pins a sprite over its y-sorted siblings on the same layer", async () => {
+		const s = new Scene(stubCatalog, SCENE_OPTS);
+		const tree    = { ...rb(1), layer: 0, footY: 999 };           // very south
+		const overlay = { ...rb(2), layer: 0, footY: 100, drawAbove: true }; // very north
+		await s.update([tree, overlay], { cx: 0, cy: 0 });
+		// Despite the lower footY, drawAbove forces the overlay to paint last.
+		expect(s.sortedEntityIds()).toEqual([1, 2]);
+	});
+
+	it("layer dominates footY and drawAbove", async () => {
+		const s = new Scene(stubCatalog, SCENE_OPTS);
+		const treeAbove = { ...rb(1), layer: 0,   footY: 0,   drawAbove: true };
+		const hudLayer  = { ...rb(2), layer: 100, footY: 999 };
+		await s.update([treeAbove, hudLayer], { cx: 0, cy: 0 });
+		// layer 0 always before layer 100 regardless of inner keys.
+		expect(s.sortedEntityIds()).toEqual([1, 2]);
+	});
+
+	it("falls back to layer-only sort when footY is undefined (back-compat)", async () => {
+		const s = new Scene(stubCatalog, SCENE_OPTS);
+		const a = { ...rb(1), layer: 5 };
+		const b = { ...rb(2), layer: 2 };
+		const c = { ...rb(3), layer: 9 };
+		await s.update([a, b, c], { cx: 0, cy: 0 });
+		expect(s.sortedEntityIds()).toEqual([2, 1, 3]);
+	});
+
+	it("is stable across re-updates (no per-frame churn for static entities)", async () => {
+		const s = new Scene(stubCatalog, SCENE_OPTS);
+		const a = { ...rb(10), layer: 0, footY: 200 };
+		const b = { ...rb(11), layer: 0, footY: 200 }; // tied footY
+		await s.update([a, b], { cx: 0, cy: 0 });
+		const first = s.sortedEntityIds();
+		await s.update([b, a], { cx: 0, cy: 0 }); // input order swapped
+		expect(s.sortedEntityIds()).toEqual(first); // tiebreak by id keeps it stable
+	});
+});

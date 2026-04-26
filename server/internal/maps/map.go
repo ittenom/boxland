@@ -46,7 +46,12 @@ type Layer struct {
 	Name      string    `db:"name"                json:"name"`
 	Kind      string    `db:"kind"                json:"kind"` // "tile" | "lighting"
 	Ord       int32     `db:"ord"                 json:"ord"`
-	CreatedAt time.Time `db:"created_at" repo:"readonly" json:"created_at"`
+	// YSortEntities turns on foot-position y-sorting for entities on
+	// this layer. Designers opt this in for the layer the player walks
+	// on (so trees, columns, etc. z-fight by y); leave off for terrain,
+	// water, ceilings, lighting. See migration 0028.
+	YSortEntities bool      `db:"y_sort_entities"     json:"y_sort_entities"`
+	CreatedAt     time.Time `db:"created_at" repo:"readonly" json:"created_at"`
 }
 
 // Tile is one (map_id, layer_id, x, y) placement. No surrogate id; the
@@ -228,7 +233,8 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 // Layers returns every layer for the map ordered by ord.
 func (s *Service) Layers(ctx context.Context, mapID int64) ([]Layer, error) {
 	rows, err := s.Pool.Query(ctx,
-		`SELECT id, map_id, name, kind, ord, created_at FROM map_layers WHERE map_id = $1 ORDER BY ord ASC, id ASC`,
+		`SELECT id, map_id, name, kind, ord, y_sort_entities, created_at
+		 FROM map_layers WHERE map_id = $1 ORDER BY ord ASC, id ASC`,
 		mapID,
 	)
 	if err != nil {
@@ -238,7 +244,7 @@ func (s *Service) Layers(ctx context.Context, mapID int64) ([]Layer, error) {
 	var out []Layer
 	for rows.Next() {
 		var l Layer
-		if err := rows.Scan(&l.ID, &l.MapID, &l.Name, &l.Kind, &l.Ord, &l.CreatedAt); err != nil {
+		if err := rows.Scan(&l.ID, &l.MapID, &l.Name, &l.Kind, &l.Ord, &l.YSortEntities, &l.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, l)
@@ -250,17 +256,34 @@ func (s *Service) Layers(ctx context.Context, mapID int64) ([]Layer, error) {
 func (s *Service) AddLayer(ctx context.Context, mapID int64, name, kind string, ord int32) (*Layer, error) {
 	row := s.Pool.QueryRow(ctx,
 		`INSERT INTO map_layers (map_id, name, kind, ord) VALUES ($1, $2, $3, $4)
-		 RETURNING id, map_id, name, kind, ord, created_at`,
+		 RETURNING id, map_id, name, kind, ord, y_sort_entities, created_at`,
 		mapID, name, kind, ord,
 	)
 	var l Layer
-	if err := row.Scan(&l.ID, &l.MapID, &l.Name, &l.Kind, &l.Ord, &l.CreatedAt); err != nil {
+	if err := row.Scan(&l.ID, &l.MapID, &l.Name, &l.Kind, &l.Ord, &l.YSortEntities, &l.CreatedAt); err != nil {
 		if isUniqueViolation(err, "map_layers_map_id_name_key") {
 			return nil, fmt.Errorf("%w: %q", ErrLayerNameUsed, name)
 		}
 		return nil, err
 	}
 	return &l, nil
+}
+
+// SetLayerYSort updates the y-sort flag on a layer. Tenant isolation is
+// the caller's responsibility (the handler ensures the layer belongs to
+// a map the designer owns).
+func (s *Service) SetLayerYSort(ctx context.Context, layerID int64, on bool) error {
+	tag, err := s.Pool.Exec(ctx,
+		`UPDATE map_layers SET y_sort_entities = $2 WHERE id = $1`,
+		layerID, on,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrLayerNotFound
+	}
+	return nil
 }
 
 // DeleteLayer removes a layer (and all tiles + lighting cells on it).

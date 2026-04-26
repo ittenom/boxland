@@ -60,6 +60,21 @@ func sweepAxis(entity *Entity, axis int, step int32, world World) int32 {
 			if (t.EdgeCollisions & edgeBit) == 0 {
 				continue
 			}
+			// One-way platform rule: a tile authored as ShapeOneWayN
+			// blocks downward motion (axis=Y, sign>0) ONLY when the
+			// entity's foot is already at or above the tile top at the
+			// START of the sweep. Otherwise skip the block — entities
+			// crossing in from the side or rising through the bottom
+			// pass through cleanly. See shape.go IsOneWay.
+			if IsOneWay(t.Shape) {
+				if axis != axisY || sign <= 0 {
+					continue
+				}
+				tileTop := gy * TileSizeSub
+				if entity.AABB.Bottom > tileTop {
+					continue
+				}
+			}
 			contact := distanceToEdge(entity.AABB, gx, gy, axis, sign)
 			if sign > 0 {
 				clamped := contact

@@ -110,9 +110,10 @@ templ AssetsToolbar(p AssetsListProps) {
 		/>
 		<select name="kind" class="bx-select" style="max-width: 160px;">
 			<option value="" if p.ActiveKind == "" { selected }>All kinds</option>
-			<option value="sprite" if p.ActiveKind == "sprite" { selected }>Sprites</option>
-			<option value="tile"   if p.ActiveKind == "tile"   { selected }>Tiles</option>
-			<option value="audio"  if p.ActiveKind == "audio"  { selected }>Audio</option>
+			<option value="sprite"   if p.ActiveKind == "sprite"   { selected }>Sprites</option>
+			<option value="tile"     if p.ActiveKind == "tile"     { selected }>Tiles</option>
+			<option value="audio"    if p.ActiveKind == "audio"    { selected }>Audio</option>
+			<option value="ui_panel" if p.ActiveKind == "ui_panel" { selected }>UI panels</option>
 		</select>
 		if p.ActiveFilter != "" {
 			<input type="hidden" name="filter" value={ p.ActiveFilter }/>
@@ -195,6 +196,8 @@ templ AssetCard(a assets.Asset, publicURL func(string) string, usage map[int64]i
 				/>
 				if a.Kind == assets.KindTile {
 					<span class="bx-asset-card__pip bx-asset-card__pip--tile">tile</span>
+				} else if a.Kind == assets.KindUIPanel {
+					<span class="bx-asset-card__pip bx-asset-card__pip--ui-panel">ui</span>
 				} else {
 					<span class="bx-asset-card__pip">sprite</span>
 				}

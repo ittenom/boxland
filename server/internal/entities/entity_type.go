@@ -37,6 +37,14 @@ type EntityType struct {
 	ColliderAnchorX       int32     `db:"collider_anchor_x"                  json:"collider_anchor_x"`
 	ColliderAnchorY       int32     `db:"collider_anchor_y"                  json:"collider_anchor_y"`
 	DefaultCollisionMask  int64     `db:"default_collision_mask"             json:"default_collision_mask"`
+	// YSortAnchor opts the type into foot-position y-sorting against
+	// other entities on the same render layer. Default false preserves
+	// the layer-only ordering existing entities rely on. See
+	// docs/indie-rpg-research-todo.md §P1 #8 and migration 0027.
+	YSortAnchor           bool      `db:"y_sort_anchor"                      json:"y_sort_anchor"`
+	// DrawAbovePlayer pins the type's sprite above the player layer
+	// regardless of y-sort. Wins over YSortAnchor when both are true.
+	DrawAbovePlayer       bool      `db:"draw_above_player"                  json:"draw_above_player"`
 	Tags                  []string  `db:"tags"                               json:"tags"`
 	CreatedBy             int64     `db:"created_by"                         json:"created_by"`
 	CreatedAt             time.Time `db:"created_at" repo:"readonly"         json:"created_at"`

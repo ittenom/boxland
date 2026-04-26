@@ -922,6 +922,36 @@ p, li { font-size: 13px; line-height: 1.55; }
 .bx-badge--error   { background: transparent; color: var(--bx-danger); border-color: var(--bx-danger); }
 .bx-badge--info    { background: transparent; color: var(--bx-info); border-color: var(--bx-info); }
 
+/* Tiny clickable chip variant -- used by per-layer toggles in the
+   Mapmaker (y-sort) and any other "single binary state" affordances
+   that need to live next to a row title without dominating it. */
+.bx-chip {
+    appearance: none;
+    cursor: pointer;
+    font-family: inherit;
+    display: inline-block;
+    padding: 1px var(--bx-s2);
+    border: var(--bx-px) solid var(--bx-line);
+    background: var(--bx-bg-2);
+    color: var(--bx-fg-2);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    font-weight: 500;
+    line-height: 1.6;
+    transition: background 80ms ease-out, color 80ms ease-out;
+}
+.bx-chip:hover, .bx-chip:focus-visible {
+    background: var(--bx-bg-3);
+    outline: var(--bx-px) solid var(--bx-line-hi);
+    outline-offset: 0;
+}
+.bx-chip--ghost { background: transparent; color: var(--bx-fg-3); }
+.bx-chip--on    { background: var(--bx-accent); color: var(--bx-accent-fg); border-color: var(--bx-accent-fg); }
+.bx-chip--on:hover, .bx-chip--on:focus-visible {
+    background: var(--bx-accent-hi);
+}
+
 /* Clickable badge variant (Mapmaker public/private toggle). Native
    <button> reset + a hover ring so the click affordance is obvious
    without breaking the badge's compact visual rhythm. */
@@ -1529,6 +1559,42 @@ p, li { font-size: 13px; line-height: 1.55; }
 .bx-map-card__actions .bx-btn { flex: 1; min-height: 26px; }
 
 
+/* -- Nine-slice border helper (player-facing chrome) ---------------- */
+/*
+ * Indie-RPG research §P1 #6: pixel-art panels must tile their borders,
+ * never stretch them. Use this on any in-world UI element (HUD frame,
+ * dialog box, item tooltip) that should look hand-drawn at every zoom.
+ *
+ * Authoring contract:
+ *   --bx-9patch-src    URL of a 9-slice PNG (asset kind=ui_panel)
+ *   --bx-9patch-slice  px from each edge that is "border" (default 8)
+ *   --bx-9patch-width  border-width in CSS px (default = slice value)
+ *
+ * Repeat is hardcoded to `round` (never `stretch`) -- the whole reason
+ * this helper exists is to enforce that rule. Center fill is
+ * transparent by default; add bx-9patch--fill for an opaque interior
+ * driven by --bx-bg-1, or override `background` in your own class.
+ *
+ * See docs/adding-a-component.md "Nine-slice panels".
+ */
+.bx-9patch {
+    --bx-9patch-slice: 8;
+    --bx-9patch-width: calc(var(--bx-9patch-slice) * 1px);
+    border-style: solid;
+    border-width: var(--bx-9patch-width);
+    border-image-source: var(--bx-9patch-src);
+    border-image-slice: var(--bx-9patch-slice) fill;
+    border-image-repeat: round;
+    image-rendering: pixelated;
+    background: transparent;
+}
+.bx-9patch--fill {
+    background: var(--bx-bg-1);
+}
+.bx-9patch--ghost {
+    background: transparent;
+}
+
 /* -- Game shell + Sandbox HUD --------------------------------------- */
 .bx-game-body { overflow: hidden; }
 .bx-game-shell {
@@ -1678,3 +1744,86 @@ body[data-bx-spectator="1"] .bx-game-hud { border-color: var(--bx-accent); }
 body[data-bx-spectator="1"] [data-bx-camera-mode][data-bx-camera-mode="free-cam"] {
     color: var(--bx-accent);
 }
+ 
+
+/* ----- HUD editor (per-realm HUD authoring tab; PLAN research §P1 #7) -- */
+/* Two-column shell: anchor map (3x3 grid of widget stacks) on the left, */
+/* typed inspector form on the right. Mobile narrow stacks them.         */
+.bx-hud-editor { display: flex; flex-direction: column; gap: var(--bx-s2); height: 100%; }
+.bx-hud-editor__layout {
+    display: grid;
+    grid-template-columns: minmax(420px, 2fr) minmax(320px, 1fr);
+    gap: var(--bx-s2);
+    flex: 1;
+    min-height: 0;
+}
+@media (max-width: 900px) {
+    .bx-hud-editor__layout { grid-template-columns: 1fr; }
+}
+.bx-hud-editor__anchor-map {
+    background: var(--bx-bg-1);
+    border: var(--bx-px) solid var(--bx-line-hi);
+    padding: var(--bx-s2);
+    overflow-y: auto;
+}
+.bx-hud-editor__grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-auto-rows: minmax(96px, auto);
+    gap: var(--bx-s1);
+    margin-top: var(--bx-s2);
+}
+.bx-hud-editor__anchor {
+    background: var(--bx-bg-2);
+    border: var(--bx-px) dashed var(--bx-line);
+    padding: var(--bx-s1);
+    display: flex;
+    flex-direction: column;
+    gap: var(--bx-s1);
+    min-height: 0;
+}
+.bx-hud-editor__anchor:hover { border-color: var(--bx-accent); }
+.bx-hud-editor__widgets {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1;
+}
+.bx-hud-editor__chip {
+    display: flex;
+    align-items: stretch;
+    background: var(--bx-bg-3);
+    border: var(--bx-px) solid var(--bx-line);
+    overflow: hidden;
+}
+.bx-hud-editor__chip:hover { border-color: var(--bx-accent); }
+.bx-hud-editor__chip-label {
+    flex: 1;
+    background: transparent;
+    border: 0;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+    padding: 4px 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+.bx-hud-editor__chip-label .bx-small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.bx-hud-editor__add { margin-top: auto; }
+.bx-hud-editor__inspector {
+    background: var(--bx-bg-1);
+    border: var(--bx-px) solid var(--bx-line-hi);
+    overflow-y: auto;
+    min-width: 0;
+}
+.bx-btn--block { width: 100%; text-align: left; }

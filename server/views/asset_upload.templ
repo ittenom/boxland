@@ -85,9 +85,10 @@ templ AssetUploadModal(p AssetUploadModalProps) {
 							<option value="sprite">Sprite — single 32×32 image</option>
 							<option value="tile">Tile sheet — sliced into 32×32 cells</option>
 							<option value="audio">Audio</option>
+							<option value="ui_panel">UI panel — 9-slice HUD border</option>
 						</select>
 						<small class="bx-help" data-copy-slot="assets.upload.kind-help">
-							PNG defaults to Sprite. Pick <strong>Tile sheet</strong> when uploading an atlas — Boxland slices it into 32×32 cells and adds each cell to the Mapmaker palette automatically. Both axes must be a multiple of 32.
+							PNG defaults to Sprite. Pick <strong>Tile sheet</strong> when uploading an atlas — Boxland slices it into 32×32 cells and adds each cell to the Mapmaker palette automatically. Both axes must be a multiple of 32. Pick <strong>UI panel</strong> when the PNG is a 9-slice border that should wrap HUD frames, dialogs, or tooltips without stretching.
 						</small>
 					</div>
 					<div class="bx-row bx-row--end">

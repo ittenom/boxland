@@ -82,7 +82,6 @@ func compileOne(a Automation, triggers, actions *Registry) (CompiledAutomation, 
 	out := CompiledAutomation{
 		Name:    a.Name,
 		Trigger: CompiledTrigger{Kind: a.Trigger.Kind, Config: tcfg},
-		Actions: make([]CompiledAction, 0, len(a.Actions)),
 	}
 	if a.Conditions != nil {
 		c, err := compileCondition(*a.Conditions)
@@ -91,17 +90,11 @@ func compileOne(a Automation, triggers, actions *Registry) (CompiledAutomation, 
 		}
 		out.Conditions = &c
 	}
-	for i, ac := range a.Actions {
-		adef, ok := actions.Get(ac.Kind)
-		if !ok {
-			return CompiledAutomation{}, fmt.Errorf("%w: action[%d] %q", ErrUnknownKind, i, ac.Kind)
-		}
-		acfg, err := adef.Decode(ac.Config)
-		if err != nil {
-			return CompiledAutomation{}, fmt.Errorf("decode action[%d] %q: %w", i, ac.Kind, err)
-		}
-		out.Actions = append(out.Actions, CompiledAction{Kind: ac.Kind, Config: acfg})
+	compiled, err := compileActions(a.Actions, actions)
+	if err != nil {
+		return CompiledAutomation{}, err
 	}
+	out.Actions = compiled
 	return out, nil
 }
 

@@ -28,6 +28,7 @@
 | `F` | Fill tool. |
 | `I` | Eyedrop / inspector. |
 | `E` | Eraser. |
+| `H` | Open the per-realm HUD editor (`/design/maps/{id}/hud`). |
 | `Space` (hold) | Pan camera. |
 | `+` / `-` | Zoom (always integer-scale). |
 

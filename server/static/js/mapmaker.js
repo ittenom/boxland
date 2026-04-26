@@ -265,11 +265,18 @@
 		}
 
 		// Hotkeys: B / R / F / I / E mirror the toolbar tooltips.
+		// H opens the per-realm HUD editor (matches docs/hotkeys.md
+		// + the chip-link in mapmaker.templ).
 		document.addEventListener("keydown", (e) => {
 			if (isTextEditingTarget(e.target)) return;
 			const map = { b: "brush", r: "rect", f: "fill", i: "eyedrop", e: "eraser" };
 			const k = e.key.toLowerCase();
-			if (map[k]) { setTool(state, map[k]); e.preventDefault(); }
+			if (map[k]) { setTool(state, map[k]); e.preventDefault(); return; }
+			if (k === "h" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+				const host = document.querySelector("[data-bx-mapmaker-canvas]");
+				const mapId = host && host.getAttribute("data-map-id");
+				if (mapId) { window.location.href = "/design/maps/" + mapId + "/hud"; e.preventDefault(); }
+			}
 		});
 
 		function floodFill(state, sx, sy, w, h) {

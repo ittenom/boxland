@@ -13,6 +13,8 @@ func TestDefaultTriggers_AllKindsRegistered(t *testing.T) {
 	want := []string{
 		"entity_nearby", "entity_absent", "resource_threshold",
 		"timer", "on_spawn", "on_death", "on_interact", "on_enter_tile",
+		// Flag triggers + on-realm-enter (indie-RPG research §P1 #9).
+		"flag_equals", "flag_threshold", "on_realm_enter",
 	}
 	for _, k := range want {
 		if !r.Has(k) {
@@ -31,6 +33,10 @@ func TestDefaultActions_AllKindsRegistered(t *testing.T) {
 		"spawn", "despawn", "move_toward", "move_away",
 		"set_speed", "set_sprite", "set_animation", "set_variant",
 		"set_tint", "play_sound", "emit_light", "adjust_resource",
+		// Flag actions (indie-RPG research §P1 #9).
+		"set_flag", "add_to_flag",
+		// Common events (indie-RPG research §P1 #10).
+		"call_action_group",
 	}
 	for _, k := range want {
 		if !r.Has(k) {

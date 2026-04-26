@@ -13,6 +13,13 @@ import { Application } from "pixi.js";
 
 import { Scene, type SceneOptions } from "./scene";
 import type { AssetCatalog, Camera, Renderable } from "./types";
+import { computeLayout } from "./viewport";
+
+/** Same integer-scale step Scene.resize uses, surfaced so the HUD can
+ *  match exactly without duplicating the math. */
+function integerScale(canvasW: number, canvasH: number, worldViewW: number, worldViewH: number): number {
+	return computeLayout({ canvasW, canvasH, worldViewW, worldViewH }).scale;
+}
 
 export interface BoxlandAppOptions extends SceneOptions {
 	/** Host element to mount the canvas inside. */
@@ -33,12 +40,18 @@ export class BoxlandApp {
 		this.scene = scene;
 
 		this.pixi.stage.addChild(scene.root);
+		// HUD lives outside scene.root (which is camera-scaled): it draws
+		// in viewport-pixel space at integer scale. Adding it AFTER root
+		// makes it draw above every world layer including the debug
+		// overlay (Pixi default is back-to-front by add order).
+		this.pixi.stage.addChild(scene.hud.root);
 		opts.host.appendChild(this.pixi.canvas);
 
 		// Initial layout sync.
 		const rect = opts.host.getBoundingClientRect();
 		this.pixi.renderer.resize(rect.width, rect.height);
 		scene.resize(rect.width, rect.height);
+		scene.hud.resize(rect.width, rect.height, integerScale(rect.width, rect.height, opts.worldViewW, opts.worldViewH));
 
 		// Observe host size changes so the layout stays integer-scaled.
 		if (typeof ResizeObserver !== "undefined") {
@@ -48,6 +61,7 @@ export class BoxlandApp {
 				const { width, height } = entry.contentRect;
 				this.pixi.renderer.resize(width, height);
 				scene.resize(width, height);
+				scene.hud.resize(width, height, integerScale(width, height, opts.worldViewW, opts.worldViewH));
 			});
 			this.resizeObserver.observe(opts.host);
 		}

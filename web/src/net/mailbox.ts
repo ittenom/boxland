@@ -28,6 +28,8 @@ import { EntityState } from "@proto/entity-state.js";
 import { Tile } from "@proto/tile.js";
 import { LightingCell } from "@proto/lighting-cell.js";
 import { AudioEvent } from "@proto/audio-event.js";
+import { HudDataDelta } from "@proto/hud-data-delta.js";
+import { HudValueKind } from "@proto/hud-value-kind.js";
 import type { AppliedDiff, DiffListener } from "./types";
 
 /** Mailbox-local snapshot of one entity. Plain object so renderers don't
@@ -76,6 +78,16 @@ export interface CachedAudio {
 	pitch: number;
 }
 
+/** One HUD binding's latest value. The HUD layer subscribes to changes
+ *  per binding-id and re-renders only the widgets bound to that id —
+ *  see web/src/render/hud.ts. */
+export type HudValue =
+	| { kind: "int"; value: number }       // numeric bindings (hp_pct, flag ints, tick)
+	| { kind: "string"; value: string };   // stringy bindings (nameplate)
+
+/** Listener fired when one binding's value changes. */
+export type HudListener = (bindingId: number, value: HudValue) => void;
+
 export class Mailbox {
 	private readonly entities = new Map<bigint, CachedEntity>();
 	private readonly tiles = new Map<string, CachedTile>();        // key: `${layer}:${gx}:${gy}`
@@ -84,6 +96,12 @@ export class Mailbox {
 
 	// Audio events are queued each diff and the host drains them once.
 	private audioQueue: CachedAudio[] = [];
+
+	// HUD binding values keyed by binding-id (the index in HudLayoutFrame.bindings).
+	// Updated from Diff.hud_data deltas; the HUD layer subscribes via onHud
+	// to re-render only the widgets bound to a changed id.
+	private readonly hudValues = new Map<number, HudValue>();
+	private readonly hudListeners = new Set<HudListener>();
 
 	private lastAppliedTick: bigint = 0n;
 
@@ -125,6 +143,17 @@ export class Mailbox {
 		return () => this.listeners.delete(l);
 	}
 
+	/** Subscribe to per-binding HUD value changes. Returns an unsubscribe. */
+	onHud(l: HudListener): () => void {
+		this.hudListeners.add(l);
+		return () => this.hudListeners.delete(l);
+	}
+
+	/** Latest known value for a HUD binding, or undefined if no delta seen yet. */
+	getHud(bindingId: number): HudValue | undefined {
+		return this.hudValues.get(bindingId);
+	}
+
 	// ---- Reset ----
 
 	/** Drop everything. Use on Spectate -> JoinMap, or after detecting a
@@ -135,6 +164,7 @@ export class Mailbox {
 		this.lighting.clear();
 		this.acked.clear();
 		this.audioQueue = [];
+		this.hudValues.clear();
 		this.lastAppliedTick = 0n;
 	}
 
@@ -216,6 +246,34 @@ export class Mailbox {
 			this.audioQueue.push(snapshotAudio(a));
 		}
 
+		// HUD binding deltas. One per binding whose value changed this
+		// tick. We update the cache and fan out to listeners (typically
+		// the Pixi HUD layer, which re-renders only the widgets bound
+		// to the changed binding-id).
+		const hudN = d.hudDataLength();
+		const tmpHud = new HudDataDelta();
+		for (let i = 0; i < hudN; i++) {
+			const h = d.hudData(i, tmpHud);
+			if (!h) continue;
+			const id = h.bindingId();
+			let value: HudValue;
+			if (h.kind() === HudValueKind.String) {
+				value = { kind: "string", value: h.strValue() ?? "" };
+			} else {
+				// Diff carries int_value as int64 (bigint on the JS side).
+				// Coerce to Number for ergonomics — HUD bindings are
+				// gold counters, hp_pct, day numbers, etc., all well
+				// under 2^53. If a binding ever needs the full int64
+				// range we'll add a 'bigint' value kind without breaking
+				// the Number contract.
+				value = { kind: "int", value: Number(h.intValue()) };
+			}
+			this.hudValues.set(id, value);
+			for (const l of this.hudListeners) {
+				try { l(id, value); } catch { /* isolate */ }
+			}
+		}
+
 		// Per-chunk version vector.
 		const advancedChunks: bigint[] = [];
 		const chunkN = d.chunksLength();
@@ -243,6 +301,7 @@ export class Mailbox {
 			tileChangeCount: tileN,
 			lightingChangeCount: lightN,
 			audioCount: audioN,
+			hudDataCount: hudN,
 			advancedChunks,
 		};
 		for (const l of this.listeners) {

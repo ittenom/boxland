@@ -23,6 +23,8 @@ import (
 	"boxland/server/internal/configurable"
 	"boxland/server/internal/entities"
 	"boxland/server/internal/entities/components"
+	"boxland/server/internal/flags"
+	"boxland/server/internal/hud"
 	mapsservice "boxland/server/internal/maps"
 	"boxland/server/internal/maps/wfc"
 	"boxland/server/internal/persistence"
@@ -56,6 +58,20 @@ type Deps struct {
 	Automations       *automations.Service
 	AutomationTriggers *automations.Registry
 	AutomationActions  *automations.Registry
+
+	// Per-realm automation extras: shared "common events" (callable
+	// trigger groups) and per-realm flags (switches + variables).
+	// See server/internal/automations/groups_repo.go and
+	// server/internal/flags. Used by the HUD editor to populate
+	// binding + action_group pickers.
+	ActionGroups *automations.GroupsRepo
+	Flags        *flags.Service
+
+	// Per-realm HUD layouts. The mapmaker HUD editor reads + mutates
+	// this; the publish-time validator cross-checks bindings against
+	// Flags + ActionGroups before allowing a save.
+	HUD            *hud.Repo
+	HUDWidgets     *hud.Registry
 }
 
 // New returns an http.Handler with the designer routes mounted under
@@ -139,6 +155,18 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /design/maps/{id}/settings",     auth(getMapSettingsModal(d)))
 	mux.Handle("POST /design/maps/{id}/draft",       auth(postMapDraft(d)))
 	mux.Handle("POST /design/maps/{id}/public-toggle", auth(postMapPublicToggle(d)))
+	mux.Handle("POST /design/maps/{mapID}/layers/{layerID}/y-sort", auth(postMapLayerYSortToggle(d)))
+
+	// Per-realm HUD editor (PLAN.md research §P1 #7 + Todo 5).
+	// Edits land on maps.hud_layout_json directly (no draft staging
+	// for v1 — same pattern as map_tiles and lighting cells).
+	mux.Handle("GET /design/maps/{id}/hud",                              auth(getMapHUDPage(d)))
+	mux.Handle("POST /design/maps/{id}/hud/widgets",                     auth(postHUDWidgetAdd(d)))
+	mux.Handle("GET /design/maps/{id}/hud/widgets/{anchor}/{order}",     auth(getHUDWidgetForm(d)))
+	mux.Handle("POST /design/maps/{id}/hud/widgets/{anchor}/{order}",    auth(postHUDWidgetSave(d)))
+	mux.Handle("DELETE /design/maps/{id}/hud/widgets/{anchor}/{order}",  auth(deleteHUDWidget(d)))
+	mux.Handle("POST /design/maps/{id}/hud/widgets/{anchor}/{order}/move", auth(postHUDWidgetMove(d)))
+	mux.Handle("POST /design/maps/{id}/hud/anchors/{anchor}",            auth(postHUDStackMetadata(d)))
 
 	// Authored-mode painting endpoints. JSON in / out. The design
 	// console's mapmaker JS pumps brush strokes through these; the
@@ -2729,6 +2757,479 @@ func postMapPublicToggle(d Deps) http.HandlerFunc {
 			Public: nextPublic,
 		}))
 	}
+}
+
+// postMapLayerYSortToggle flips map_layers.y_sort_entities for one
+// (map_id, layer_id) pair and returns the refreshed chip for HTMX
+// outerHTML swap. Like postMapPublicToggle, this is a runtime metadata
+// flag -- we deliberately bypass the draft pipeline so designers see
+// the painting-tempo response (one click, instant feedback).
+//
+// Tenant safety: the UPDATE constrains by BOTH layer id AND map id, so
+// a designer who guesses a layer id that isn't on the map in the URL
+// gets a 404 and never mutates someone else's data. The outer auth
+// middleware ensures only signed-in designers can hit the route at all.
+//
+// Indie-RPG research §P1 #8.
+func postMapLayerYSortToggle(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if dr := CurrentDesigner(r.Context()); dr == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		mapID, err := strconvAtoi64(r.PathValue("mapID"))
+		if err != nil {
+			http.Error(w, "invalid map id", http.StatusBadRequest)
+			return
+		}
+		layerID, err := strconvAtoi64(r.PathValue("layerID"))
+		if err != nil {
+			http.Error(w, "invalid layer id", http.StatusBadRequest)
+			return
+		}
+		// Trust the explicit ?on= toggle target from the chip; the
+		// chip always renders with the value it expects to flip TO,
+		// which makes the request idempotent under double-click.
+		on := r.URL.Query().Get("on") == "true"
+
+		var refreshed mapsservice.Layer
+		row := d.Maps.Pool.QueryRow(r.Context(),
+			`UPDATE map_layers
+			   SET y_sort_entities = $3
+			 WHERE id = $1 AND map_id = $2
+			 RETURNING id, map_id, name, kind, ord, y_sort_entities, created_at`,
+			layerID, mapID, on,
+		)
+		if err := row.Scan(&refreshed.ID, &refreshed.MapID, &refreshed.Name, &refreshed.Kind, &refreshed.Ord, &refreshed.YSortEntities, &refreshed.CreatedAt); err != nil {
+			// pgx returns its sentinel error here when zero rows match;
+			// we treat any scan failure as 404 because the only legit
+			// error path in this UPDATE...RETURNING is "row didn't exist".
+			// Other failures (connection drops, etc.) are still logged.
+			if strings.Contains(err.Error(), "no rows") {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			slog.Error("layer y-sort toggle", "err", err, "map_id", mapID, "layer_id", layerID)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		renderHTML(w, r, views.LayerYSortChip(refreshed))
+	}
+}
+
+// ---- HUD editor (per-realm HUD authoring) -----------------------------
+//
+// Edits land directly on maps.hud_layout_json (no draft staging for v1)
+// because the HUD is a viewer-only artifact: there's no live-instance
+// state to hot-swap, and no half-finished layout can corrupt running
+// players' state. Mirrors the map_tiles + lighting cells pattern.
+//
+// Tenant isolation is enforced by every Mutate / Get call passing both
+// (mapID, ownerID) into the composite-key SQL. A designer can only ever
+// see / edit HUDs on maps they own.
+
+// hudLoadCommonDeps assembles the three lists every HUD page + form
+// needs: ui_panel skin assets, sprite/tile icon assets, flag keys, and
+// action-group names. Each is one query; no N+1.
+func (d Deps) hudLoadCommonDeps(r *http.Request, mapID int64) (skins, icons []views.HUDAssetOption, flagKeys, groupNames []string, err error) {
+	if d.Assets != nil {
+		ui, lerr := d.Assets.List(r.Context(), assets.ListOpts{Kind: assets.KindUIPanel, Limit: 200})
+		if lerr != nil {
+			return nil, nil, nil, nil, lerr
+		}
+		for _, a := range ui {
+			skins = append(skins, views.HUDAssetOption{ID: a.ID, Name: a.Name})
+		}
+		// Icons: sprites + tiles (icon_counter accepts both).
+		sp, lerr := d.Assets.List(r.Context(), assets.ListOpts{Kind: assets.KindSprite, Limit: 200})
+		if lerr != nil {
+			return nil, nil, nil, nil, lerr
+		}
+		for _, a := range sp {
+			icons = append(icons, views.HUDAssetOption{ID: a.ID, Name: a.Name})
+		}
+		tl, lerr := d.Assets.List(r.Context(), assets.ListOpts{Kind: assets.KindTile, Limit: 200})
+		if lerr != nil {
+			return nil, nil, nil, nil, lerr
+		}
+		for _, a := range tl {
+			icons = append(icons, views.HUDAssetOption{ID: a.ID, Name: a.Name})
+		}
+	}
+	if d.Flags != nil {
+		fs, lerr := d.Flags.LoadAll(r.Context(), mapID)
+		if lerr != nil {
+			return nil, nil, nil, nil, lerr
+		}
+		for _, f := range fs {
+			flagKeys = append(flagKeys, f.Key)
+		}
+	}
+	if d.ActionGroups != nil {
+		gs, lerr := d.ActionGroups.ListByMap(r.Context(), mapID)
+		if lerr != nil {
+			return nil, nil, nil, nil, lerr
+		}
+		for _, g := range gs {
+			groupNames = append(groupNames, g.Name)
+		}
+	}
+	return skins, icons, flagKeys, groupNames, nil
+}
+
+func getMapHUDPage(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		dr := CurrentDesigner(r.Context())
+		if dr == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		id, err := pathID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		m, err := d.Maps.FindByID(r.Context(), id)
+		if err != nil {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		if d.HUD == nil {
+			http.Error(w, "hud subsystem unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		layout, err := d.HUD.Get(r.Context(), id, dr.ID)
+		if err != nil {
+			if errors.Is(err, hud.ErrNotFound) {
+				http.NotFound(w, r)
+				return
+			}
+			slog.Error("hud get", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		skins, icons, flagKeys, groupNames, err := d.hudLoadCommonDeps(r, id)
+		if err != nil {
+			slog.Error("hud common deps", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		shell := BuildChrome(r, d)
+		shell.Title = "HUD · " + m.Name
+		shell.Surface = "hud-editor"
+		shell.ActiveKind = "map"
+		shell.ActiveID = m.ID
+		shell.Variant = "bleed"
+		renderHTML(w, r, views.HUDPage(views.HUDEditorProps{
+			Layout:        shell,
+			Map:           *m,
+			HUD:           layout,
+			WidgetKinds:   hud.AllWidgetKinds,
+			FlagKeys:      flagKeys,
+			ActionGroups:  groupNames,
+			UIPanelAssets: skins,
+			IconAssets:    icons,
+		}))
+	}
+}
+
+func postHUDWidgetAdd(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		dr := CurrentDesigner(r.Context())
+		if dr == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		mapID, err := pathID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		anchor := hud.Anchor(r.URL.Query().Get("anchor"))
+		kind := hud.WidgetKind(r.URL.Query().Get("type"))
+		newLayout, err := d.HUD.Mutate(r.Context(), mapID, dr.ID, func(l *hud.Layout) error {
+			_, err := l.AddWidget(anchor, kind, d.HUDWidgets)
+			return err
+		})
+		if err != nil {
+			hudWriteError(w, err)
+			return
+		}
+		hudRenderAnchor(w, r, mapID, anchor, newLayout)
+	}
+}
+
+func deleteHUDWidget(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		dr := CurrentDesigner(r.Context())
+		if dr == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		mapID, anchor, order, err := hudPathParts(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		newLayout, err := d.HUD.Mutate(r.Context(), mapID, dr.ID, func(l *hud.Layout) error {
+			l.RemoveWidget(anchor, order)
+			return nil
+		})
+		if err != nil {
+			hudWriteError(w, err)
+			return
+		}
+		hudRenderAnchor(w, r, mapID, anchor, newLayout)
+	}
+}
+
+func postHUDWidgetMove(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		dr := CurrentDesigner(r.Context())
+		if dr == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		mapID, anchor, order, err := hudPathParts(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		dir := 1
+		if r.URL.Query().Get("dir") == "-1" {
+			dir = -1
+		}
+		newLayout, err := d.HUD.Mutate(r.Context(), mapID, dr.ID, func(l *hud.Layout) error {
+			return l.MoveWidget(anchor, order, dir)
+		})
+		if err != nil {
+			hudWriteError(w, err)
+			return
+		}
+		hudRenderAnchor(w, r, mapID, anchor, newLayout)
+	}
+}
+
+func getHUDWidgetForm(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		dr := CurrentDesigner(r.Context())
+		if dr == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		mapID, anchor, order, err := hudPathParts(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		layout, err := d.HUD.Get(r.Context(), mapID, dr.ID)
+		if err != nil {
+			hudWriteError(w, err)
+			return
+		}
+		stack, ok := layout.Anchors[anchor]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		var w0 *hud.Widget
+		for i := range stack.Widgets {
+			if stack.Widgets[i].Order == order {
+				w0 = &stack.Widgets[i]
+				break
+			}
+		}
+		if w0 == nil {
+			http.NotFound(w, r)
+			return
+		}
+		cfg, err := d.HUDWidgets.New(w0.Type)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// Decode current values into the form's value map. We marshal/
+		// unmarshal through `any` so the form renderer's stringValue helper
+		// can stringify uniformly across kinds.
+		values := map[string]any{}
+		if len(w0.Config) > 0 {
+			_ = json.Unmarshal(w0.Config, &values)
+		}
+		skins, _, _, _, err := d.hudLoadCommonDeps(r, mapID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		renderHTML(w, r, views.HUDWidgetForm(views.HUDWidgetFormProps{
+			MapID:         mapID,
+			Anchor:        anchor,
+			Order:         order,
+			Kind:          w0.Type,
+			Fields:        cfg.Descriptor(),
+			Values:        values,
+			Skin:          w0.Skin,
+			Tint:          w0.Tint,
+			Size:          w0.Size,
+			UIPanelAssets: skins,
+		}))
+	}
+}
+
+func postHUDWidgetSave(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		dr := CurrentDesigner(r.Context())
+		if dr == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		mapID, anchor, order, err := hudPathParts(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad form", http.StatusBadRequest)
+			return
+		}
+		// Pull the current widget so we know its kind (immutable from
+		// the form) and have its descriptor for value coercion.
+		layout, err := d.HUD.Get(r.Context(), mapID, dr.ID)
+		if err != nil {
+			hudWriteError(w, err)
+			return
+		}
+		stack, ok := layout.Anchors[anchor]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		var existing *hud.Widget
+		for i := range stack.Widgets {
+			if stack.Widgets[i].Order == order {
+				existing = &stack.Widgets[i]
+				break
+			}
+		}
+		if existing == nil {
+			http.NotFound(w, r)
+			return
+		}
+		cfg, err := d.HUDWidgets.New(existing.Type)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		raw, err := jsonFromFormByDescriptor(cfg.Descriptor(), r.PostForm)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		// Envelope fields (skin, tint, size) come from the same form.
+		var skinID int64
+		if v := r.PostForm.Get("skin"); v != "" {
+			skinID, _ = strconvAtoi64(v)
+		}
+		var tint uint32
+		if v := r.PostForm.Get("tint"); v != "" {
+			var n uint64
+			if _, perr := fmt.Sscanf(v, "0x%X", &n); perr == nil {
+				tint = uint32(n)
+			}
+		}
+		size := hud.WidgetSize(r.PostForm.Get("size"))
+		if !size.Valid() {
+			size = ""
+		}
+		newLayout, err := d.HUD.Mutate(r.Context(), mapID, dr.ID, func(l *hud.Layout) error {
+			return l.SaveWidgetConfig(anchor, order, existing.Type, hud.WidgetEnvelopeUpdate{
+				Config: raw,
+				Skin:   skinID,
+				Tint:   tint,
+				Size:   size,
+			}, d.HUDWidgets)
+		})
+		if err != nil {
+			hudWriteError(w, err)
+			return
+		}
+		hudRenderAnchor(w, r, mapID, anchor, newLayout)
+	}
+}
+
+func postHUDStackMetadata(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		dr := CurrentDesigner(r.Context())
+		if dr == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		mapID, err := pathID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		anchor := hud.Anchor(r.PathValue("anchor"))
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad form", http.StatusBadRequest)
+			return
+		}
+		dir := hud.StackDir(r.PostForm.Get("dir"))
+		gap, _ := strconvAtoi64(r.PostForm.Get("gap"))
+		ox, _ := strconvAtoi64(r.PostForm.Get("offsetX"))
+		oy, _ := strconvAtoi64(r.PostForm.Get("offsetY"))
+		newLayout, err := d.HUD.Mutate(r.Context(), mapID, dr.ID, func(l *hud.Layout) error {
+			return l.SaveStackMetadata(anchor, dir, int(gap), int(ox), int(oy))
+		})
+		if err != nil {
+			hudWriteError(w, err)
+			return
+		}
+		hudRenderAnchor(w, r, mapID, anchor, newLayout)
+	}
+}
+
+// hudPathParts extracts (mapID, anchor, order) from a /hud/widgets/{anchor}/{order}
+// route. Returns 400 on any malformed input.
+func hudPathParts(r *http.Request) (int64, hud.Anchor, int, error) {
+	mapID, err := pathID(r)
+	if err != nil {
+		return 0, "", 0, err
+	}
+	anchor := hud.Anchor(r.PathValue("anchor"))
+	orderStr := r.PathValue("order")
+	order, err := strconv.Atoi(orderStr)
+	if err != nil {
+		return 0, "", 0, fmt.Errorf("bad order: %w", err)
+	}
+	return mapID, anchor, order, nil
+}
+
+// hudRenderAnchor returns the updated anchor cell as HTML for HTMX
+// outerHTML swap. Falls back to a 200 No Content when the anchor was
+// emptied (the cell still renders, just with zero widgets, so the
+// designer can see it's gone).
+func hudRenderAnchor(w http.ResponseWriter, r *http.Request, mapID int64, anchor hud.Anchor, layout hud.Layout) {
+	props := views.HUDEditorProps{
+		Map: mapsservice.Map{ID: mapID},
+		HUD: layout,
+	}
+	renderHTML(w, r, views.HUDAnchorCell(props, anchor))
+}
+
+// hudWriteError surfaces hud-package + repo errors as the appropriate
+// HTTP status. ErrNotFound is 404; anything else is 400 (invalid input)
+// since the only failure modes are validation errors at this point.
+func hudWriteError(w http.ResponseWriter, err error) {
+	if errors.Is(err, hud.ErrNotFound) {
+		http.NotFound(w, nil)
+		return
+	}
+	if errors.Is(err, hud.ErrUnknownWidget) {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	slog.Warn("hud editor", "err", err)
+	http.Error(w, err.Error(), http.StatusBadRequest)
 }
 
 // jsonFromFormByDescriptor turns a flat form (string values) into a typed

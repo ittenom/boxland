@@ -150,6 +150,73 @@ func (c AdjustResourceConfig) Validate() error {
 	return nil
 }
 
+// SetFlagConfig writes a per-realm switch (bool) or variable (int)
+// in map_flags. Indie-RPG research §P1 #9. The runtime resolves the
+// realm from the firing automation's instance.
+type SetFlagConfig struct {
+	Key     string `json:"key"`
+	Kind    string `json:"kind"`        // "bool" or "int"
+	BoolVal bool   `json:"bool_val"`
+	IntVal  int32  `json:"int_val"`
+}
+
+func (c SetFlagConfig) Validate() error {
+	if c.Key == "" {
+		return errors.New("set_flag: key required")
+	}
+	switch c.Kind {
+	case "bool", "int":
+	default:
+		return errors.New(`set_flag: kind must be "bool" or "int"`)
+	}
+	return nil
+}
+
+// AddToFlagConfig increments an int flag by Delta (negative ok). The
+// runtime uses the atomic Add path in the flags package so concurrent
+// fires from sibling triggers don't lose increments.
+type AddToFlagConfig struct {
+	Key   string `json:"key"`
+	Delta int32  `json:"delta"`
+}
+
+func (c AddToFlagConfig) Validate() error {
+	if c.Key == "" {
+		return errors.New("add_to_flag: key required")
+	}
+	if c.Delta == 0 {
+		return errors.New("add_to_flag: delta must be non-zero")
+	}
+	return nil
+}
+
+// CallActionGroupConfig invokes a named action group (a "common event").
+// The group's actions inline at the call site at compile time. We
+// reference by name (not id) so designers can rename a group at publish
+// time without breaking call sites.
+//
+// Cycle detection runs in the group compiler (see groups.go); runtime
+// recursion depth is bounded at 4 so a misconfigured graph that
+// somehow slips past compile-time checks (hand-edited JSON, etc.)
+// cannot stall a tick.
+//
+// MaxCallDepth is the runtime-side guard.
+const MaxCallDepth = 4
+
+type CallActionGroupConfig struct {
+	Name string `json:"name"`
+}
+
+func (c CallActionGroupConfig) Validate() error {
+	if c.Name == "" {
+		return errors.New("call_action_group: name required")
+	}
+	if len(c.Name) > 64 {
+		return errors.New("call_action_group: name must be 1..64 chars")
+	}
+	return nil
+}
+
 // ---- DefaultActions ---------------------------------------------------
 
 // DefaultActions returns a Registry with every built-in action.
@@ -259,6 +326,44 @@ func DefaultActions() *Registry {
 			}
 		},
 		AdjustResourceConfig{}))
+
+	r.Register(makeDefinition(string(ActionSetFlag),
+		func() []configurable.FieldDescriptor {
+			return []configurable.FieldDescriptor{
+				{Key: "key",  Label: "Flag key", Kind: configurable.KindString, Required: true,
+					Help: "Per-realm switch or variable name (1..64 chars)."},
+				{Key: "kind", Label: "Kind", Kind: configurable.KindEnum, Required: true, Default: "bool",
+					Options: []configurable.EnumOption{
+						{Value: "bool", Label: "Switch (true / false)"},
+						{Value: "int",  Label: "Variable (integer)"},
+					}},
+				{Key: "bool_val", Label: "Switch value", Kind: configurable.KindBool, Default: true,
+					Help: "Used when Kind = Switch."},
+				{Key: "int_val",  Label: "Variable value", Kind: configurable.KindInt, Default: 0,
+					Help: "Used when Kind = Variable."},
+			}
+		},
+		SetFlagConfig{Kind: "bool", BoolVal: true}))
+
+	r.Register(makeDefinition(string(ActionAddToFlag),
+		func() []configurable.FieldDescriptor {
+			return []configurable.FieldDescriptor{
+				{Key: "key",   Label: "Variable key", Kind: configurable.KindString, Required: true,
+					Help: "Per-realm integer variable name (1..64 chars)."},
+				{Key: "delta", Label: "Delta",        Kind: configurable.KindInt,    Default: 1,
+					Help: "Negative to subtract."},
+			}
+		},
+		AddToFlagConfig{Delta: 1}))
+
+	r.Register(makeDefinition(string(ActionCallActionGroup),
+		func() []configurable.FieldDescriptor {
+			return []configurable.FieldDescriptor{
+				{Key: "name", Label: "Common event", Kind: configurable.KindString, Required: true,
+					Help: "Name of a common event (callable action group) defined on this realm."},
+			}
+		},
+		CallActionGroupConfig{}))
 
 	return r
 }

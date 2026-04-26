@@ -31,11 +31,17 @@ type AABB struct {
 
 // Tile is a tile cell as the collision algorithm sees it (post-shape
 // resolution). Mirror world.fbs Tile, minus rendering fields.
+//
+// Shape is the original CollisionShape the tile was authored with.
+// Most resolution uses the precomputed EdgeCollisions (cheap bit test);
+// Shape is consulted only by move() for shape-specific rules like
+// the one-way platform's foot-position check (see IsOneWay).
 type Tile struct {
 	GX                 int32
 	GY                 int32
 	EdgeCollisions     uint8
 	CollisionLayerMask uint32
+	Shape              CollisionShape // optional; zero = ShapeOpen (no special-casing)
 }
 
 // Entity is the moving object's collision properties.

@@ -28,6 +28,8 @@ var TruncateOrder = []string{
 	"user_settings",
 	"entity_automations",
 	"map_tiles",
+	"map_action_groups",
+	"map_flags",
 	"map_layers",
 	"maps",
 	"tile_edge_assignments",

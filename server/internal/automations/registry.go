@@ -35,6 +35,14 @@ const (
 	TriggerOnDeath           TriggerKind = "on_death"
 	TriggerOnInteract        TriggerKind = "on_interact"
 	TriggerOnEnterTile       TriggerKind = "on_enter_tile"
+	// Flag triggers (indie-RPG research §P1 #9). Read per-realm
+	// switches/variables backed by map_flags + the flags package.
+	TriggerFlagEquals    TriggerKind = "flag_equals"
+	TriggerFlagThreshold TriggerKind = "flag_threshold"
+	// On-realm-enter is the genre's "autorun on map enter": fires once
+	// per (player, map) session as a player joins. Pairs naturally with
+	// flag actions to bootstrap intro dialog, set defaults, etc.
+	TriggerOnRealmEnter TriggerKind = "on_realm_enter"
 )
 
 // Built-in action kinds (PLAN.md §123).
@@ -51,6 +59,17 @@ const (
 	ActionPlaySound      ActionKind = "play_sound"
 	ActionEmitLight      ActionKind = "emit_light"
 	ActionAdjustResource ActionKind = "adjust_resource"
+	// Flag actions (indie-RPG research §P1 #9). Mutate the per-realm
+	// switches/variables backed by map_flags. Together with the matching
+	// triggers they let designers compose "talk to NPC twice to unlock
+	// door" puzzles with no code and no custom components.
+	ActionSetFlag   ActionKind = "set_flag"
+	ActionAddToFlag ActionKind = "add_to_flag"
+	// Common events (indie-RPG research §P1 #10). Calls a named action
+	// group defined in map_action_groups; the group's actions inline
+	// at the call site at compile time. Cycles are rejected at publish;
+	// runtime depth is bounded.
+	ActionCallActionGroup ActionKind = "call_action_group"
 )
 
 // Definition describes one trigger or action end-to-end. Mirrors

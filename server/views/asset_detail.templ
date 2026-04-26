@@ -136,6 +136,8 @@ templ assetDetailPreview(p AssetDetailProps) {
 		@AudioPreview(p.Asset, p.PublicURL)
 	} else if p.Asset.Kind == assets.KindTile && p.PublicURL != nil {
 		@tileAtlasPreview(p)
+	} else if p.Asset.Kind == assets.KindUIPanel && p.PublicURL != nil {
+		@uiPanelPreview(p)
 	} else if p.PublicURL != nil {
 		<div class="bx-asset-detail__preview bx-pixel">
 			<img src={ p.PublicURL(p.Asset.ContentAddressedPath) } alt={ p.Asset.Name }/>
@@ -143,6 +145,58 @@ templ assetDetailPreview(p AssetDetailProps) {
 	} else {
 		<div class="bx-asset-detail__preview"></div>
 	}
+}
+
+// uiPanelPreview renders a 9-slice border preview at three sizes so the
+// designer can sanity-check the slice px before binding the asset to a
+// HUD widget. The slice value defaults to 8; designers can tune it on
+// the surface that consumes the asset (the bx-9patch CSS variable).
+templ uiPanelPreview(p AssetDetailProps) {
+	<div class="bx-asset-detail__preview bx-stack">
+		<div class="bx-small bx-muted">
+			Sample borders at 9-slice = 8px (the default). Override per-use
+			with <code>--bx-9patch-slice</code>.
+		</div>
+		<div class="bx-row" style="gap: var(--bx-s3); flex-wrap: wrap;">
+			<div
+				class="bx-9patch bx-9patch--fill"
+				style={ uiPanelPreviewStyle(p, 96, 64) }
+			>
+				<span class="bx-small bx-muted">small</span>
+			</div>
+			<div
+				class="bx-9patch bx-9patch--fill"
+				style={ uiPanelPreviewStyle(p, 200, 96) }
+			>
+				<span class="bx-small bx-muted">medium</span>
+			</div>
+			<div
+				class="bx-9patch bx-9patch--fill"
+				style={ uiPanelPreviewStyle(p, 320, 128) }
+			>
+				<span class="bx-small bx-muted">large</span>
+			</div>
+		</div>
+		<div class="bx-row" style="gap: var(--bx-s2); align-items: flex-start;">
+			<span class="bx-small bx-muted" style="flex: 0 0 80px;">Source PNG</span>
+			<img
+				src={ p.PublicURL(p.Asset.ContentAddressedPath) }
+				alt={ p.Asset.Name }
+				class="bx-pixel"
+				style="image-rendering: pixelated; max-width: 128px;"
+			/>
+		</div>
+	</div>
+}
+
+// uiPanelPreviewStyle builds the inline style string for one preview
+// box. Mirrors the plain-string convention of tileAtlasGridStyle below.
+func uiPanelPreviewStyle(p AssetDetailProps, w, h int) string {
+	return fmt.Sprintf(
+		"--bx-9patch-src: url('%s'); width: %dpx; height: %dpx; "+
+			"display: flex; align-items: center; justify-content: center; padding: var(--bx-s3);",
+		p.PublicURL(p.Asset.ContentAddressedPath), w, h,
+	)
 }
 
 // tileAtlasPreview renders a tile sheet as its constituent 32x32 cells

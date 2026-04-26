@@ -102,6 +102,55 @@ type OnEnterTileConfig struct {
 
 func (c OnEnterTileConfig) Validate() error { return nil }
 
+// FlagEqualsConfig fires while map_flags[Key] equals the configured
+// value. Kind is "bool" or "int"; runtime systems pick the matching
+// field. See indie-RPG research §P1 #9 and the flags package.
+type FlagEqualsConfig struct {
+	Key      string `json:"key"`
+	Kind     string `json:"kind"`            // "bool" or "int"
+	BoolVal  bool   `json:"bool_val"`
+	IntVal   int32  `json:"int_val"`
+}
+
+func (c FlagEqualsConfig) Validate() error {
+	if c.Key == "" {
+		return errors.New("flag_equals: key required")
+	}
+	switch c.Kind {
+	case "bool", "int":
+	default:
+		return errors.New(`flag_equals: kind must be "bool" or "int"`)
+	}
+	return nil
+}
+
+// FlagThresholdConfig fires while an int map_flag crosses a threshold.
+// Bool flags would be a no-op so we only accept int.
+type FlagThresholdConfig struct {
+	Key   string `json:"key"`
+	Op    string `json:"op"`     // "<", "<=", ">", ">=", "=="
+	Value int32  `json:"value"`
+}
+
+func (c FlagThresholdConfig) Validate() error {
+	if c.Key == "" {
+		return errors.New("flag_threshold: key required")
+	}
+	switch c.Op {
+	case "<", "<=", ">", ">=", "==":
+	default:
+		return errors.New("flag_threshold: op must be one of <, <=, >, >=, ==")
+	}
+	return nil
+}
+
+// OnRealmEnterConfig fires once per (player, map) session when the
+// player joins the realm. The "once per session" idempotency lives in
+// the sim runtime; the config carries no fields today.
+type OnRealmEnterConfig struct{}
+
+func (OnRealmEnterConfig) Validate() error { return nil }
+
 // ---- Helper to wire a Definition from a Configurable struct ---------
 //
 // All the trigger configs above share the boring decode/validate
@@ -211,6 +260,46 @@ func DefaultTriggers() *Registry {
 			}
 		},
 		OnEnterTileConfig{Any: true}))
+
+	r.Register(makeDefinition(string(TriggerFlagEquals),
+		func() []configurable.FieldDescriptor {
+			return []configurable.FieldDescriptor{
+				{Key: "key",  Label: "Flag key", Kind: configurable.KindString, Required: true,
+					Help: "Per-realm switch or variable name (1..64 chars)."},
+				{Key: "kind", Label: "Kind", Kind: configurable.KindEnum, Required: true, Default: "bool",
+					Options: []configurable.EnumOption{
+						{Value: "bool", Label: "Switch (true / false)"},
+						{Value: "int",  Label: "Variable (integer)"},
+					}},
+				{Key: "bool_val", Label: "Switch value", Kind: configurable.KindBool, Default: true,
+					Help: "Used when Kind = Switch."},
+				{Key: "int_val",  Label: "Variable value", Kind: configurable.KindInt, Default: 0,
+					Help: "Used when Kind = Variable."},
+			}
+		},
+		FlagEqualsConfig{Kind: "bool", BoolVal: true}))
+
+	r.Register(makeDefinition(string(TriggerFlagThreshold),
+		func() []configurable.FieldDescriptor {
+			return []configurable.FieldDescriptor{
+				{Key: "key", Label: "Flag key", Kind: configurable.KindString, Required: true,
+					Help: "Per-realm integer variable name (1..64 chars)."},
+				{Key: "op",  Label: "Operator", Kind: configurable.KindEnum, Required: true, Default: ">=",
+					Options: []configurable.EnumOption{
+						{Value: "<",  Label: "<"},
+						{Value: "<=", Label: "≤"},
+						{Value: ">",  Label: ">"},
+						{Value: ">=", Label: "≥"},
+						{Value: "==", Label: "="},
+					}},
+				{Key: "value", Label: "Threshold", Kind: configurable.KindInt, Default: 0},
+			}
+		},
+		FlagThresholdConfig{Op: ">="}))
+
+	r.Register(makeDefinition(string(TriggerOnRealmEnter),
+		func() []configurable.FieldDescriptor { return nil },
+		OnRealmEnterConfig{}))
 
 	return r
 }

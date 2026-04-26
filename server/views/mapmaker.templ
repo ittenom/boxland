@@ -53,6 +53,12 @@ templ MapmakerPage(p MapmakerProps) {
 					@MapPublicBadge(MapPublicBadgeProps{ MapID: p.Map.ID, Public: p.Map.Public })
 				</div>
 				<div class="bx-row">
+					<a
+						href={ templ.URL(fmt.Sprintf("/design/maps/%d/hud", p.Map.ID)) }
+						class="bx-btn bx-btn--ghost bx-btn--small"
+						title="Edit the player-facing HUD for this realm (H)"
+						data-copy-slot="mapmaker.hud"
+					>♡ HUD</a>
 					<button
 						type="button"
 						class="bx-btn bx-btn--ghost bx-btn--small"
@@ -131,6 +137,46 @@ func defaultLayerName(layers []maps.Layer) string {
 	return layers[0].Name
 }
 
+// LayerYSortChip renders the per-layer y-sort toggle. Re-rendered by the
+// HTMX swap on POST /design/maps/{id}/layers/{id}/y-sort so the new state
+// (and the new "off" target) reflects atomically. See migration 0028 +
+// docs/indie-rpg-research-todo.md §P1 #8.
+templ LayerYSortChip(l maps.Layer) {
+	<button
+		type="button"
+		id={ fmt.Sprintf("layer-ysort-%d", l.ID) }
+		class={ ysortChipClass(l.YSortEntities) }
+		hx-post={ fmt.Sprintf("/design/maps/%d/layers/%d/y-sort?on=%t", l.MapID, l.ID, !l.YSortEntities) }
+		hx-target="this"
+		hx-swap="outerHTML"
+		title={ ysortChipTitle(l.YSortEntities) }
+		aria-pressed={ ysortAttr(l.YSortEntities) }
+	>
+		y-sort
+	</button>
+}
+
+func ysortAttr(on bool) string {
+	if on {
+		return "true"
+	}
+	return "false"
+}
+
+func ysortChipClass(on bool) string {
+	if on {
+		return "bx-chip bx-chip--on"
+	}
+	return "bx-chip bx-chip--ghost"
+}
+
+func ysortChipTitle(on bool) string {
+	if on {
+		return "Y-sort is ON: entities sort by foot position so the player walks behind props correctly. Click to disable."
+	}
+	return "Y-sort is OFF: entities draw in id order. Click to enable foot-position sorting (the walk-behind illusion)."
+}
+
 // MapmakerToolbar is the left-hand sidebar: tools, layers, palette.
 templ MapmakerToolbar(p MapmakerProps) {
 	<section class="bx-panel" data-bx-toolbar style="padding: var(--bx-s2);">
@@ -152,11 +198,15 @@ templ MapmakerToolbar(p MapmakerProps) {
 					data-bx-layer-id={ fmt.Sprintf("%d", l.ID) }
 					data-bx-layer-name={ l.Name }
 					data-bx-layer-kind={ l.Kind }
+					data-bx-layer-y-sort={ ysortAttr(l.YSortEntities) }
 					if i == 0 { aria-selected="true" } else { aria-selected="false" }
 					title={ l.Name }
 				>
 					<span>{ l.Name }</span>
 					<span class="bx-badge">{ l.Kind }</span>
+					if l.Kind == "tile" {
+						@LayerYSortChip(l)
+					}
 				</li>
 			}
 		</ul>
