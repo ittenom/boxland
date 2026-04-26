@@ -23,15 +23,17 @@ import (
 
 // TileGroup is one row from tile_groups.
 type TileGroup struct {
-	ID         int64           `db:"id"          pk:"auto" json:"id"`
-	Name       string          `db:"name"                  json:"name"`
-	Width      int32           `db:"width"                 json:"width"`
-	Height     int32           `db:"height"                json:"height"`
-	LayoutJSON json.RawMessage `db:"layout_json"           json:"layout"`
-	Tags       []string        `db:"tags"                  json:"tags"`
-	CreatedBy  int64           `db:"created_by"            json:"created_by"`
-	CreatedAt  time.Time       `db:"created_at" repo:"readonly" json:"created_at"`
-	UpdatedAt  time.Time       `db:"updated_at" repo:"readonly" json:"updated_at"`
+	ID                           int64           `db:"id"          pk:"auto" json:"id"`
+	Name                         string          `db:"name"                  json:"name"`
+	Width                        int32           `db:"width"                 json:"width"`
+	Height                       int32           `db:"height"                json:"height"`
+	LayoutJSON                   json.RawMessage `db:"layout_json"           json:"layout"`
+	Tags                         []string        `db:"tags"                  json:"tags"`
+	ExcludeMembersFromProcedural bool            `db:"exclude_members_from_procedural" json:"exclude_members_from_procedural"`
+	UseGroupInProcedural         bool            `db:"use_group_in_procedural"         json:"use_group_in_procedural"`
+	CreatedBy                    int64           `db:"created_by"            json:"created_by"`
+	CreatedAt                    time.Time       `db:"created_at" repo:"readonly" json:"created_at"`
+	UpdatedAt                    time.Time       `db:"updated_at" repo:"readonly" json:"updated_at"`
 }
 
 // Layout is the typed in-memory shape of layout_json. The outer slice is
@@ -47,11 +49,18 @@ var (
 
 // CreateTileGroupInput drives CreateTileGroup.
 type CreateTileGroupInput struct {
-	Name      string
-	Width     int32
-	Height    int32
-	Tags      []string
-	CreatedBy int64
+	Name                 string
+	Width                int32
+	Height               int32
+	Tags                 []string
+	CreatedBy            int64
+	UseGroupInProcedural *bool // nil = default true
+}
+
+type UpdateTileGroupLayoutInput struct {
+	Layout                       Layout
+	ExcludeMembersFromProcedural bool
+	UseGroupInProcedural         bool
 }
 
 // CreateTileGroup inserts a tile group with an empty (all-zeros) layout.
@@ -69,13 +78,18 @@ func (s *Service) CreateTileGroup(ctx context.Context, in CreateTileGroupInput) 
 	}
 	body, _ := json.Marshal(emptyLayout)
 
+	useGroup := true
+	if in.UseGroupInProcedural != nil {
+		useGroup = *in.UseGroupInProcedural
+	}
 	row := &TileGroup{
-		Name:       in.Name,
-		Width:      in.Width,
-		Height:     in.Height,
-		LayoutJSON: body,
-		Tags:       valOrEmpty(in.Tags),
-		CreatedBy:  in.CreatedBy,
+		Name:                 in.Name,
+		Width:                in.Width,
+		Height:               in.Height,
+		LayoutJSON:           body,
+		Tags:                 valOrEmpty(in.Tags),
+		UseGroupInProcedural: useGroup,
+		CreatedBy:            in.CreatedBy,
 	}
 	r := repo.New[TileGroup](s.Pool, "tile_groups")
 	if err := r.Insert(ctx, row); err != nil {
@@ -113,6 +127,21 @@ func (s *Service) UpdateTileGroupLayout(ctx context.Context, id int64, layout La
 	if err != nil {
 		return err
 	}
+	return s.UpdateTileGroupLayoutAndProcedural(ctx, id, UpdateTileGroupLayoutInput{
+		Layout:                       layout,
+		ExcludeMembersFromProcedural: tg.ExcludeMembersFromProcedural,
+		UseGroupInProcedural:         tg.UseGroupInProcedural,
+	})
+}
+
+// UpdateTileGroupLayoutAndProcedural updates the group's cell layout and the
+// procedural-generation flags in one write so the editor save is atomic.
+func (s *Service) UpdateTileGroupLayoutAndProcedural(ctx context.Context, id int64, in UpdateTileGroupLayoutInput) error {
+	tg, err := s.FindTileGroupByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	layout := in.Layout
 	if int32(len(layout)) != tg.Height {
 		return fmt.Errorf("%w: rows=%d height=%d", ErrLayoutSize, len(layout), tg.Height)
 	}
@@ -122,10 +151,14 @@ func (s *Service) UpdateTileGroupLayout(ctx context.Context, id int64, layout La
 		}
 	}
 	body, _ := json.Marshal(layout)
-	if _, err := s.Pool.Exec(ctx,
-		`UPDATE tile_groups SET layout_json = $2, updated_at = now() WHERE id = $1`,
-		id, body,
-	); err != nil {
+	if _, err := s.Pool.Exec(ctx, `
+		UPDATE tile_groups
+		SET layout_json = $2,
+		    exclude_members_from_procedural = $3,
+		    use_group_in_procedural = $4,
+		    updated_at = now()
+		WHERE id = $1
+	`, id, body, in.ExcludeMembersFromProcedural, in.UseGroupInProcedural); err != nil {
 		return fmt.Errorf("update layout: %w", err)
 	}
 	return nil

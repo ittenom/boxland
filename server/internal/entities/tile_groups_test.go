@@ -29,6 +29,12 @@ func TestTileGroup_CreateInitializesEmptyLayout(t *testing.T) {
 	if len(got) != 2 || len(got[0]) != 3 {
 		t.Errorf("expected 2x3 layout, got %dx%d", len(got), len(got[0]))
 	}
+	if tg.ExcludeMembersFromProcedural {
+		t.Errorf("ExcludeMembersFromProcedural default = true, want false")
+	}
+	if !tg.UseGroupInProcedural {
+		t.Errorf("UseGroupInProcedural default = false, want true")
+	}
 	for _, row := range got {
 		for _, v := range row {
 			if v != 0 {
@@ -74,6 +80,35 @@ func TestTileGroup_UpdateLayoutEnforcesDimensions(t *testing.T) {
 	bad := entities.Layout{{1, 2, 3}, {4, 5, 6}} // wrong width
 	if err := svc.UpdateTileGroupLayout(ctx, tg.ID, bad); !errors.Is(err, entities.ErrLayoutSize) {
 		t.Errorf("got %v, want ErrLayoutSize", err)
+	}
+}
+
+func TestTileGroup_UpdateLayoutAndProceduralPersistsToggles(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	designerID := resetDB(t, pool)
+	svc := entities.New(pool, components.Default())
+	ctx := context.Background()
+
+	tg, _ := svc.CreateTileGroup(ctx, entities.CreateTileGroupInput{
+		Name: "g", Width: 2, Height: 1, CreatedBy: designerID,
+	})
+	if err := svc.UpdateTileGroupLayoutAndProcedural(ctx, tg.ID, entities.UpdateTileGroupLayoutInput{
+		Layout:                       entities.Layout{{1, 2}},
+		ExcludeMembersFromProcedural: true,
+		UseGroupInProcedural:         false,
+	}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	got, err := svc.FindTileGroupByID(ctx, tg.ID)
+	if err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	if !got.ExcludeMembersFromProcedural {
+		t.Errorf("ExcludeMembersFromProcedural not persisted")
+	}
+	if got.UseGroupInProcedural {
+		t.Errorf("UseGroupInProcedural not persisted")
 	}
 }
 

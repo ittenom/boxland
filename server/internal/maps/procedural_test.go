@@ -38,6 +38,118 @@ func TestProceduralPreview_RejectsInvalidDimensions(t *testing.T) {
 	}
 }
 
+func TestProceduralPreview_DetectsTileTaggedEntityTypes(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	designerID, baseEtID := resetDB(t, pool) // creates 'wall' with tags but no Tile component
+	ents := entities.New(pool, components.Default())
+
+	floor, err := ents.Create(context.Background(), entities.CreateInput{
+		Name: "floor", CreatedBy: designerID, Tags: []string{"tile"},
+	})
+	if err != nil {
+		t.Fatalf("create floor: %v", err)
+	}
+	// Mirror the upload-time tile-sheet workflow: auto-sliced paintable
+	// cells are tagged as tiles. They do not get a Tile component until
+	// placed in a map, so procedural mode must classify them by tag.
+	if _, err := pool.Exec(context.Background(), `UPDATE entity_types SET tags = ARRAY['tile'] WHERE id = $1`, baseEtID); err != nil {
+		t.Fatalf("tag wall: %v", err)
+	}
+
+	sock, err := ents.CreateSocket(context.Background(), "open", 0xffffffff, designerID)
+	if err != nil {
+		t.Fatalf("create socket: %v", err)
+	}
+	if err := ents.SetTileEdges(context.Background(), baseEtID, &sock.ID, &sock.ID, &sock.ID, &sock.ID); err != nil {
+		t.Fatalf("set wall edges: %v", err)
+	}
+	if err := ents.SetTileEdges(context.Background(), floor.ID, &sock.ID, &sock.ID, &sock.ID, &sock.ID); err != nil {
+		t.Fatalf("set floor edges: %v", err)
+	}
+
+	svc := maps.New(pool)
+	res, err := svc.GenerateProceduralPreview(context.Background(), maps.ProceduralPreviewInput{
+		Width: 4, Height: 4, Seed: 7,
+	})
+	if err != nil {
+		t.Fatalf("GenerateProceduralPreview: %v", err)
+	}
+	if res.TileSetSize != 2 {
+		t.Fatalf("TileSetSize=%d, want 2 tile-tagged entity types", res.TileSetSize)
+	}
+}
+
+func TestProceduralPreview_TileGroupProceduralToggles(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	designerID, baseEtID := resetDB(t, pool)
+	ents := entities.New(pool, components.Default())
+	ctx := context.Background()
+
+	floor, err := ents.Create(ctx, entities.CreateInput{Name: "floor", CreatedBy: designerID, Tags: []string{"tile"}})
+	if err != nil {
+		t.Fatalf("create floor: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE entity_types SET tags = ARRAY['tile'] WHERE id = $1`, baseEtID); err != nil {
+		t.Fatalf("tag wall: %v", err)
+	}
+	sock, err := ents.CreateSocket(ctx, "open", 0xffffffff, designerID)
+	if err != nil {
+		t.Fatalf("create socket: %v", err)
+	}
+	_ = ents.SetTileEdges(ctx, baseEtID, &sock.ID, &sock.ID, &sock.ID, &sock.ID)
+	_ = ents.SetTileEdges(ctx, floor.ID, &sock.ID, &sock.ID, &sock.ID, &sock.ID)
+
+	tg, err := ents.CreateTileGroup(ctx, entities.CreateTileGroupInput{Name: "pair", Width: 2, Height: 1, CreatedBy: designerID})
+	if err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+	if err := ents.UpdateTileGroupLayoutAndProcedural(ctx, tg.ID, entities.UpdateTileGroupLayoutInput{
+		Layout:                       entities.Layout{{baseEtID, floor.ID}},
+		ExcludeMembersFromProcedural: true,
+		UseGroupInProcedural:         true,
+	}); err != nil {
+		t.Fatalf("update group: %v", err)
+	}
+
+	svc := maps.New(pool)
+	res, err := svc.GenerateProceduralPreview(ctx, maps.ProceduralPreviewInput{Width: 4, Height: 2, Seed: 1})
+	if err != nil {
+		t.Fatalf("preview with group: %v", err)
+	}
+	if res.TileSetSize != 1 {
+		t.Fatalf("TileSetSize=%d, want only atomic group candidate", res.TileSetSize)
+	}
+	if !containsHorizontalPair(res.Region, wfc.EntityTypeID(baseEtID), wfc.EntityTypeID(floor.ID)) {
+		t.Fatalf("expected procedural output to contain intact tile group pair; cells=%v", res.Region.Cells)
+	}
+
+	if err := ents.UpdateTileGroupLayoutAndProcedural(ctx, tg.ID, entities.UpdateTileGroupLayoutInput{
+		Layout:                       entities.Layout{{baseEtID, floor.ID}},
+		ExcludeMembersFromProcedural: true,
+		UseGroupInProcedural:         false,
+	}); err != nil {
+		t.Fatalf("disable group: %v", err)
+	}
+	_, err = svc.GenerateProceduralPreview(ctx, maps.ProceduralPreviewInput{Width: 4, Height: 2, Seed: 1})
+	if !errors.Is(err, maps.ErrNoTileKinds) {
+		t.Fatalf("disabled group with excluded members should leave no procedural candidates; got %v", err)
+	}
+}
+
+func containsHorizontalPair(r *wfc.Region, left, right wfc.EntityTypeID) bool {
+	if r == nil {
+		return false
+	}
+	for _, c := range r.Cells {
+		if c.EntityType == left && r.At(c.X+1, c.Y) == right {
+			return true
+		}
+	}
+	return false
+}
+
 // addTileComponent attaches the components.KindTile component to an entity
 // type so it surfaces in the procedural tile-set query.
 func addTileComponent(t *testing.T, ents *entities.Service, etID int64) {

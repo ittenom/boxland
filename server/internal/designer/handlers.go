@@ -2139,7 +2139,11 @@ func postTileGroupLayout(d Deps) http.HandlerFunc {
 			http.Error(w, "bad layout json", http.StatusBadRequest)
 			return
 		}
-		if err := d.Entities.UpdateTileGroupLayout(r.Context(), id, layout); err != nil {
+		if err := d.Entities.UpdateTileGroupLayoutAndProcedural(r.Context(), id, entities.UpdateTileGroupLayoutInput{
+			Layout:                       layout,
+			ExcludeMembersFromProcedural: r.FormValue("exclude_members_from_procedural") == "on",
+			UseGroupInProcedural:         r.FormValue("use_group_in_procedural") == "on",
+		}); err != nil {
 			if errors.Is(err, entities.ErrLayoutSize) {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return

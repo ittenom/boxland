@@ -153,6 +153,25 @@ templ TileGroupDetail(p TileGroupDetailProps) {
 						>Clear</button>
 					</div>
 
+					<section class="bx-panel" style="background: color-mix(in srgb, var(--bx-accent) 8%, transparent); border-color: color-mix(in srgb, var(--bx-accent) 28%, var(--bx-border));">
+						<div class="bx-stack" style="gap: var(--bx-s2);">
+							<label class="bx-row" style="justify-content: space-between; gap: var(--bx-s3);">
+								<span>
+									<strong>Use this group in procedural generation</strong><br/>
+									<span class="bx-muted bx-small">Place this layout as one intact chunk.</span>
+								</span>
+								<input type="checkbox" name="use_group_in_procedural" if p.Group.UseGroupInProcedural { checked }/>
+							</label>
+							<label class="bx-row" style="justify-content: space-between; gap: var(--bx-s3);">
+								<span>
+									<strong>Exclude member tiles as singles</strong><br/>
+									<span class="bx-muted bx-small">When any group uses this, its tiles are only used inside groups.</span>
+								</span>
+								<input type="checkbox" name="exclude_members_from_procedural" if p.Group.ExcludeMembersFromProcedural { checked }/>
+							</label>
+						</div>
+					</section>
+
 					<div
 						class="bx-tilegroup-grid"
 						data-bx-tilegroup-grid
