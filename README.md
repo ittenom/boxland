@@ -2,38 +2,24 @@
 
 Boxland is a designer-friendly MMORPG engine that makes it easy to turn on your server and invite players faster. Bring your 32x32 tiles, textures, and sprites (we recommend the wonderful [Aseprite](https://dacap.itch.io/aseprite) for asset generation) and define worlds with persistent places, instanced locations, and NPCs. Use Boxland's no-code event triggers and entity behaviors to make your creations interactive and alive.
 
-## Layout
-
-```
-server/      Go monolith (single binary, multiple subcommands)
-web/         TypeScript modules (game client, Mapmaker, Sandbox, pixel editor, design-tool widgets)
-schemas/     FlatBuffers .fbs files — single source of truth for the wire protocol
-shared/      Cross-runtime assets: default fonts, palettes, collision test vectors
-docker/      Dockerfile, docker-compose, pinned flatc build image
-```
-
-## Prerequisites
-
-- [Just](https://just.systems) — task runner. Install via `winget install Casey.Just`, `brew install just`, `cargo install just`, or your distro's package manager.
-- Go 1.26+ (`winget install GoLang.Go` / `brew install go` / `apt install golang`)
-- Node 20+ (for the web build)
-- Docker + Docker Compose (for the local dev stack)
-- Optional: [`golangci-lint`](https://golangci-lint.run) for `just lint` (`go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`)
-
 ## Quickstart
 
-Install [Docker Desktop](https://www.docker.com/products/docker-desktop/),
-[Go](https://go.dev/dl/), [Node](https://nodejs.org/), and
-[Just](https://just.systems). Then run:
+(1) Install these prerequisites:
+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+- [Go](https://go.dev/dl/) 
+- [Node](https://nodejs.org/) 
+- [Just](https://just.systems)
+
+(2) Clone the Boxland repo to your device or server.
+
+(3) From the boxland/ directory, run
 
 ```
 just design
 ```
 
-Works the same on Windows, macOS, and Linux. That single command
-brings up Postgres + Redis + Mailpit + MinIO in Docker, runs
-migrations, builds the web bundle, and starts the Go server. If
-everything works, you'll see this:
+This works the same on Windows, macOS, and Linux. Boxland will provision a virtual machine with Postgres, Redis, Mailpit, and MinIO services. Then it sets up a database, runs the web server, runs the game server, and if everything works you'll see this:
 
 ```
    ██████╗   ██████╗  ██╗  ██╗ ██╗       █████╗  ███╗   ██╗ ██████╗
@@ -62,12 +48,6 @@ just bench             # ECS microbenchmarks (regression-gated)
 just gen-fb            # Regenerate FlatBuffers Go + TS code from /schemas/
 just migrate           # Run SQL migrations
 ```
-
-## Documentation
-
-- **PLAN.md** — architecture, locked decisions, task list
-- `docs/hotkeys.md` — hotkey reference (added in task #36)
-- `schemas/collision.md` — canonical swept-AABB pseudocode (the cross-runtime contract)
 
 ## License
 
