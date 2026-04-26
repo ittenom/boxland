@@ -223,6 +223,285 @@ func TestPublish_RejectsRecipeWithBadStatAllocation(t *testing.T) {
 	}
 }
 
+func TestUpdateRecipe_PropagatesToLinkedNpcTemplates(t *testing.T) {
+	// Phase 5.0 risk #21: per spec, library-shared recipes mean editing
+	// a recipe re-bakes and pushes the new bake's id to every NPC
+	// template linked to it. This test pins the contract: two NPCs
+	// linked to recipe R, edit R, both NPCs flip to the new bake.
+	f := setup(t)
+	store := makeBakeStore(t)
+	ctx := context.Background()
+	f.svc.SetBakeDeps(store, assets.New(f.pool))
+
+	slots, _ := f.svc.ListSlots(ctx)
+	body := uploadPart(t, ctx, f, store, slots[0].ID, "body-prop", color.NRGBA{200, 80, 60, 255}, `{"idle":[0,0]}`)
+
+	// Create one shared recipe + bake it once via direct service.
+	recipe, err := f.svc.CreateRecipe(ctx, characters.CreateRecipeInput{
+		OwnerKind: characters.OwnerKindDesigner, OwnerID: f.designerID,
+		Name: "Shared",
+		AppearanceJSON: must(t, characters.AppearanceSelection{
+			Slots: []characters.AppearanceSlot{{SlotKey: "body", PartID: body.ID}},
+		}),
+		CreatedBy: f.designerID,
+	})
+	if err != nil {
+		t.Fatalf("create recipe: %v", err)
+	}
+
+	// Two NPC templates linked to the same recipe.
+	tmplA, _ := f.svc.CreateNpcTemplate(ctx, characters.CreateNpcTemplateInput{Name: "NPC A", CreatedBy: f.designerID})
+	tmplB, _ := f.svc.CreateNpcTemplate(ctx, characters.CreateNpcTemplateInput{Name: "NPC B", CreatedBy: f.designerID})
+	if err := f.svc.AttachRecipeToNpcTemplate(ctx, tmplA.ID, recipe.ID); err != nil {
+		t.Fatalf("attach A: %v", err)
+	}
+	if err := f.svc.AttachRecipeToNpcTemplate(ctx, tmplB.ID, recipe.ID); err != nil {
+		t.Fatalf("attach B: %v", err)
+	}
+
+	// Add a second part to the appearance (hair_front slot) and edit the recipe.
+	var hairSlot characters.Slot
+	for _, s := range slots {
+		if s.Key == "hair_front" {
+			hairSlot = s
+		}
+	}
+	hair := uploadPart(t, ctx, f, store, hairSlot.ID, "hair-prop", color.NRGBA{0, 0, 0, 255}, `{"idle":[0,0]}`)
+
+	updated, err := f.svc.UpdateRecipe(ctx, characters.UpdateRecipeInput{
+		ID: recipe.ID, OwnerKind: characters.OwnerKindDesigner, OwnerID: f.designerID,
+		Name: "Shared",
+		AppearanceJSON: must(t, characters.AppearanceSelection{
+			Slots: []characters.AppearanceSlot{
+				{SlotKey: "body", PartID: body.ID},
+				{SlotKey: "hair_front", PartID: hair.ID},
+			},
+		}),
+	})
+	if err != nil {
+		t.Fatalf("UpdateRecipe: %v", err)
+	}
+
+	// Both NPCs must now have a non-null active_bake_id pointing at
+	// the same bake row (the freshly-baked one).
+	var bakeA, bakeB *int64
+	if err := f.pool.QueryRow(ctx, `SELECT active_bake_id FROM npc_templates WHERE id = $1`, tmplA.ID).Scan(&bakeA); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.pool.QueryRow(ctx, `SELECT active_bake_id FROM npc_templates WHERE id = $1`, tmplB.ID).Scan(&bakeB); err != nil {
+		t.Fatal(err)
+	}
+	if bakeA == nil || bakeB == nil {
+		t.Fatalf("active_bake_id null after propagation: A=%v B=%v", bakeA, bakeB)
+	}
+	if *bakeA != *bakeB {
+		t.Errorf("propagation mismatch: A=%d B=%d (want both pointing to same fresh bake)", *bakeA, *bakeB)
+	}
+	// And the bake row hash matches the updated recipe hash. This
+	// pins the canonicalization invariant: hashes computed from
+	// in-memory typed data must equal hashes recomputed from the
+	// JSONB-round-tripped row content.
+	var bakeHash []byte
+	if err := f.pool.QueryRow(ctx, `SELECT recipe_hash FROM character_bakes WHERE id = $1`, *bakeA).Scan(&bakeHash); err != nil {
+		t.Fatal(err)
+	}
+	if !bytesMatch(bakeHash, updated.RecipeHash) {
+		t.Errorf("bake hash %x doesn't match updated recipe hash %x — canonicalization broken", bakeHash, updated.RecipeHash)
+	}
+}
+
+// must marshals v to JSON or fails the test.
+func must(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return b
+}
+
+// bytesMatch is local equality so the test file doesn't need bytes.Equal.
+func bytesMatch(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestUpdateRecipe_NoOpEditDoesNotCreateNewBake(t *testing.T) {
+	// When UpdateRecipe is called with content identical to the
+	// existing row, no new bake row should appear (the hash dedup
+	// short-circuits the propagation).
+	f := setup(t)
+	store := makeBakeStore(t)
+	ctx := context.Background()
+	f.svc.SetBakeDeps(store, assets.New(f.pool))
+
+	slots, _ := f.svc.ListSlots(ctx)
+	body := uploadPart(t, ctx, f, store, slots[0].ID, "body-noop", color.NRGBA{200, 80, 60, 255}, `{"idle":[0,0]}`)
+
+	app := must(t, characters.AppearanceSelection{
+		Slots: []characters.AppearanceSlot{{SlotKey: "body", PartID: body.ID}},
+	})
+	recipe, err := f.svc.CreateRecipe(ctx, characters.CreateRecipeInput{
+		OwnerKind: characters.OwnerKindDesigner, OwnerID: f.designerID,
+		Name: "NoOp", AppearanceJSON: app, CreatedBy: f.designerID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl, _ := f.svc.CreateNpcTemplate(ctx, characters.CreateNpcTemplateInput{Name: "NoOp NPC", CreatedBy: f.designerID})
+	if err := f.svc.AttachRecipeToNpcTemplate(ctx, tmpl.ID, recipe.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// First update triggers the bake.
+	if _, err := f.svc.UpdateRecipe(ctx, characters.UpdateRecipeInput{
+		ID: recipe.ID, OwnerKind: characters.OwnerKindDesigner, OwnerID: f.designerID,
+		Name: "NoOp", AppearanceJSON: app,
+	}); err != nil {
+		t.Fatalf("first update: %v", err)
+	}
+	var bakeCountAfterFirst int
+	_ = f.pool.QueryRow(ctx, `SELECT count(*) FROM character_bakes WHERE status = 'baked'`).Scan(&bakeCountAfterFirst)
+
+	// Second update with identical content: hash is the same as the
+	// row's existing hash, so propagation short-circuits.
+	if _, err := f.svc.UpdateRecipe(ctx, characters.UpdateRecipeInput{
+		ID: recipe.ID, OwnerKind: characters.OwnerKindDesigner, OwnerID: f.designerID,
+		Name: "NoOp", AppearanceJSON: app,
+	}); err != nil {
+		t.Fatalf("second update: %v", err)
+	}
+	var bakeCountAfterSecond int
+	_ = f.pool.QueryRow(ctx, `SELECT count(*) FROM character_bakes WHERE status = 'baked'`).Scan(&bakeCountAfterSecond)
+
+	if bakeCountAfterSecond != bakeCountAfterFirst {
+		t.Errorf("no-op edit created a new bake row (was %d, now %d)", bakeCountAfterFirst, bakeCountAfterSecond)
+	}
+}
+
+func TestPublish_BakeFailurePreservesPriorActiveBake(t *testing.T) {
+	// Spec acceptance criterion: when a bake fails, the NPC template's
+	// active_bake_id MUST stay at its prior value (the live world keeps
+	// rendering the last-good bake instead of a broken one).
+	f := setup(t)
+	store := makeBakeStore(t)
+	ctx := context.Background()
+	f.svc.SetBakeDeps(store, assets.New(f.pool))
+
+	// First publish: a clean recipe + NPC template.
+	slots, _ := f.svc.ListSlots(ctx)
+	body := uploadPart(t, ctx, f, store, slots[0].ID, "body-fail-first", color.NRGBA{120, 120, 120, 255}, `{"idle":[0,0]}`)
+	app := must(t, characters.AppearanceSelection{
+		Slots: []characters.AppearanceSlot{{SlotKey: "body", PartID: body.ID}},
+	})
+	hash, _ := characters.ComputeRecipeHash("Stable", app, nil, nil)
+	var recipeID int64
+	if err := f.pool.QueryRow(ctx, `
+		INSERT INTO character_recipes (owner_kind, owner_id, name, appearance_json, recipe_hash, created_by)
+		VALUES ('designer', $1, 'Stable', $2::jsonb, $3, $1) RETURNING id
+	`, f.designerID, app, hash).Scan(&recipeID); err != nil {
+		t.Fatal(err)
+	}
+
+	tmpl, _ := f.svc.CreateNpcTemplate(ctx, characters.CreateNpcTemplateInput{
+		Name: "Stable NPC", CreatedBy: f.designerID,
+	})
+
+	registry := artifact.NewRegistry()
+	registry.Register(characters.NewNpcTemplateHandler(f.svc))
+	pipe := artifact.NewPipeline(f.pool, registry)
+
+	// Publish 1: succeed.
+	draft1 := characters.NpcTemplateDraft{Name: "Stable NPC", RecipeID: &recipeID}
+	js1, _ := json.Marshal(draft1)
+	if _, err := f.pool.Exec(ctx, `
+		INSERT INTO drafts (artifact_kind, artifact_id, draft_json, created_by)
+		VALUES ('npc_template', $1, $2::jsonb, $3)
+	`, tmpl.ID, js1, f.designerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pipe.Run(ctx, f.designerID); err != nil {
+		t.Fatalf("first publish: %v", err)
+	}
+
+	var firstBakeID int64
+	if err := f.pool.QueryRow(ctx, `SELECT active_bake_id FROM npc_templates WHERE id = $1`, tmpl.ID).Scan(&firstBakeID); err != nil {
+		t.Fatal(err)
+	}
+	if firstBakeID == 0 {
+		t.Fatal("first publish didn't set active_bake_id")
+	}
+
+	// Publish 2: a recipe that will fail bake (parts with no common
+	// animation). Build a brand-new recipe, link the same template,
+	// stage a draft, and publish.
+	body2 := uploadPart(t, ctx, f, store, slots[0].ID, "body-fail-second", color.NRGBA{200, 0, 0, 255}, `{"idle":[0,0]}`)
+	var hairSlot characters.Slot
+	for _, s := range slots {
+		if s.Key == "hair_front" {
+			hairSlot = s
+		}
+	}
+	hair := uploadPart(t, ctx, f, store, hairSlot.ID, "hair-fail", color.NRGBA{0, 200, 0, 255}, `{"walk":[0,0]}`)
+
+	appBad := must(t, characters.AppearanceSelection{
+		Slots: []characters.AppearanceSlot{
+			{SlotKey: "body", PartID: body2.ID},
+			{SlotKey: "hair_front", PartID: hair.ID},
+		},
+	})
+	hashBad, _ := characters.ComputeRecipeHash("Bad", appBad, nil, nil)
+	var badRecipeID int64
+	if err := f.pool.QueryRow(ctx, `
+		INSERT INTO character_recipes (owner_kind, owner_id, name, appearance_json, recipe_hash, created_by)
+		VALUES ('designer', $1, 'Bad', $2::jsonb, $3, $1) RETURNING id
+	`, f.designerID, appBad, hashBad).Scan(&badRecipeID); err != nil {
+		t.Fatal(err)
+	}
+
+	draft2 := characters.NpcTemplateDraft{Name: "Stable NPC", RecipeID: &badRecipeID}
+	js2, _ := json.Marshal(draft2)
+	if _, err := f.pool.Exec(ctx, `
+		INSERT INTO drafts (artifact_kind, artifact_id, draft_json, created_by)
+		VALUES ('npc_template', $1, $2::jsonb, $3)
+	`, tmpl.ID, js2, f.designerID); err != nil {
+		t.Fatal(err)
+	}
+	// Publish 2 MUST fail — body has only 'idle', hair has only 'walk',
+	// so the canonical animation intersection is empty.
+	if _, err := pipe.Run(ctx, f.designerID); err == nil {
+		t.Fatal("expected publish to fail on empty animation intersection")
+	}
+
+	// Critical assertion: the template's active_bake_id is still the
+	// first (good) bake — the failed publish rolled back cleanly.
+	var bakeAfterFail int64
+	if err := f.pool.QueryRow(ctx, `SELECT active_bake_id FROM npc_templates WHERE id = $1`, tmpl.ID).Scan(&bakeAfterFail); err != nil {
+		t.Fatal(err)
+	}
+	if bakeAfterFail != firstBakeID {
+		t.Errorf("active_bake_id changed after failed publish: was %d, now %d", firstBakeID, bakeAfterFail)
+	}
+
+	// And the draft row remains in `drafts` (the publish tx rolled back).
+	var draftCount int
+	if err := f.pool.QueryRow(ctx, `
+		SELECT count(*) FROM drafts WHERE artifact_kind = 'npc_template' AND artifact_id = $1
+	`, tmpl.ID).Scan(&draftCount); err != nil {
+		t.Fatal(err)
+	}
+	if draftCount != 1 {
+		t.Errorf("draft count after failed publish = %d, want 1 (rollback failed)", draftCount)
+	}
+}
+
 func anyColor() color.NRGBA { return color.NRGBA{200, 80, 60, 255} }
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {

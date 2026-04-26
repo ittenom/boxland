@@ -62,11 +62,18 @@ const FrameSize = 32
 const BakeOutputPrefix = "character_bakes"
 
 // BakeDeps bundles the small set of services bake.Run needs. Callers
-// (currently NpcTemplateHandler.Publish) pass these in so this package
-// doesn't have to know about the global service graph.
+// (NpcTemplateHandler.Publish for designer flows; the player save
+// endpoint for player flows) pass these in so this package doesn't
+// have to know about the global service graph.
 type BakeDeps struct {
 	Store  *persistence.ObjectStore
 	Assets *assets.Service
+
+	// SystemDesignerID is the designer attribution for player-bake
+	// asset rows (assets.created_by is NOT NULL FK -> designers).
+	// Designer flows leave this 0 because the recipe's OwnerID is
+	// already a designer id.
+	SystemDesignerID int64
 }
 
 // BakeOutcome reports what bake.Run did. Callers update the NPC template
@@ -194,7 +201,7 @@ func RunBake(
 	// 8. Insert the assets row inside the tx. Use FindByContentPath
 	// first so re-running with identical bytes doesn't violate the
 	// (kind,name) unique index.
-	assetID, err := upsertBakeAsset(ctx, tx, recipe, outKey, recipeHash, anims)
+	assetID, err := upsertBakeAsset(ctx, tx, recipe, outKey, recipeHash, anims, deps.SystemDesignerID)
 	if err != nil {
 		_ = persistFailedBake(ctx, tx, recipeID, recipeHash, "asset upsert: "+err.Error())
 		return BakeOutcome{}, fmt.Errorf("bake asset upsert: %w", err)
@@ -525,6 +532,7 @@ func upsertBakeAsset(
 	outKey string,
 	recipeHash []byte,
 	anims []bakedAnim,
+	systemDesignerID int64,
 ) (int64, error) {
 	// Look up an existing sprite row for this exact path. PNG bytes at
 	// a content-addressed key are immutable, so reuse is always safe.
@@ -563,16 +571,19 @@ func upsertBakeAsset(
 	hashHex := hex.EncodeToString(recipeHash)
 	name := fmt.Sprintf("character/%s/%s", sanitizeName(recipe.Name), hashHex[:12])
 
-	// created_by: designer-owned recipes carry the designer id; player
-	// recipes share a synthetic owner id (the player_id) but the
-	// assets.created_by FK is to designers(id). For Phase 2 we limit
-	// bake-on-publish to designer recipes; player flows ship in Phase 4
-	// and will need a separate "system" designer id for player-derived
-	// bakes. Keep the constraint visible:
-	if recipe.OwnerKind != OwnerKindDesigner {
-		return 0, fmt.Errorf("bake: only designer recipes can be baked in Phase 2 (got %s)", recipe.OwnerKind)
-	}
+	// created_by attribution: designer-owned recipes carry the
+	// designer id directly. Player-owned recipes use a configured
+	// SystemDesignerID (typically the realm owner) because
+	// assets.created_by is NOT NULL FK to designers(id) and players
+	// aren't designers. This is provenance only; no downstream code
+	// reads created_by for behavior.
 	createdBy := recipe.OwnerID
+	if recipe.OwnerKind == OwnerKindPlayer {
+		if systemDesignerID <= 0 {
+			return 0, errors.New("bake: player recipes require BakeDeps.SystemDesignerID")
+		}
+		createdBy = systemDesignerID
+	}
 
 	var newID int64
 	err = tx.QueryRow(ctx, `

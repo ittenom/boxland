@@ -14,6 +14,7 @@ import (
 
 	"boxland/server/internal/assets"
 	"boxland/server/internal/auth/player"
+	"boxland/server/internal/characters"
 	"boxland/server/internal/hud"
 	"boxland/server/internal/maps"
 	"boxland/server/internal/persistence"
@@ -31,6 +32,7 @@ type Deps struct {
 	HUD           *hud.Repo // per-realm HUD layouts (read-only on the player surface)
 	Assets        *assets.Service             // sprite catalog + animations for the renderer
 	ObjectStore   *persistence.ObjectStore    // public URLs for the asset catalog endpoint
+	Characters    *characters.Service         // player character creator + catalog
 	SecureCookies bool      // true in prod; false in dev so http://localhost works
 	WSURL         string    // absolute ws://... or wss://... URL the client opens
 	ServerName    string    // displayed under the top nav; "Default server" until multi-tenant
@@ -53,6 +55,13 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /play/game/{id}",     auth(getGame(d)))
 	mux.Handle("GET /play/maps/{id}/hud", auth(getMapHUD(d)))
 	mux.Handle("GET /play/asset-catalog",  auth(getAssetCatalog(d)))
+	mux.Handle("GET /play/character-catalog", auth(getCharacterCatalog(d)))
+	mux.Handle("GET /play/characters", auth(listPlayerCharacters(d)))
+	mux.Handle("GET /play/characters/new", auth(getPlayerCharacterGeneratorPage(d)))
+	mux.Handle("POST /play/characters", auth(createPlayerCharacter(d)))
+	mux.Handle("GET /play/characters/{id}", auth(getPlayerCharacter(d)))
+	mux.Handle("GET /play/characters/{id}/edit", auth(getPlayerCharacterEditPage(d)))
+	mux.Handle("POST /play/characters/{id}", auth(updatePlayerCharacter(d)))
 	mux.Handle("POST /play/ws-ticket",    auth(postWSTicket(d)))
 	mux.Handle("GET /play/settings",      auth(getSettingsPage(d)))
 	if d.Settings != nil {

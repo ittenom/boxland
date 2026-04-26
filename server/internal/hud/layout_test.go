@@ -18,7 +18,19 @@ func TestParseBinding_Entity(t *testing.T) {
 	}{
 		{"entity:host:hp_pct", true, BindingRef{Kind: BindEntity, Key: "host", Sub: "hp_pct"}},
 		{"entity:self:nameplate", true, BindingRef{Kind: BindEntity, Key: "self", Sub: "nameplate"}},
-		{"entity:host:resource:mana", false, BindingRef{}}, // 4 parts not allowed; future syntax
+		// 4-part designer-defined per-entity resource. Replaces the old
+		// "future syntax" placeholder; now the canonical way to bind a
+		// HUD widget to a baked character's named resource (focus,
+		// talent_points, etc.).
+		{"entity:host:resource:mana", true, BindingRef{Kind: BindEntity, Key: "host", Sub: "resource", Detail: "mana"}},
+		{"entity:host:resource:talent_points", true, BindingRef{Kind: BindEntity, Key: "host", Sub: "resource", Detail: "talent_points"}},
+		// Bad 4-part shapes: middle segment must literally be "resource".
+		{"entity:host:other:mana", false, BindingRef{}},
+		// Bad 4-part shapes: detail key must obey validateBindingKey.
+		{"entity:host:resource:Bad-Key", false, BindingRef{}},
+		{"entity:host:resource:", false, BindingRef{}},
+		// Length 5 is now too many.
+		{"entity:host:resource:mana:extra", false, BindingRef{}},
 		{"entity:host", false, BindingRef{}},
 		{"entity:nobody:hp_pct", false, BindingRef{}},
 		{"entity:host:totally_made_up_field", false, BindingRef{}},
@@ -80,6 +92,82 @@ func TestBindingRef_StringRoundTrip(t *testing.T) {
 	}
 }
 
+func TestParseBinding_Character(t *testing.T) {
+	cases := []struct {
+		in   string
+		ok   bool
+		want BindingRef
+	}{
+		// Happy path: numeric id + "stat" + valid key.
+		{"character:42:stat:might", true, BindingRef{Kind: BindCharacter, Key: "42", Sub: "stat", Detail: "might"}},
+		{"character:1:stat:focus", true, BindingRef{Kind: BindCharacter, Key: "1", Sub: "stat", Detail: "focus"}},
+		// Wrong shape: missing detail.
+		{"character:42:stat", false, BindingRef{}},
+		// Wrong shape: not "stat".
+		{"character:42:talent:cleave", false, BindingRef{}},
+		// Wrong shape: id not numeric.
+		{"character:bob:stat:might", false, BindingRef{}},
+		// Wrong shape: bad detail key.
+		{"character:42:stat:Bad-Key", false, BindingRef{}},
+		{"character:42:stat:", false, BindingRef{}},
+	}
+	for _, c := range cases {
+		got, err := ParseBinding(c.in)
+		if c.ok && err != nil {
+			t.Errorf("%q: unexpected error %v", c.in, err)
+			continue
+		}
+		if !c.ok && err == nil {
+			t.Errorf("%q: expected error, got %+v", c.in, got)
+			continue
+		}
+		if c.ok && got != c.want {
+			t.Errorf("%q: got %+v want %+v", c.in, got, c.want)
+		}
+	}
+}
+
+func TestBindingRef_StringRoundTrip_FourPart(t *testing.T) {
+	// Round-trip stability for the new 4-part shapes — both String()
+	// and ParseBinding must agree on the canonical form.
+	cases := []string{
+		"entity:host:resource:focus",
+		"entity:self:resource:talent_points",
+		"character:42:stat:might",
+	}
+	for _, in := range cases {
+		ref, err := ParseBinding(in)
+		if err != nil {
+			t.Fatalf("%q: %v", in, err)
+		}
+		if got := ref.String(); got != in {
+			t.Errorf("round-trip %q -> %q", in, got)
+		}
+	}
+}
+
+func TestBindingRef_StringRoundTrip_TwoAndThreePart_Unchanged(t *testing.T) {
+	// Critical invariant: existing 2/3-part bindings round-trip
+	// byte-identically — they're stored as Map keys on the client and
+	// any drift would invalidate every existing widget config.
+	cases := []string{
+		"flag:gold",
+		"time:realm_clock",
+		"time:wall",
+		"entity:host:hp_pct",
+		"entity:self:nameplate",
+	}
+	for _, in := range cases {
+		ref, err := ParseBinding(in)
+		if err != nil {
+			t.Fatalf("%q: %v", in, err)
+		}
+		if got := ref.String(); got != in {
+			t.Errorf("round-trip %q -> %q (regression!)", in, got)
+		}
+	}
+}
+
 func TestParseTemplateBindings(t *testing.T) {
 	tmpl := "Gold: {flag:gold}  HP: {entity:host:hp_pct}"
 	refs, err := ParseTemplateBindings(tmpl)
@@ -91,6 +179,23 @@ func TestParseTemplateBindings(t *testing.T) {
 	}
 	if refs[0].String() != "flag:gold" || refs[1].String() != "entity:host:hp_pct" {
 		t.Errorf("refs %+v", refs)
+	}
+}
+
+func TestParseTemplateBindings_FourPart(t *testing.T) {
+	tmpl := "Focus: {entity:host:resource:focus}  Might: {character:42:stat:might}"
+	refs, err := ParseTemplateBindings(tmpl)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(refs) != 2 {
+		t.Fatalf("got %d refs, want 2", len(refs))
+	}
+	if refs[0].String() != "entity:host:resource:focus" {
+		t.Errorf("ref[0] = %q", refs[0].String())
+	}
+	if refs[1].String() != "character:42:stat:might" {
+		t.Errorf("ref[1] = %q", refs[1].String())
 	}
 }
 

@@ -60,6 +60,29 @@
 | `Tab` | Cycle inspected entity. |
 | `~` | Open spawn palette. |
 
+## Character Generator
+
+Active on `/design/characters/generator/{id}` and `/play/characters/{id}/edit`.
+
+| Key | Action |
+|---|---|
+| `1` / `2` / `3` | Switch to **Look** / **Sheet** / **Talents** tab. |
+| `[` / `]` | Cycle the active animation in the preview. |
+| `+` / `-` | Zoom the preview (integer scale). |
+| `R` | Randomize selections (deterministic per click; player mode keeps this). |
+| `Ctrl/Cmd + S` | Save (designer: save draft; player: save & finalize). |
+| `Esc` | Close any open modal; otherwise no-op. |
+
+**Designer-only:**
+
+| Key | Action |
+|---|---|
+| `Shift + R` | Reset all selections (player mode hides Reset). |
+| `Shift + C` | Copy recipe JSON to clipboard for debugging. |
+
+Hotkeys are suppressed while focus is in any text input (recipe name, search,
+form fields). The action bar buttons are also keyboard-reachable via `Tab`.
+
 ## Game (player surfaces)
 
 | Key | Action |

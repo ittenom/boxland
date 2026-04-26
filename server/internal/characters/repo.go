@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/Masterminds/squirrel"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -24,6 +25,10 @@ import (
 	"boxland/server/internal/persistence"
 	"boxland/server/internal/persistence/repo"
 )
+
+// pgxBeginOpts returns the default tx options used by recipe
+// propagation. Hoisted so the import surface stays obvious.
+func pgxBeginOpts() pgx.TxOptions { return pgx.TxOptions{} }
 
 // Service bundles repos and pool. One per process.
 //
@@ -50,6 +55,14 @@ type Service struct {
 	// RunBake is invoked (i.e. NPC-template publish). See SetBakeDeps.
 	Store  *persistence.ObjectStore
 	Assets *assets.Service
+
+	// SystemDesignerID is the designer-row id used as `created_by` on
+	// player-bake outputs. Player characters aren't owned by any
+	// designer in particular, but `assets.created_by` is NOT NULL FK
+	// to designers(id), so we attribute the row to whichever designer
+	// the service was configured with (typically the realm owner).
+	// Set via SetSystemDesignerID; zero disables player-side bakes.
+	SystemDesignerID int64
 }
 
 // New constructs the Service and panics on misconfigured row tags (the
@@ -76,6 +89,13 @@ func New(pool *pgxpool.Pool) *Service {
 func (s *Service) SetBakeDeps(store *persistence.ObjectStore, asvc *assets.Service) {
 	s.Store = store
 	s.Assets = asvc
+}
+
+// SetSystemDesignerID configures the designer id used for player-bake
+// asset attribution. Must be a real row in `designers`; typically the
+// realm owner's id. Without it, player-side bakes return an error.
+func (s *Service) SetSystemDesignerID(id int64) {
+	s.SystemDesignerID = id
 }
 
 // ListStatSets returns every stat set, ordered by name. Trivial wrapper
@@ -414,6 +434,16 @@ type UpdateRecipeInput struct {
 // UpdateRecipe rewrites a recipe row owned by (OwnerKind, OwnerID).
 // Returns ErrRecipeNotFound when the id doesn't exist; ErrForbidden
 // when the recipe belongs to a different owner.
+//
+// Library-shared semantics (per spec resolved decision #6): a designer
+// recipe edit propagates to every NPC template linked to the recipe.
+// If bake deps are configured AND the recipe content changed, this
+// method runs a fresh bake inside one tx and updates every linked
+// NPC template's active_bake_id. The hash dedup makes no-op edits
+// cheap (no new asset row, no new bake row).
+//
+// Player recipes don't propagate (each player_character has its own
+// recipe by design).
 func (s *Service) UpdateRecipe(ctx context.Context, in UpdateRecipeInput) (*Recipe, error) {
 	in.Name = strings.TrimSpace(in.Name)
 	if in.Name == "" {
@@ -430,6 +460,8 @@ func (s *Service) UpdateRecipe(ctx context.Context, in UpdateRecipeInput) (*Reci
 	if err != nil {
 		return nil, fmt.Errorf("characters: hash recipe: %w", err)
 	}
+	hashChanged := !bytesEqual(existing.RecipeHash, hash)
+
 	existing.Name = in.Name
 	existing.AppearanceJSON = defaultJSON(in.AppearanceJSON, `{"slots":[]}`)
 	existing.StatsJSON = defaultJSON(in.StatsJSON, `{}`)
@@ -444,7 +476,83 @@ func (s *Service) UpdateRecipe(ctx context.Context, in UpdateRecipeInput) (*Reci
 		}
 		return nil, fmt.Errorf("characters: update recipe: %w", err)
 	}
+
+	// Library-shared propagation: re-bake + push to every linked NPC.
+	// Skip the work when the hash hasn't changed (the existing bake
+	// is still authoritative) OR when bake deps aren't wired (e.g.
+	// in unit tests that don't need the bake side effect).
+	if existing.OwnerKind == OwnerKindDesigner && hashChanged && s.Store != nil && s.Assets != nil {
+		if err := s.propagateRecipeToLinkedNPCs(ctx, existing); err != nil {
+			// Surface the propagation error to the caller — better
+			// for the designer to know "edit landed but propagation
+			// failed; please republish manually" than to silently
+			// fail.
+			return existing, fmt.Errorf("characters: recipe updated but propagation failed: %w", err)
+		}
+	}
+
 	return existing, nil
+}
+
+// propagateRecipeToLinkedNPCs runs a fresh bake for the supplied
+// recipe and updates every npc_template that points at it. All work
+// happens inside one transaction so a bake failure leaves the linked
+// NPC templates unchanged (they keep their old active_bake_id).
+//
+// Important: this only touches the *bake* + *active_bake_id* link.
+// It does NOT affect any draft NPC template rows in the publish
+// pipeline; the next publish will see the freshly-baked id and
+// happily reuse it via the recipe_hash dedup.
+func (s *Service) propagateRecipeToLinkedNPCs(ctx context.Context, recipe *Recipe) error {
+	tx, err := s.Pool.BeginTx(ctx, pgxBeginOpts())
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	bakeRecipe, err := LoadBakeRecipe(ctx, tx, recipe.ID)
+	if err != nil {
+		// Empty/invalid recipe = no propagation possible. Surface as
+		// a soft no-op rather than an error so partial designer state
+		// (e.g. mid-edit recipe with no slots) doesn't break unrelated
+		// links.
+		return nil
+	}
+	out, err := RunBake(ctx, tx, BakeDeps{
+		Store:            s.Store,
+		Assets:           s.Assets,
+		SystemDesignerID: s.SystemDesignerID,
+	}, bakeRecipe, recipe.ID)
+	if err != nil {
+		return fmt.Errorf("run bake: %w", err)
+	}
+	// Update every NPC template linked to this recipe. The
+	// active_bake_id flips atomically alongside the bake row's
+	// existence, so spawned NPCs render the new look on the next
+	// instance reload.
+	if _, err := tx.Exec(ctx, `
+		UPDATE npc_templates
+		SET active_bake_id = $1, updated_at = now()
+		WHERE recipe_id = $2
+	`, out.BakeID, recipe.ID); err != nil {
+		return fmt.Errorf("propagate to npc templates: %w", err)
+	}
+	return tx.Commit(ctx)
+}
+
+// bytesEqual is a tiny constant-time-friendly equality. We don't need
+// constant-time here (the hash is a derivation, not a secret), but
+// using bytes.Equal would force an additional import.
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // AttachRecipeToNpcTemplate sets npc_templates.recipe_id. Used by the
@@ -538,6 +646,65 @@ func (s *Service) DeleteNpcTemplate(ctx context.Context, id int64) error {
 // ---------------------------------------------------------------------------
 // Player characters — owner-scoped
 // ---------------------------------------------------------------------------
+
+// CreatePlayerCharacterInput drives CreatePlayerCharacter.
+type CreatePlayerCharacterInput struct {
+	PlayerID  int64
+	Name      string
+	PublicBio string
+}
+
+// CreatePlayerCharacter inserts a new shell row scoped to playerID.
+// The recipe + active_bake are nil at creation; the player attaches
+// them via the generator's save flow.
+//
+// Cross-player creation is impossible: the caller passes playerID
+// from the authenticated context, never from a request body.
+func (s *Service) CreatePlayerCharacter(ctx context.Context, in CreatePlayerCharacterInput) (*PlayerCharacter, error) {
+	if in.PlayerID <= 0 {
+		return nil, errors.New("characters: CreatePlayerCharacter requires player_id")
+	}
+	in.Name = strings.TrimSpace(in.Name)
+	if in.Name == "" {
+		return nil, errors.New("characters: player_character name is required")
+	}
+	row := &PlayerCharacter{
+		PlayerID:  in.PlayerID,
+		Name:      in.Name,
+		PublicBio: in.PublicBio,
+	}
+	if err := row.Validate(); err != nil {
+		return nil, err
+	}
+	if err := s.PlayerCharacters.Insert(ctx, row); err != nil {
+		return nil, fmt.Errorf("characters: insert player_character: %w", err)
+	}
+	return row, nil
+}
+
+// LinkPlayerCharacterRecipe sets the player_character.recipe_id and
+// active_bake_id atomically. Used by the player-mode save endpoint.
+// Cross-player writes are rejected (ErrForbidden) so a player can't
+// re-target another player's character.
+func (s *Service) LinkPlayerCharacterRecipe(ctx context.Context, playerID, charID, recipeID, bakeID int64) error {
+	if playerID <= 0 {
+		return errors.New("characters: LinkPlayerCharacterRecipe requires player_id")
+	}
+	tag, err := s.Pool.Exec(ctx, `
+		UPDATE player_characters
+		SET recipe_id = $1, active_bake_id = $2, updated_at = now()
+		WHERE id = $3 AND player_id = $4
+	`, recipeID, bakeID, charID, playerID)
+	if err != nil {
+		return fmt.Errorf("characters: link player_character recipe: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		// Either the char doesn't exist OR it belongs to another
+		// player. Map both to NotFound to avoid leaking existence.
+		return ErrPlayerCharNotFound
+	}
+	return nil
+}
 
 // FindPlayerCharacter returns the character if and only if it belongs to
 // playerID. Cross-player access returns ErrForbidden so the HTTP layer

@@ -195,3 +195,42 @@ func TestComputeRecipeHash_Length(t *testing.T) {
 		t.Errorf("hash length = %d, want 32 (sha256)", len(h))
 	}
 }
+
+func TestComputeRecipeHash_StableAcrossDBRoundTrip(t *testing.T) {
+	// Regression test for Phase 5 audit risk #21: PostgreSQL JSONB
+	// stores keys alphabetically, but Go's json.Marshal writes struct
+	// fields in declaration order. Without explicit re-canonicalization,
+	// the same logical content hashes to different bytes before vs
+	// after a JSONB round-trip, breaking dedup.
+	//
+	// This test simulates the round-trip by going:
+	//   typed struct -> json.Marshal -> json.Unmarshal to map ->
+	//     json.Marshal (alphabetical) -> hash
+	// vs:
+	//   typed struct -> json.Marshal -> hash directly.
+	// Both must produce the same hash.
+
+	original := mustJSON(t, characters.AppearanceSelection{
+		Slots: []characters.AppearanceSlot{
+			{SlotKey: "body", PartID: 1},
+			{SlotKey: "hair_front", PartID: 2},
+		},
+	})
+
+	// Simulate what JSONB does: parse then re-marshal alphabetically.
+	var generic any
+	if err := json.Unmarshal(original, &generic); err != nil {
+		t.Fatal(err)
+	}
+	roundtripped, err := json.Marshal(generic)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hashOriginal, _ := characters.ComputeRecipeHash("X", original, nil, nil)
+	hashRoundtripped, _ := characters.ComputeRecipeHash("X", roundtripped, nil, nil)
+
+	if !bytes.Equal(hashOriginal, hashRoundtripped) {
+		t.Errorf("hash drifted across DB round-trip: original=%x roundtripped=%x", hashOriginal, hashRoundtripped)
+	}
+}

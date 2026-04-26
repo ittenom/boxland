@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+set -eu
+
+# Boxland repo launcher for macOS/Linux shells.
+# Runs the Go CLI directly from this checkout so users can type `./boxland`
+# before installing a compiled binary.
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+cd "$SCRIPT_DIR/server"
+exec go run ./cmd/boxland "$@"

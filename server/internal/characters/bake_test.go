@@ -339,7 +339,10 @@ func TestBake_RejectsRecipeWithNoCommonAnimation(t *testing.T) {
 	})
 }
 
-func TestBake_RejectsPlayerOwnerInPhase2(t *testing.T) {
+func TestBake_RejectsPlayerOwner_WithoutSystemDesigner(t *testing.T) {
+	// Player bakes are allowed only when BakeDeps.SystemDesignerID is
+	// set (Phase 4 player flow). Without it the bake errors with a
+	// helpful message — this test pins the guard.
 	f := setup(t)
 	store := makeBakeStore(t)
 	ctx := context.Background()
@@ -351,9 +354,38 @@ func TestBake_RejectsPlayerOwnerInPhase2(t *testing.T) {
 	br.OwnerKind = characters.OwnerKindPlayer
 
 	withBakeTx(t, f, func(tx pgx.Tx) {
-		_, err := characters.RunBake(ctx, tx, characters.BakeDeps{Store: store, Assets: assets.New(f.pool)}, br, recipeID)
+		_, err := characters.RunBake(ctx, tx,
+			characters.BakeDeps{Store: store, Assets: assets.New(f.pool)},
+			br, recipeID)
 		if err == nil {
-			t.Fatal("expected player-owner rejection in Phase 2")
+			t.Fatal("expected error when player recipe baked without SystemDesignerID")
+		}
+	})
+}
+
+func TestBake_AcceptsPlayerOwner_WithSystemDesigner(t *testing.T) {
+	// With a SystemDesignerID configured, player recipes bake just
+	// like designer recipes; the asset's created_by attribution falls
+	// to the system designer id.
+	f := setup(t)
+	store := makeBakeStore(t)
+	ctx := context.Background()
+
+	slots, _ := f.svc.ListSlots(ctx)
+	body := uploadPart(t, ctx, f, store, slots[0].ID, "body", color.NRGBA{255, 0, 0, 255}, `{"idle":[0,0]}`)
+	recipeID, br := seedRecipe(t, ctx, f, []*characters.Part{body})
+
+	br.OwnerKind = characters.OwnerKindPlayer
+	// Designer fixture id reused as the system designer for test purposes.
+	deps := characters.BakeDeps{Store: store, Assets: assets.New(f.pool), SystemDesignerID: f.designerID}
+
+	withBakeCommit(t, f, func(tx pgx.Tx) {
+		out, err := characters.RunBake(ctx, tx, deps, br, recipeID)
+		if err != nil {
+			t.Fatalf("RunBake: %v", err)
+		}
+		if out.AssetID == 0 {
+			t.Errorf("expected an asset id")
 		}
 	})
 }

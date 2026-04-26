@@ -118,6 +118,17 @@ func ComputeRecipeHash(name string, appearance, stats, talents []byte) ([]byte, 
 // canonicalizeAppearance parses the input as AppearanceSelection,
 // sorts slots by slot_key, sorts each palette map by key, and emits
 // compact JSON. Empty/null input collapses to {"slots":[]}.
+//
+// The output is field-name-sorted at every level so the canonical
+// bytes are stable across:
+//   - in-memory struct ordering (Go marshals struct fields in
+//     declaration order, NOT alphabetical),
+//   - PostgreSQL JSONB round-trips (JSONB stores key-sorted),
+//   - any future client encoder.
+//
+// Stability matters for recipe_hash dedup: if the same logical content
+// hashed differently before and after a DB round-trip, every bake
+// would be a fresh row instead of reusing.
 func canonicalizeAppearance(raw []byte) ([]byte, error) {
 	if len(bytes.TrimSpace(raw)) == 0 || string(bytes.TrimSpace(raw)) == "null" {
 		return []byte(`{"slots":[]}`), nil
@@ -144,15 +155,12 @@ func canonicalizeAppearance(raw []byte) ([]byte, error) {
 		}
 		seen[s.SlotKey] = struct{}{}
 	}
-	// json.Marshal already sorts map keys alphabetically (Go std lib
-	// guarantee since 1.12), so palette maps inside each slot
-	// canonicalize automatically.
-	return json.Marshal(sel)
+	return marshalKeySorted(sel)
 }
 
 // canonicalizeStats parses StatSelection, sorts the allocations map
 // (json.Marshal does this for free), and emits compact JSON. Empty
-// input collapses to {"set_id":0,"allocations":{}}.
+// input collapses to {"allocations":{},"set_id":0}.
 func canonicalizeStats(raw []byte) ([]byte, error) {
 	if len(bytes.TrimSpace(raw)) == 0 || string(bytes.TrimSpace(raw)) == "null" {
 		return []byte(`{"allocations":{},"set_id":0}`), nil
@@ -164,7 +172,7 @@ func canonicalizeStats(raw []byte) ([]byte, error) {
 	if sel.Allocations == nil {
 		sel.Allocations = map[string]int{}
 	}
-	return json.Marshal(sel)
+	return marshalKeySorted(sel)
 }
 
 // canonicalizeTalents parses TalentSelection. Same shape rules.
@@ -179,7 +187,24 @@ func canonicalizeTalents(raw []byte) ([]byte, error) {
 	if sel.Picks == nil {
 		sel.Picks = map[string]int{}
 	}
-	return json.Marshal(sel)
+	return marshalKeySorted(sel)
+}
+
+// marshalKeySorted marshals v to JSON, then re-encodes via
+// map[string]any so every object's keys are alphabetically ordered at
+// every nesting level. The standard library guarantees alphabetical
+// map-key ordering on encode but writes struct fields in declaration
+// order — this round-trip normalizes the latter to the former.
+func marshalKeySorted(v any) ([]byte, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	var generic any
+	if err := json.Unmarshal(b, &generic); err != nil {
+		return nil, err
+	}
+	return json.Marshal(generic)
 }
 
 // ---------------------------------------------------------------------------

@@ -20,17 +20,22 @@ import {
     type Action, type Catalog, type RecipePayload, type State, type CatalogTalentTree,
 } from "./state";
 import { LayerPreview } from "./preview";
+import { CommandBus } from "@command-bus";
+import { attachKeyboard } from "@input";
 
 // ---- Boot config ---------------------------------------------------------
 
+type Mode = "designer" | "player";
+
 interface BootConfig {
-    templateID: number;
+    mode: Mode;
+    templateID: number; // designer: NPC template id; player: player_character id (0 for new)
     templateName: string;
     recipeID: number; // 0 = no recipe yet
     catalogURL: string;
-    recipeBase: string;
-    attachBase: string;
-    templateDraftBase: string;
+    recipeBase: string;        // designer: /design/characters/recipes; player: /play/characters
+    attachBase: string;        // designer only — empty for player mode
+    templateDraftBase: string; // designer only — empty for player mode
 }
 
 function readBootConfig(host: HTMLElement): BootConfig {
@@ -40,14 +45,17 @@ function readBootConfig(host: HTMLElement): BootConfig {
         if (v === undefined) throw new Error(`character generator: missing data-bx-${camelToKebab(k)}`);
         return v;
     };
+    const optional = (k: string): string => ds[k] ?? "";
+    const mode = (ds.bxMode === "player" ? "player" : "designer") as Mode;
     return {
+        mode,
         templateID: parseInt(need("templateId"), 10),
         templateName: need("templateName"),
         recipeID: parseInt(need("recipeId"), 10) || 0,
         catalogURL: need("catalogUrl"),
         recipeBase: need("recipeBase"),
-        attachBase: need("attachBase"),
-        templateDraftBase: need("templateDraftBase"),
+        attachBase: optional("attachBase"),
+        templateDraftBase: optional("templateDraftBase"),
     };
 }
 
@@ -128,6 +136,56 @@ async function saveTemplateDraft(
         body: form.toString(),
     });
     if (!r.ok) throw new Error(`template draft ${r.status}`);
+}
+
+// ---- Player-mode save (single POST) -------------------------------------
+
+interface PlayerCharacterResponse {
+    id: number;
+    recipe_id: number;
+    bake_id: number;
+    bake_asset_id: number;
+}
+
+/** Player-mode save: one POST that does recipe + bake + link in one tx. */
+async function savePlayerCharacter(
+    base: string,
+    state: State,
+    charID: number,
+    name: string,
+): Promise<PlayerCharacterResponse> {
+    // Build a payload shaped like the server's playerCharacterPayload.
+    const slots: { slot_key: string; part_id: number }[] = [];
+    for (const slot of state.catalog?.slots ?? []) {
+        const pid = state.selections.get(slot.key);
+        if (pid) slots.push({ slot_key: slot.key, part_id: pid });
+    }
+    const allocations: Record<string, number> = {};
+    for (const [k, v] of state.statAllocations) {
+        if (v !== 0) allocations[k] = v;
+    }
+    const picks: Record<string, number> = {};
+    for (const [k, v] of state.talentPicks) {
+        if (v > 0) picks[k] = v;
+    }
+    const payload = {
+        name,
+        appearance: { slots },
+        stats: state.statSetID > 0 ? { set_id: state.statSetID, allocations } : { set_id: 0, allocations: {} },
+        talents: { picks },
+    };
+    const url = charID > 0 ? `${base}/${charID}` : base;
+    const r = await fetch(url, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+            "Content-Type": "application/json",
+            "X-CSRF-Token": csrfToken(),
+        },
+        body: JSON.stringify(payload),
+    });
+    if (!r.ok) throw new Error(`save ${r.status}: ${await r.text()}`);
+    return r.json();
 }
 
 // ---- Render --------------------------------------------------------------
@@ -511,6 +569,18 @@ function boot(): void {
     let state: State = initialState();
     state.recipeName = cfg.templateName;
     let recipeID = cfg.recipeID;
+    let templateID = cfg.templateID; // mutates on player-mode "create"
+
+    // Player-mode name input (when present) lets the player rename
+    // the character without leaving the editor. The designer mode
+    // takes the name from the NPC template row instead, so this is a
+    // no-op when the input is absent.
+    const nameInput = host.querySelector<HTMLInputElement>("[data-bx-character-name]");
+    if (nameInput) {
+        nameInput.addEventListener("input", () => {
+            state.recipeName = nameInput.value;
+        });
+    }
 
     const dispatch = (a: Action): void => {
         state = reduce(state, a);
@@ -557,25 +627,114 @@ function boot(): void {
     async function doSave(): Promise<void> {
         if (state.validation.some((v) => v.kind === "error")) {
             // Don't save invalid recipes; the validation panel already
-            // tells the designer what's wrong.
+            // tells the user what's wrong.
             return;
         }
         dispatch({ kind: "set-bake-status", status: "saving…" });
         try {
-            const payload = toRecipePayload(state, recipeID > 0 ? recipeID : null);
-            const saved = await saveRecipe(cfg.recipeBase, payload, recipeID);
-            if (saved.id && recipeID === 0) {
-                recipeID = saved.id;
-                await attachRecipe(cfg.attachBase, recipeID);
+            if (cfg.mode === "player") {
+                if (!state.recipeName.trim()) {
+                    dispatch({ kind: "set-bake-status", status: "name is required" });
+                    return;
+                }
+                const saved = await savePlayerCharacter(cfg.recipeBase, state, templateID, state.recipeName);
+                if (templateID === 0) {
+                    templateID = saved.id;
+                    // Future loads / re-saves should hit the edit URL.
+                    history.replaceState(null, "", `/play/characters/${templateID}/edit`);
+                }
+                dispatch({ kind: "set-bake-status", status: "saved & baked" });
+            } else {
+                const payload = toRecipePayload(state, recipeID > 0 ? recipeID : null);
+                const saved = await saveRecipe(cfg.recipeBase, payload, recipeID);
+                if (saved.id && recipeID === 0) {
+                    recipeID = saved.id;
+                    await attachRecipe(cfg.attachBase, recipeID);
+                }
+                // Stage a draft on the npc_template so the next publish
+                // bakes the new recipe.
+                await saveTemplateDraft(cfg.templateDraftBase, state.recipeName, recipeID);
+                dispatch({ kind: "set-bake-status", status: "saved (draft) — publish to bake" });
             }
-            // Stage a draft on the npc_template so the next publish
-            // bakes the new recipe.
-            await saveTemplateDraft(cfg.templateDraftBase, state.recipeName, recipeID);
-            dispatch({ kind: "set-bake-status", status: "saved (draft) — publish to bake" });
         } catch (err) {
             console.error(err);
             dispatch({ kind: "set-bake-status", status: "save failed: " + (err as Error).message });
         }
+    }
+
+    // ---- Hotkeys (per docs/hotkeys.md "Character Generator") ------------
+    //
+    // The CommandBus owns dispatch + suppresses commands while typing
+    // (unless the command is whileTyping=true, which none of these are).
+    // Bindings match the doc one-to-one.
+    const bus = new CommandBus();
+    const tabKey = (k: string): void => showPane(refs, k);
+
+    bus.register({ id: "char.tab.look", description: "Switch to Look tab",
+        category: "Character Generator", do: () => tabKey("look") });
+    bus.register({ id: "char.tab.sheet", description: "Switch to Sheet tab",
+        category: "Character Generator", do: () => tabKey("sheet") });
+    bus.register({ id: "char.tab.talents", description: "Switch to Talents tab",
+        category: "Character Generator", do: () => tabKey("talents") });
+    bus.register({ id: "char.anim.prev", description: "Previous animation",
+        category: "Character Generator", do: () => cycleAnim(-1) });
+    bus.register({ id: "char.anim.next", description: "Next animation",
+        category: "Character Generator", do: () => cycleAnim(+1) });
+    bus.register({ id: "char.zoom.out", description: "Zoom out preview",
+        category: "Character Generator", do: () => bumpZoom(-1) });
+    bus.register({ id: "char.zoom.in", description: "Zoom in preview",
+        category: "Character Generator", do: () => bumpZoom(+1) });
+    bus.register({ id: "char.randomize", description: "Randomize selections",
+        category: "Character Generator", do: () => dispatch({ kind: "randomize", seed: Date.now() & 0xffffffff }) });
+    bus.register({ id: "char.save", description: "Save (designer: draft; player: finalize)",
+        category: "Character Generator", do: () => { void doSave(); } });
+    if (cfg.mode === "designer") {
+        bus.register({ id: "char.reset", description: "Reset all selections",
+            category: "Character Generator", do: () => dispatch({ kind: "reset" }) });
+        bus.register({ id: "char.copy.json", description: "Copy recipe JSON",
+            category: "Character Generator", do: () => {
+                const payload = toRecipePayload(state, recipeID > 0 ? recipeID : null);
+                void navigator.clipboard?.writeText(JSON.stringify(payload, null, 2));
+            } });
+    }
+
+    bus.bindHotkey("1", "char.tab.look");
+    bus.bindHotkey("2", "char.tab.sheet");
+    bus.bindHotkey("3", "char.tab.talents");
+    bus.bindHotkey("[", "char.anim.prev");
+    bus.bindHotkey("]", "char.anim.next");
+    bus.bindHotkey("=", "char.zoom.in");  // un-shifted "+" key on US layouts
+    bus.bindHotkey("-", "char.zoom.out");
+    bus.bindHotkey("R", "char.randomize");
+    bus.bindHotkey("Mod+S", "char.save");
+    if (cfg.mode === "designer") {
+        bus.bindHotkey("Shift+R", "char.reset");
+        bus.bindHotkey("Shift+C", "char.copy.json");
+    }
+
+    // attachKeyboard handles the "suppress while typing" rule for us.
+    const detachKB = attachKeyboard(bus, window);
+    // Surface teardown isn't critical for a single-page nav, but expose
+    // the cleanup on the host element so future test code / HMR can use it.
+    (host as unknown as { __charGenDetach?: () => void }).__charGenDetach = detachKB;
+
+    function cycleAnim(direction: number): void {
+        const opts = Array.from(refs.animSelect.options).map((o) => o.value);
+        if (opts.length === 0) return;
+        const i = Math.max(0, opts.indexOf(state.animation));
+        const next = (i + direction + opts.length) % opts.length;
+        const nextAnim = opts[next];
+        if (nextAnim === undefined) return;
+        refs.animSelect.value = nextAnim;
+        dispatch({ kind: "set-animation", animation: nextAnim });
+    }
+    function bumpZoom(direction: number): void {
+        const cur = parseInt(refs.zoom.value, 10) || 4;
+        const min = parseInt(refs.zoom.min, 10) || 1;
+        const max = parseInt(refs.zoom.max, 10) || 6;
+        const next = Math.max(min, Math.min(max, cur + direction));
+        refs.zoom.value = String(next);
+        preview.setZoom(next);
     }
 
     // Kick off async loads.
@@ -583,9 +742,21 @@ function boot(): void {
         try {
             const catalog = await fetchCatalog(cfg.catalogURL);
             dispatch({ kind: "set-catalog", catalog });
-            if (cfg.recipeID > 0) {
+            // Designer-mode: explicit recipe id from the data attribute.
+            // Player-mode: editing an existing character means
+            // templateID > 0 and the recipe lives behind
+            // /play/characters/{id} (which returns the same shape).
+            if (cfg.mode === "designer" && cfg.recipeID > 0) {
                 const recipe = await fetchRecipe(cfg.recipeBase, cfg.recipeID);
                 dispatch({ kind: "load-recipe", recipe });
+            } else if (cfg.mode === "player" && templateID > 0) {
+                const r = await fetch(`${cfg.recipeBase}/${templateID}`, { credentials: "same-origin" });
+                if (r.ok) {
+                    const recipe = await r.json() as RecipePayload;
+                    dispatch({ kind: "load-recipe", recipe });
+                    // Sync the name input if present.
+                    if (nameInput && recipe.name) nameInput.value = recipe.name;
+                }
             }
         } catch (err) {
             console.error("character generator boot:", err);

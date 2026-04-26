@@ -152,16 +152,21 @@ func runInstall() error {
 	if err := runWeb("npm", "install", "--silent", "--no-audit", "--no-fund"); err != nil {
 		return err
 	}
-	fmt.Println("Building Boxland CLI to ./bin ...")
+	fmt.Println("Building Boxland CLI to repo root and ./bin ...")
 	if err := os.MkdirAll("bin", 0o755); err != nil {
 		return err
 	}
-	out := filepath.Join("bin", executableName("boxland"))
-	if err := runExternal("go", "build", "-o", out, "./server/cmd/boxland"); err != nil {
+	rootOut := executableName("boxland")
+	binOut := filepath.Join("bin", executableName("boxland"))
+	if err := runExternal("go", "build", "-o", rootOut, "./server/cmd/boxland"); err != nil {
 		return err
 	}
-	fmt.Printf("\nInstalled local CLI: %s\n", out)
-	fmt.Println("Run `boxland` if it is on PATH, or run the binary above directly.")
+	if err := runExternal("go", "build", "-o", binOut, "./server/cmd/boxland"); err != nil {
+		return err
+	}
+	fmt.Printf("\nInstalled local CLI: ./%s\n", rootOut)
+	fmt.Printf("Copy also available: %s\n", binOut)
+	fmt.Println("Run `./boxland` from macOS/Linux, `boxland` from Windows, or add ./bin to PATH.")
 	return nil
 }
 
@@ -284,13 +289,19 @@ func runBackup(args []string) error {
 }
 
 func runDesign() error {
+	// Re-invoke ourselves rather than relying on a `boxland` entry on
+	// PATH. Works whether the user started the TLI via `go run`, the
+	// repo-root `boxland.cmd`/`./boxland` launchers, or an installed
+	// binary. Without this, Windows refuses to run `boxland` because
+	// Go's exec.LookPath (since 1.19) no longer searches the cwd.
+	self := boxlandSelf()
 	steps := [][]string{
-		{"boxland", "up"},
-		{"boxland", "migrate", "up"},
+		{self, "up"},
+		{self, "migrate", "up"},
 		{"npm", "install", "--silent", "--no-audit", "--no-fund"},
 		{"npm", "run", "build", "--silent"},
-		{"boxland", "stage-web"},
-		{"boxland", "serve"},
+		{self, "stage-web"},
+		{self, "serve"},
 	}
 	for _, step := range steps {
 		var err error
@@ -304,6 +315,16 @@ func runDesign() error {
 		}
 	}
 	return nil
+}
+
+// boxlandSelf returns the path to the currently-running boxland executable,
+// falling back to the bare name "boxland" so a missing os.Executable still
+// degrades to PATH lookup.
+func boxlandSelf() string {
+	if exe, err := os.Executable(); err == nil {
+		return exe
+	}
+	return "boxland"
 }
 
 func runTest() error {
@@ -424,6 +445,19 @@ func runServe() error {
 	// wiring lets the chrome / repo CRUD construct the Service without
 	// pulling in the asset graph.
 	charactersSvc.SetBakeDeps(objStore, assetSvc)
+	// Player-side bakes attribute the new asset row to a "system"
+	// designer because assets.created_by is NOT NULL FK to designers.
+	// We pick the first existing designer at boot — typically the
+	// realm owner. If none exists yet, player-side saves get a clear
+	// "configure SystemDesignerID" error until a designer signs up.
+	{
+		var sysDesignerID int64
+		if err := pgPool.QueryRow(rootCtx, `SELECT id FROM designers ORDER BY id ASC LIMIT 1`).Scan(&sysDesignerID); err == nil && sysDesignerID > 0 {
+			charactersSvc.SetSystemDesignerID(sysDesignerID)
+		} else if err != nil {
+			slog.Warn("characters: no designer rows yet; player-side bakes will error until one exists", "err", err)
+		}
+	}
 
 	publishRegistry := artifact.NewRegistry()
 	publishRegistry.Register(assets.NewHandler(assetSvc))
@@ -537,6 +571,7 @@ func runServe() error {
 		HUD:           hudRepo,
 		Assets:        assetSvc, // /play/asset-catalog reads from this
 		ObjectStore:   objStore, // CDN URLs for the asset catalog
+		Characters:    charactersSvc,
 		SecureCookies: cfg.Env == "prod",
 		// WSURL left empty -> handlers derive ws://host/ws from the
 		// request. Production deployments behind a reverse proxy can
@@ -613,3 +648,5 @@ func runServe() error {
 	slog.Info("boxland stopped")
 	return nil
 }
+
+
