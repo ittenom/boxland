@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"boxland/server/internal/automations"
 	"boxland/server/internal/configurable"
 	"boxland/server/internal/entities"
 	"boxland/server/internal/entities/components"
@@ -16,26 +17,61 @@ type EntityDetailProps struct {
 	AllKinds    []components.Kind        // every registered kind, for the "add component" picker
 	Descriptors map[components.Kind][]configurable.FieldDescriptor
 	SpriteURL   string                    // CDN URL of the sprite asset, "" if unset
+
+	// Automation editor data — empty if Deps.Automations isn't wired.
+	Automations         automations.AutomationSet
+	AutomationTriggers  *automations.Registry
+	AutomationActions   *automations.Registry
 }
 
 templ EntityDetail(p EntityDetailProps) {
 	<div class="bx-modal-backdrop" data-bx-dismissible role="dialog" aria-modal="true">
-		<div class="bx-modal" style="width: min(720px, 95vw);">
+		<div class="bx-modal" style="width: min(820px, 95vw); max-height: 92vh;">
 			<header class="bx-modal__header">
-				<h2 data-copy-slot="entities.detail.title">{ p.EntityType.Name }</h2>
+				<div class="bx-row" style="gap: var(--bx-s2);">
+					<span class="bx-dot bx-dot--entity"></span>
+					<h2 data-copy-slot="entities.detail.title" style="margin:0;">{ p.EntityType.Name }</h2>
+					<span class="bx-badge">{ entityKindLabel(p.EntityType) }</span>
+				</div>
 				<button
 					type="button"
-					class="bx-btn bx-btn--ghost"
+					class="bx-btn bx-btn--ghost bx-btn--small"
 					hx-on:click="this.closest('.bx-modal-backdrop').remove()"
 					aria-label="Close"
 				>Esc</button>
 			</header>
+
 			<div class="bx-modal__body bx-stack">
-				<div class="bx-row" style="align-items: flex-start;">
+				// Connections strip — surfaces what this entity uses + where it's used.
+				// Counts come from the existing relations; missing service refs render quietly.
+				<div class="bx-work__strip" style="margin: calc(-1 * var(--bx-s4)) calc(-1 * var(--bx-s4)) 0;">
+					<span class="bx-work__chip">
+						Sprite
+						if p.EntityType.SpriteAssetID != nil {
+							<strong>asset #{ formatIntPad(int(*p.EntityType.SpriteAssetID)) }</strong>
+						} else {
+							<span style="color: var(--bx-danger);">missing</span>
+						}
+					</span>
+					<span class="bx-work__chip">
+						Components <strong>{ formatIntPad(len(p.Components)) }</strong>
+					</span>
+					<span class="bx-work__chip">
+						Automations <strong>{ formatIntPad(len(p.Automations.Automations)) }</strong>
+					</span>
+					<span class="bx-work__chip bx-work__chip--muted">
+						⌥ click any field below to inspect
+					</span>
+				</div>
+
+				<div class="bx-row" style="align-items: flex-start; gap: var(--bx-s4);">
 					<div style="flex: 0 0 192px;">
 						@ColliderOverlay(p)
+						<p class="bx-tiny" style="margin-top: var(--bx-s2); text-align: center;">
+							collider preview
+						</p>
 					</div>
-					<div style="flex: 1;">
+					<div style="flex: 1; min-width: 0;">
 						@Form(FormProps{
 							Action:      fmt.Sprintf("/design/entities/%d/draft", p.EntityType.ID),
 							SubmitLabel: "Save draft",
@@ -49,10 +85,12 @@ templ EntityDetail(p EntityDetailProps) {
 
 				<section class="bx-stack-tight">
 					<h3 data-copy-slot="entities.components.title">Components</h3>
+					<p class="bx-small bx-muted" data-copy-slot="entities.components.lede">
+						Plug-in modules: health, AI, inventory, audio. Each one adds runtime behavior.
+					</p>
 					if len(p.Components) == 0 {
-						<p class="bx-muted" data-copy-slot="entities.components.empty">
-							Lorem ipsum dolor sit amet. No components attached. Use the
-							"Add component" picker below to compose behavior.
+						<p class="bx-muted bx-small" data-copy-slot="entities.components.empty">
+							No components attached. Add one to give the entity behavior.
 						</p>
 					}
 					for _, c := range p.Components {
@@ -60,7 +98,25 @@ templ EntityDetail(p EntityDetailProps) {
 					}
 					@ComponentPicker(p.EntityType.ID, p.AllKinds, p.Components)
 				</section>
+
+				if p.AutomationTriggers != nil && p.AutomationActions != nil {
+					<section class="bx-stack-tight">
+						<h3 data-copy-slot="entities.automations.title">Automations</h3>
+						<p class="bx-small bx-muted" data-copy-slot="entities.automations.lede">
+							When something happens, do something. Pick a trigger; chain one or more actions.
+						</p>
+						<div id={ automationsBlockID(p.EntityType.ID) }>
+							@AutomationsBlock(AutomationsBlockProps{
+								EntityTypeID: p.EntityType.ID,
+								Set:          p.Automations,
+								Triggers:     p.AutomationTriggers,
+								Actions:      p.AutomationActions,
+							})
+						</div>
+					</section>
+				}
 			</div>
+
 			<footer class="bx-modal__footer">
 				<button
 					type="button"
@@ -72,8 +128,13 @@ templ EntityDetail(p EntityDetailProps) {
 					hx-on:htmx:after-request="document.querySelector('.bx-modal-backdrop')?.remove()"
 					data-copy-slot="entities.detail.delete"
 				>
-					Delete
+					Delete entity type
 				</button>
+				<button
+					type="button"
+					class="bx-btn bx-btn--ghost bx-btn--small"
+					hx-on:click="this.closest('.bx-modal-backdrop').remove()"
+				>Done</button>
 			</footer>
 		</div>
 	</div>
@@ -83,18 +144,18 @@ templ EntityDetail(p EntityDetailProps) {
 // Descriptor() is rendered through the shared Form partial; on save the
 // HTMX POST hits /design/entities/{id}/components/{kind}.
 templ ComponentEditor(entityTypeID int64, c entities.ComponentRow, descriptors []configurable.FieldDescriptor) {
-	<div class="bx-panel bx-component-editor">
-		<header class="bx-row bx-row--apart">
-			<h4 data-copy-slot={ "components." + string(c.Kind) + ".title" }>{ string(c.Kind) }</h4>
+	<div class="bx-comp">
+		<header class="bx-comp__head">
+			<span class="bx-comp__kind" data-copy-slot={ "components." + string(c.Kind) + ".title" }>{ string(c.Kind) }</span>
 			<button
 				type="button"
-				class="bx-btn bx-btn--ghost bx-small"
+				class="bx-btn bx-btn--ghost bx-btn--small bx-comp__rm"
 				hx-delete={ fmt.Sprintf("/design/entities/%d/components/%s", entityTypeID, string(c.Kind)) }
-				hx-target="closest .bx-component-editor"
+				hx-target="closest .bx-comp"
 				hx-swap="outerHTML"
 				hx-confirm="Detach this component?"
 				data-copy-slot="entities.components.remove"
-			>Remove</button>
+			>×</button>
 		</header>
 		@Form(FormProps{
 			Action:      fmt.Sprintf("/design/entities/%d/components/%s", entityTypeID, string(c.Kind)),
@@ -110,20 +171,20 @@ templ ComponentEditor(entityTypeID int64, c entities.ComponentRow, descriptors [
 // already attached.
 templ ComponentPicker(entityTypeID int64, allKinds []components.Kind, attached []entities.ComponentRow) {
 	<form
-		class="bx-row"
+		class="bx-comp__add"
 		hx-post={ fmt.Sprintf("/design/entities/%d/components/add", entityTypeID) }
 		hx-target="#modal-host"
 		hx-swap="innerHTML"
 	>
 		<select name="kind" class="bx-select" required>
-			<option value="" disabled selected data-copy-slot="entities.components.add">Add component…</option>
+			<option value="" disabled selected data-copy-slot="entities.components.add">+ Add component…</option>
 			for _, k := range allKinds {
 				if !alreadyAttached(k, attached) {
 					<option value={ string(k) }>{ string(k) }</option>
 				}
 			}
 		</select>
-		<button type="submit" class="bx-btn" data-copy-slot="entities.components.add-btn">Add</button>
+		<button type="submit" class="bx-btn bx-btn--small" data-copy-slot="entities.components.add-btn">Add</button>
 	</form>
 }
 
@@ -146,7 +207,151 @@ templ ColliderOverlay(p EntityDetailProps) {
 	</div>
 }
 
-// ---- helpers ----
+// ============================================================================
+// Automation editor
+// ----------------------------------------------------------------------------
+// Each Automation = one Trigger + N Actions. The block renders all
+// automations for the entity type and the "+ add automation" picker.
+// HTMX outerHTML swaps the whole block on every change so server state
+// is the source of truth.
+// ============================================================================
+
+// AutomationsBlockProps drives the swappable automations region.
+type AutomationsBlockProps struct {
+	EntityTypeID int64
+	Set          automations.AutomationSet
+	Triggers     *automations.Registry
+	Actions      *automations.Registry
+}
+
+templ AutomationsBlock(p AutomationsBlockProps) {
+	<div id={ automationsBlockID(p.EntityTypeID) } class="bx-stack-tight">
+		if len(p.Set.Automations) == 0 {
+			<p class="bx-muted bx-small" data-copy-slot="entities.automations.empty">
+				No automations yet. Pick a trigger below to start.
+			</p>
+		}
+		for i, a := range p.Set.Automations {
+			@AutomationEditor(p.EntityTypeID, i, a, p.Triggers, p.Actions)
+		}
+		@AutomationPicker(p.EntityTypeID, p.Triggers)
+	</div>
+}
+
+templ AutomationEditor(entityTypeID int64, idx int, a automations.Automation, triggers *automations.Registry, actions *automations.Registry) {
+	<div class="bx-auto">
+		<header class="bx-auto__head">
+			<div class="bx-auto__when">
+				when { triggerHumanLabel(a.Trigger.Kind) }
+			</div>
+			<button
+				type="button"
+				class="bx-btn bx-btn--ghost bx-btn--small bx-comp__rm"
+				hx-delete={ fmt.Sprintf("/design/entities/%d/automations/%d", entityTypeID, idx) }
+				hx-target={ "#" + automationsBlockID(entityTypeID) }
+				hx-swap="outerHTML"
+				hx-confirm="Delete this automation?"
+				title="Delete automation"
+			>×</button>
+		</header>
+
+		// Trigger config — only render if the trigger has fields. On-spawn,
+		// on-death, on-interact are configless; we just show a label.
+		@triggerConfigForm(entityTypeID, idx, a, triggers)
+
+		// Actions list
+		<div class="bx-stack-tight" style="margin-top: var(--bx-s2);">
+			<div class="bx-auto__node-kind" data-copy-slot="entities.automations.actions">…then do</div>
+			for j, ac := range a.Actions {
+				<div class="bx-auto__node">
+					<div class="bx-row bx-row--apart" style="margin-bottom: var(--bx-s1);">
+						<span class="bx-comp__kind">{ ac.Kind }</span>
+						<button
+							type="button"
+							class="bx-btn bx-btn--ghost bx-btn--small"
+							hx-delete={ fmt.Sprintf("/design/entities/%d/automations/%d/actions/%d", entityTypeID, idx, j) }
+							hx-target={ "#" + automationsBlockID(entityTypeID) }
+							hx-swap="outerHTML"
+							title="Remove action"
+						>×</button>
+					</div>
+					<p class="bx-tiny bx-muted">{ summarizeAction(ac) }</p>
+				</div>
+			}
+			@actionPicker(entityTypeID, idx, actions)
+		</div>
+	</div>
+}
+
+// triggerConfigForm renders the trigger's editable fields, if any. The
+// generic Form partial does the heavy lifting; we just prefix the field
+// names with "trigger." so the handler can demux.
+templ triggerConfigForm(entityTypeID int64, idx int, a automations.Automation, triggers *automations.Registry) {
+	{{ tdef, ok := triggers.Get(a.Trigger.Kind) }}
+	if ok && len(tdef.Descriptor()) > 0 {
+		<form
+			class="bx-stack-tight"
+			hx-post={ fmt.Sprintf("/design/entities/%d/automations/%d", entityTypeID, idx) }
+			hx-target={ "#" + automationsBlockID(entityTypeID) }
+			hx-swap="outerHTML"
+		>
+			@CSRFInput()
+			for _, f := range tdef.Descriptor() {
+				@FormField(prefixField(f, "trigger."), decodeConfig(a.Trigger.Config)[f.Key])
+			}
+			<div class="bx-row bx-row--end">
+				<button type="submit" class="bx-btn bx-btn--small">Save trigger</button>
+			</div>
+		</form>
+	} else {
+		<p class="bx-tiny bx-muted">(no trigger configuration)</p>
+	}
+}
+
+// AutomationPicker is the "+ add automation" affordance: pick a trigger
+// kind, server seeds it with defaults + a placeholder action.
+templ AutomationPicker(entityTypeID int64, triggers *automations.Registry) {
+	<form
+		class="bx-auto__add"
+		hx-post={ fmt.Sprintf("/design/entities/%d/automations/add", entityTypeID) }
+		hx-target={ "#" + automationsBlockID(entityTypeID) }
+		hx-swap="outerHTML"
+	>
+		@CSRFInput()
+		<select name="trigger_kind" class="bx-select" required style="flex:1;">
+			<option value="" disabled selected data-copy-slot="entities.automations.add">+ Add automation: pick a trigger…</option>
+			for _, k := range triggers.Kinds() {
+				<option value={ k }>{ triggerHumanLabel(k) }</option>
+			}
+		</select>
+		<button type="submit" class="bx-btn bx-btn--small">Add</button>
+	</form>
+}
+
+templ actionPicker(entityTypeID int64, idx int, actions *automations.Registry) {
+	<form
+		class="bx-auto__add"
+		style="margin-top: var(--bx-s1);"
+		hx-post={ fmt.Sprintf("/design/entities/%d/automations/%d/actions/add", entityTypeID, idx) }
+		hx-target={ "#" + automationsBlockID(entityTypeID) }
+		hx-swap="outerHTML"
+	>
+		@CSRFInput()
+		<select name="action_kind" class="bx-select bx-btn--small" required style="flex:1;">
+			<option value="" disabled selected>+ Add action…</option>
+			for _, k := range actions.Kinds() {
+				<option value={ k }>{ k }</option>
+			}
+		</select>
+		<button type="submit" class="bx-btn bx-btn--small">Add</button>
+	</form>
+}
+
+// ---- helpers --------------------------------------------------------------
+
+func automationsBlockID(entityTypeID int64) string {
+	return fmt.Sprintf("automations-%d", entityTypeID)
+}
 
 func entityValues(et entities.EntityType) map[string]any {
 	out := map[string]any{
@@ -185,4 +390,77 @@ func alreadyAttached(k components.Kind, attached []entities.ComponentRow) bool {
 		}
 	}
 	return false
+}
+
+// prefixField returns a copy of f with its Key prefixed (so multiple
+// trigger/action sub-forms on the same page don't collide on field
+// names). The renderer uses Key both for the input name and the label
+// fallback, so prefixing is form-safe.
+func prefixField(f configurable.FieldDescriptor, prefix string) configurable.FieldDescriptor {
+	out := f
+	out.Key = prefix + f.Key
+	return out
+}
+
+// triggerHumanLabel turns a snake_case trigger kind into a user-readable
+// label. Centralised so trigger renames only happen here; the registry
+// stays the source of truth for kind strings.
+func triggerHumanLabel(kind string) string {
+	switch kind {
+	case "entity_nearby":
+		return "an entity is nearby"
+	case "entity_absent":
+		return "no entity nearby"
+	case "resource_threshold":
+		return "a resource crosses a threshold"
+	case "timer":
+		return "a timer ticks"
+	case "on_spawn":
+		return "this spawns"
+	case "on_death":
+		return "this dies"
+	case "on_interact":
+		return "a player interacts"
+	case "on_enter_tile":
+		return "this enters a tile"
+	default:
+		return kind
+	}
+}
+
+// summarizeAction returns a one-line human description of an action
+// node. Falls back to "<kind> (configured)" when the kind isn't known.
+func summarizeAction(a automations.ActionNode) string {
+	cfg := decodeConfig(a.Config)
+	switch a.Kind {
+	case "spawn":
+		return fmt.Sprintf("spawn entity #%v", cfg["type_id"])
+	case "despawn":
+		if v, _ := cfg["target_self"].(bool); v {
+			return "despawn self"
+		}
+		return "despawn target"
+	case "move_toward":
+		return fmt.Sprintf("move toward at %v sub-px/sec", cfg["speed_sub_per_sec"])
+	case "move_away":
+		return fmt.Sprintf("move away at %v sub-px/sec", cfg["speed_sub_per_sec"])
+	case "set_speed":
+		return fmt.Sprintf("set speed to %v sub-px/sec", cfg["speed_sub_per_sec"])
+	case "set_sprite":
+		return fmt.Sprintf("change sprite to asset #%v", cfg["asset_id"])
+	case "set_animation":
+		return fmt.Sprintf("play animation #%v", cfg["anim_id"])
+	case "set_variant":
+		return fmt.Sprintf("set palette variant #%v", cfg["variant_id"])
+	case "set_tint":
+		return fmt.Sprintf("tint %v for %v ms", cfg["color"], cfg["duration_ms"])
+	case "play_sound":
+		return fmt.Sprintf("play sound #%v at vol %v", cfg["sound_id"], cfg["volume"])
+	case "emit_light":
+		return fmt.Sprintf("emit light %v ms", cfg["duration_ms"])
+	case "adjust_resource":
+		return fmt.Sprintf("%+v %s", cfg["delta"], cfg["resource"])
+	default:
+		return a.Kind + " (configured)"
+	}
 }

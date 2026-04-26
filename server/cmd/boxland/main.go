@@ -25,6 +25,7 @@ import (
 	"boxland/server/internal/auth/csrf"
 	authdesigner "boxland/server/internal/auth/designer"
 	authplayer "boxland/server/internal/auth/player"
+	"boxland/server/internal/automations"
 	"boxland/server/internal/config"
 	designerhandlers "boxland/server/internal/designer"
 	"boxland/server/internal/entities"
@@ -156,6 +157,13 @@ func runServe() error {
 	publishRegistry.Register(mapsservice.NewHandler(mapsSvc))
 	publishPipeline := artifact.NewPipeline(pgPool, publishRegistry)
 
+	// Automation registries + persistence service. The two registries are
+	// shared between the design tools (form renderer) and the runtime
+	// compiler. Service writes/reads entity_automations.
+	automationTriggers := automations.DefaultTriggers()
+	automationActions := automations.DefaultActions()
+	automationsSvc := automations.New(pgPool, automationTriggers, automationActions)
+
 	// Live game runtime: per-(map, instance) MapInstances live here. Any
 	// JoinMap / DesignerCommand reaching the WS gateway gets routed
 	// through this manager.
@@ -196,16 +204,19 @@ func runServe() error {
 	})
 
 	designerDeps := designerhandlers.Deps{
-		Auth:            authSvc,
-		Assets:          assetSvc,
-		Entities:        entitySvc,
-		Components:      componentRegistry,
-		Maps:            mapsSvc,
-		Importers:       importerRegistry,
-		BakeJob:         bakeJob,
-		PublishPipeline: publishPipeline,
-		ObjectStore:     objStore,
-		Settings:        settingsSvc,
+		Auth:               authSvc,
+		Assets:             assetSvc,
+		Entities:           entitySvc,
+		Components:         componentRegistry,
+		Maps:               mapsSvc,
+		Importers:          importerRegistry,
+		BakeJob:            bakeJob,
+		PublishPipeline:    publishPipeline,
+		ObjectStore:        objStore,
+		Settings:           settingsSvc,
+		Automations:        automationsSvc,
+		AutomationTriggers: automationTriggers,
+		AutomationActions:  automationActions,
 	}
 	loadSessionMW := designerhandlers.LoadSession(designerDeps)
 	// Order matters: CSRF must run on every request to mint the cookie;

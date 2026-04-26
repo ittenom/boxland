@@ -19,6 +19,7 @@ import (
 
 	"boxland/server/internal/assets"
 	authdesigner "boxland/server/internal/auth/designer"
+	"boxland/server/internal/automations"
 	"boxland/server/internal/configurable"
 	"boxland/server/internal/entities"
 	"boxland/server/internal/entities/components"
@@ -48,6 +49,13 @@ type Deps struct {
 	PublishPipeline *artifact.Pipeline
 	ObjectStore     *persistence.ObjectStore
 	Settings        *settings.Service
+
+	// Automation editor wiring (PLAN.md §4i + §5d). The two registries
+	// drive the form renderer for triggers/actions; the service
+	// persists the AutomationSet under entity_automations.
+	Automations       *automations.Service
+	AutomationTriggers *automations.Registry
+	AutomationActions  *automations.Registry
 }
 
 // New returns an http.Handler with the designer routes mounted under
@@ -90,6 +98,15 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /design/entities/{id}/components/add",  auth(postEntityComponentAdd(d)))
 	mux.Handle("POST /design/entities/{id}/components/{kind}", auth(postEntityComponentSave(d)))
 	mux.Handle("DELETE /design/entities/{id}/components/{kind}", auth(deleteEntityComponent(d)))
+
+	// Automation editor (PLAN.md §4i, §5d). Per-entity-type AutomationSet:
+	// add/save/delete one automation; the surface is rendered inline on
+	// the entity-detail page.
+	mux.Handle("POST /design/entities/{id}/automations/add",          auth(postAutomationAdd(d)))
+	mux.Handle("POST /design/entities/{id}/automations/{idx}",        auth(postAutomationSave(d)))
+	mux.Handle("DELETE /design/entities/{id}/automations/{idx}",      auth(deleteAutomation(d)))
+	mux.Handle("POST /design/entities/{id}/automations/{idx}/actions/add", auth(postAutomationActionAdd(d)))
+	mux.Handle("DELETE /design/entities/{id}/automations/{idx}/actions/{aIdx}", auth(deleteAutomationAction(d)))
 
 	// Edge sockets surface (PLAN.md §4e + §5d).
 	mux.Handle("GET /design/sockets",         auth(getSocketsList(d)))
@@ -471,14 +488,34 @@ func getAssetsList(d Deps) http.HandlerFunc {
 		layout.ActiveKind = "asset"
 		layout.Variant = "no-rail"
 		layout.Crumbs = []views.Crumb{{Label: "Assets"}}
+
+		// Compute the asset → entity-count map so orphan/used-by badges
+		// render with real numbers. Failure degrades gracefully (badges
+		// fall back to "—").
+		usage, err := AssetUsageMap(r.Context(), d, assetIDs(items))
+		if err != nil {
+			slog.Warn("asset usage map", "err", err)
+		}
+
 		renderHTML(w, r, views.AssetsList(views.AssetsListProps{
 			Layout:     layout,
 			Items:      items,
 			ActiveKind: string(opts.Kind),
 			Search:     opts.Search,
 			PublicURL:  d.ObjectStore.PublicURL,
+			UsageByID:  usage,
 		}))
 	}
+}
+
+// assetIDs slices out just the IDs from an asset list — used to feed
+// AssetUsageMap without copying full asset rows.
+func assetIDs(items []assets.Asset) []int64 {
+	out := make([]int64, len(items))
+	for i, a := range items {
+		out[i] = a.ID
+	}
+	return out
 }
 
 // getAssetsGrid returns just the inner grid HTML for HTMX swaps from the
@@ -493,11 +530,13 @@ func getAssetsGrid(d Deps) http.HandlerFunc {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
+		usage, _ := AssetUsageMap(r.Context(), d, assetIDs(items))
 		renderHTML(w, r, views.AssetsGrid(views.AssetsListProps{
 			Items:      items,
 			ActiveKind: string(opts.Kind),
 			Search:     opts.Search,
 			PublicURL:  d.ObjectStore.PublicURL,
+			UsageByID:  usage,
 		}))
 	}
 }
@@ -804,7 +843,22 @@ func getEntityDetail(d Deps) http.HandlerFunc {
 			Descriptors: collectDescriptors(d.Components),
 			SpriteURL:   spriteURLFor(d, et),
 		}
+
+		// Wire automations if the service is available. Read failures
+		// degrade gracefully — missing automations just render the
+		// editor empty.
+		if d.Automations != nil {
+			if set, err := d.Automations.Get(r.Context(), id); err == nil {
+				props.Automations = set
+			} else {
+				slog.Warn("automations get for detail", "err", err, "entity_id", id)
+			}
+			props.AutomationTriggers = d.AutomationTriggers
+			props.AutomationActions = d.AutomationActions
+		}
+
 		renderHTML(w, r, views.EntityDetail(props))
+		_ = ConnectionsForEntity // referenced for the rail when entity detail moves to a full surface
 	}
 }
 
