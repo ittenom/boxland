@@ -21,6 +21,12 @@ type AssetsListProps struct {
 	// usage badge falls back to a neutral state. The handler populates
 	// this when it can (cheap query); orphans get visual demotion.
 	UsageByID map[int64]int
+
+	// ActiveFilter is the optional ?filter= scope: "" (none) or
+	// "orphan" (only assets with usage == 0). Drives the "Filtering:"
+	// chip + clear-filter affordance in the toolbar so the user always
+	// knows what's active.
+	ActiveFilter string
 }
 
 templ AssetsList(p AssetsListProps) {
@@ -55,6 +61,13 @@ templ AssetsList(p AssetsListProps) {
 				<div class="bx-row">
 					<button
 						type="button"
+						class="bx-btn bx-btn--ghost bx-btn--small"
+						data-bx-multi-select-toggle
+						data-bx-multi-select-target="#assets-grid"
+						title="Select multiple assets to delete or promote in one go"
+					>Select</button>
+					<button
+						type="button"
 						class="bx-btn bx-btn--primary"
 						data-copy-slot="assets.upload"
 						data-bx-action="open-upload"
@@ -75,13 +88,15 @@ templ AssetsList(p AssetsListProps) {
 }
 
 // AssetsToolbar is the search + kind filter row. HTMX-driven so each
-// change refreshes #assets-grid in place.
+// change refreshes #assets-grid in place. ActiveFilter rides along as
+// a hidden input so it survives search-typing without reverting to the
+// unfiltered view.
 templ AssetsToolbar(p AssetsListProps) {
 	<form
 		class="bx-row"
 		hx-get="/design/assets/grid"
 		hx-target="#assets-grid"
-		hx-swap="innerHTML"
+		hx-swap="outerHTML"
 		hx-trigger="input from:input changed delay:200ms, change from:select"
 	>
 		<input
@@ -99,12 +114,29 @@ templ AssetsToolbar(p AssetsListProps) {
 			<option value="tile"   if p.ActiveKind == "tile"   { selected }>Tiles</option>
 			<option value="audio"  if p.ActiveKind == "audio"  { selected }>Audio</option>
 		</select>
+		if p.ActiveFilter != "" {
+			<input type="hidden" name="filter" value={ p.ActiveFilter }/>
+			<span class="bx-badge bx-badge--warn">{ assetFilterLabel(p.ActiveFilter) }</span>
+			<a href="/design/assets" class="bx-btn bx-btn--ghost bx-btn--small" title="Clear filter">× clear</a>
+		}
 	</form>
+}
+
+// assetFilterLabel turns the ?filter= scope into a chip label.
+func assetFilterLabel(f string) string {
+	switch f {
+	case "orphan":
+		return "orphans only"
+	default:
+		return f
+	}
 }
 
 // AssetsGrid is the swappable inner content of #assets-grid. Always
 // emits the wrapping id so HTMX outerHTML swaps target the same node
-// even when the grid empties out.
+// even when the grid empties out. The grid is tagged data-bx-multi-
+// select-grid so the Select toolbar toggle (boot.js) can put it into
+// multi-select mode and offer bulk actions.
 templ AssetsGrid(p AssetsListProps) {
 	if len(p.Items) == 0 {
 		<div id="assets-grid" class="bx-panel" style="text-align:center;">
@@ -116,7 +148,12 @@ templ AssetsGrid(p AssetsListProps) {
 			</p>
 		</div>
 	} else {
-		<div id="assets-grid" class="bx-asset-grid">
+		<div
+			id="assets-grid"
+			class="bx-asset-grid"
+			data-bx-multi-select-grid
+			data-bx-multi-select-kind="asset"
+		>
 			for _, a := range p.Items {
 				@AssetCard(a, p.PublicURL, p.UsageByID)
 			}
@@ -136,6 +173,7 @@ templ AssetCard(a assets.Asset, publicURL func(string) string, usage map[int64]i
 		hx-target="#modal-host"
 		hx-swap="innerHTML"
 		hx-trigger="click"
+		data-bx-multi-select-id={ fmt.Sprintf("%d", a.ID) }
 		title={ assetCardTitle(a, usage) }
 	>
 		<div class="bx-asset-card__thumb bx-pixel">
@@ -243,17 +281,6 @@ func plural(n int, one, many string) string {
 	return many
 }
 
-// kindBadgeClass maps an asset kind to a badge color for legacy callers.
-// Kept for API compatibility with code paths that still reference it.
-func kindBadgeClass(kind string) string {
-	switch kind {
-	case "sprite":
-		return "info"
-	case "tile":
-		return "accent"
-	case "audio":
-		return "warn"
-	default:
-		return ""
-	}
-}
+// (Removed dead helper kindBadgeClass — no callers after the
+// design-console redesign; usage badges render directly via
+// usageBadge / asset card templ now.)

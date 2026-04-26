@@ -57,9 +57,30 @@ templ ShellHome(p ShellProps) {
 					</p>
 				</div>
 				<div class="bx-row">
-					<a href="/design/assets" class="bx-btn">+ Asset</a>
-					<a href="/design/entities" class="bx-btn">+ Entity</a>
-					<a href="/design/maps" class="bx-btn bx-btn--primary">+ Map</a>
+					<button
+						type="button"
+						class="bx-btn"
+						hx-get="/design/assets/upload"
+						hx-target="#modal-host"
+						hx-swap="innerHTML"
+						title="Upload PNG / WAV / OGG / MP3 files (or a folder)"
+					>+ Asset</button>
+					<button
+						type="button"
+						class="bx-btn"
+						hx-get="/design/entities/new"
+						hx-target="#modal-host"
+						hx-swap="innerHTML"
+						title="Create a new entity type"
+					>+ Entity</button>
+					<button
+						type="button"
+						class="bx-btn bx-btn--primary"
+						hx-get="/design/maps/new"
+						hx-target="#modal-host"
+						hx-swap="innerHTML"
+						title="Create a new map"
+					>+ Map</button>
 				</div>
 			</header>
 
@@ -126,6 +147,10 @@ templ ShellHome(p ShellProps) {
 				</section>
 			}
 		</div>
+
+		// Host for modals opened from the header (+ Asset / + Entity /
+		// + Map). Same selector convention as the other surfaces.
+		<div id="modal-host"></div>
 	}
 }
 

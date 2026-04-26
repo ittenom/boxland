@@ -1,5 +1,7 @@
 package views
 
+import "fmt"
+
 // AssetUploadModalProps is currently empty; we expose the props type so
 // future fields (e.g. recommended kind, max size) land without breaking
 // callers.
@@ -78,7 +80,7 @@ templ AssetUploadModal(p AssetUploadModalProps) {
 					</div>
 					<div class="bx-field">
 						<label class="bx-label" data-copy-slot="assets.upload.kind">Kind</label>
-						<select name="kind" class="bx-select">
+						<select name="kind" class="bx-select" data-bx-kind-select>
 							<option value="">Auto-detect from content</option>
 							<option value="sprite">Sprite</option>
 							<option value="tile">Tile</option>
@@ -87,6 +89,27 @@ templ AssetUploadModal(p AssetUploadModalProps) {
 						<small class="bx-help" data-copy-slot="assets.upload.kind-help">
 							PNG defaults to Sprite. Override for tiles so the renderer treats them correctly.
 						</small>
+					</div>
+					// One-click "make these paintable" affordance: when
+					// checked, the server creates a tile-tagged entity
+					// for every sprite/tile asset in the upload so they
+					// show up in the Mapmaker palette immediately. The
+					// JS below auto-checks it whenever Kind is "tile"
+					// (the highest-likelihood signal of intent).
+					<div class="bx-field">
+						<label class="bx-row" for="assets-upload-promote" style="gap: var(--bx-s2); align-items: center;">
+							<input
+								id="assets-upload-promote"
+								type="checkbox"
+								name="promote"
+								value="tile"
+								class="bx-checkbox"
+								data-bx-promote-toggle
+							/>
+							<span class="bx-label" style="margin: 0;" data-copy-slot="assets.upload.promote">
+								Also create a tile entity for each — paintable in the Mapmaker right away.
+							</span>
+						</label>
 					</div>
 					<div class="bx-row bx-row--end">
 						<button
@@ -112,8 +135,21 @@ templ AssetUploadModal(p AssetUploadModalProps) {
 						var pickD    = form.querySelector('[data-bx-pick-folder]');
 						var counter  = form.querySelector('[data-bx-drop-counter]');
 						var submit   = form.querySelector('[data-bx-upload-submit]');
+						var kindSel  = form.querySelector('[data-bx-kind-select]');
+						var promote  = form.querySelector('[data-bx-promote-toggle]');
 						var MAX      = 64;
 						var ACCEPT   = /\.(png|wav|ogg|mp3)$/i;
+
+						// Auto-check the "create tile entity" toggle when
+						// the user picks Kind=Tile — the strongest signal
+						// that they want paintable entities, not raw
+						// assets. Designers who toggle it back stay
+						// toggled back; we only nudge on kind change.
+						if (kindSel && promote) {
+							kindSel.addEventListener('change', function () {
+								promote.checked = (kindSel.value === 'tile');
+							});
+						}
 
 						function setQueue(list) {
 							var keep = [];
@@ -191,6 +227,12 @@ type AssetUploadItem struct {
 	OriginalFn string
 	Reused     bool
 	Err        string
+
+	// Promoted is true after the asset was turned into a tile-tagged
+	// entity (either at upload time via the "Also create tile entity"
+	// checkbox, or after-the-fact via the per-row "+ Entity" button or
+	// the Promote-all footer action).
+	Promoted bool
 }
 
 // AssetUploadResultsProps drives the multi-file upload summary that
@@ -202,7 +244,7 @@ type AssetUploadResultsProps struct {
 }
 
 templ AssetUploadResults(p AssetUploadResultsProps) {
-	<div class="bx-stack-tight">
+	<div class="bx-stack-tight" id="asset-upload-result-inner">
 		<div class={ "bx-toast bx-toast--" + multiUploadSeverity(p.OKCount, p.ErrCount) }>
 			{ multiUploadHeadline(p.OKCount, p.ErrCount) }
 		</div>
@@ -226,12 +268,42 @@ templ AssetUploadResults(p AssetUploadResultsProps) {
 							<span class="bx-muted">·</span>
 							<span class="bx-small bx-muted">added as { it.Kind }</span>
 						}
+						// Inline "+ Entity" affordance per success row.
+						// Skipped for audio (no sprite) and for items
+						// already promoted (server flips Promoted after
+						// the bulk + per-row promote endpoints run).
+						if it.AssetID > 0 && it.Err == "" && it.Kind != "audio" {
+							<span style="margin-left: auto;"></span>
+							if it.Promoted {
+								<span class="bx-small" style="color: var(--bx-success);">→ tile entity</span>
+							} else {
+								<button
+									type="button"
+									class="bx-btn bx-btn--ghost bx-btn--small"
+									hx-post={ fmt.Sprintf("/design/assets/promote-bulk?ids=%d", it.AssetID) }
+									hx-target="#asset-upload-result-inner"
+									hx-swap="outerHTML"
+									title="Create a tile-tagged entity using this asset's sprite"
+								>+ Entity</button>
+							}
+						}
 					</li>
 				}
 			</ul>
 		}
 		if p.OKCount > 0 {
-			<div class="bx-row bx-row--end" style="margin-top: var(--bx-s2);">
+			<div class="bx-row" style="margin-top: var(--bx-s2); gap: var(--bx-s2);">
+				if hasPromotables(p.Items) {
+					<button
+						type="button"
+						class="bx-btn bx-btn--small"
+						hx-post={ "/design/assets/promote-bulk?ids=" + promotableIDs(p.Items) }
+						hx-target="#asset-upload-result-inner"
+						hx-swap="outerHTML"
+						title="Turn every uploaded sprite/tile into a tile-tagged entity in one step"
+					>+ Tile entity from each</button>
+				}
+				<span style="flex: 1;"></span>
 				<button
 					type="button"
 					class="bx-btn bx-btn--small"
@@ -243,6 +315,37 @@ templ AssetUploadResults(p AssetUploadResultsProps) {
 			</div>
 		}
 	</div>
+}
+
+// hasPromotables returns true when at least one row is a non-audio
+// successful upload that hasn't already been promoted to an entity.
+// Drives the "+ Tile entity from each" footer button visibility so it
+// hides itself once everything is promoted (or there's nothing to
+// promote — pure-audio uploads).
+func hasPromotables(items []AssetUploadItem) bool {
+	for _, it := range items {
+		if it.AssetID > 0 && it.Err == "" && !it.Promoted && it.Kind != "audio" {
+			return true
+		}
+	}
+	return false
+}
+
+// promotableIDs returns a comma-joined string of asset ids ready to be
+// promoted: successful, non-audio, not yet promoted. Plain ASCII safe
+// for an `ids=...` query param. Empty list returns "" so the resulting
+// URL is harmless if it ever escapes hasPromotables's gate.
+func promotableIDs(items []AssetUploadItem) string {
+	out := ""
+	for _, it := range items {
+		if it.AssetID > 0 && it.Err == "" && !it.Promoted && it.Kind != "audio" {
+			if out != "" {
+				out += ","
+			}
+			out += intToA(int(it.AssetID))
+		}
+	}
+	return out
 }
 
 func uploadResultSeverity(reused bool) string {

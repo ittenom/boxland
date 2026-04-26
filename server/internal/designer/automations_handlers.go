@@ -208,8 +208,11 @@ func postAutomationActionAdd(d Deps) http.HandlerFunc {
 }
 
 // deleteAutomationAction removes one action from an automation. If it
-// was the last action, the whole automation is removed too (an
-// automation must have at least one action to validate).
+// was the last action, we re-seed a despawn placeholder (matching what
+// postAutomationAdd uses) so the AST stays valid AND the user's
+// trigger configuration survives. The previous behavior — silently
+// dropping the entire automation — was a foot-gun: clicking × on the
+// only visible action wiped the trigger's config without warning.
 func deleteAutomationAction(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		entityID, err := pathID(r)
@@ -239,9 +242,18 @@ func deleteAutomationAction(d Deps) http.HandlerFunc {
 		}
 		auto.Actions = append(auto.Actions[:aIdx], auto.Actions[aIdx+1:]...)
 		if len(auto.Actions) == 0 {
-			// Removing the last action would invalidate the AST. Drop
-			// the whole automation; designer can recreate it.
-			set.Automations = append(set.Automations[:idx], set.Automations[idx+1:]...)
+			// Removing the last action would invalidate the AST. Re-seed
+			// a despawn placeholder so the trigger + its config survive;
+			// designer swaps the placeholder for a real action without
+			// losing setup. Mirrors postAutomationAdd's seed.
+			if d.AutomationActions != nil {
+				if adef, ok := d.AutomationActions.Get("despawn"); ok {
+					cfg, _ := json.Marshal(adef.Default())
+					auto.Actions = []automations.ActionNode{
+						{Kind: "despawn", Config: cfg},
+					}
+				}
+			}
 		}
 		if err := d.Automations.Save(r.Context(), entityID, set); err != nil {
 			http.Error(w, "save: "+err.Error(), http.StatusBadRequest)

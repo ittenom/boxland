@@ -10,6 +10,12 @@ import (
 type SocketsListProps struct {
 	Layout LayoutProps
 	Items  []entities.EdgeSocketType
+
+	// UsageByID maps socket id → number of tile-edge assignments
+	// referencing it. Built by the handler so the delete confirm
+	// surfaces real impact ("3 tile assignments will lose this edge")
+	// instead of a vague "become null" warning.
+	UsageByID map[int64]int
 }
 
 templ SocketsList(p SocketsListProps) {
@@ -62,7 +68,7 @@ templ SocketsGrid(p SocketsListProps) {
 	} else {
 		<table id="sockets-grid" class="bx-table">
 			<thead>
-				<tr><th>Name</th><th>Color</th><th></th></tr>
+				<tr><th>Name</th><th>Color</th><th>Used by</th><th></th></tr>
 			</thead>
 			<tbody>
 				for _, s := range p.Items {
@@ -72,6 +78,7 @@ templ SocketsGrid(p SocketsListProps) {
 							<span class="bx-color-swatch" style={ fmt.Sprintf("background:%s;", colorHex(s.Color)) }></span>
 							<code class="bx-mono bx-small bx-muted">{ colorHex(s.Color) }</code>
 						</td>
+						<td class="bx-small bx-muted">{ socketUsageLabel(s.ID, p.UsageByID) }</td>
 						<td>
 							<button
 								type="button"
@@ -79,7 +86,7 @@ templ SocketsGrid(p SocketsListProps) {
 								hx-delete={ fmt.Sprintf("/design/sockets/%d", s.ID) }
 								hx-target="#sockets-grid"
 								hx-swap="outerHTML"
-								hx-confirm="Delete this socket? Tile assignments referencing it become null."
+								hx-confirm={ socketDeleteConfirm(s.ID, p.UsageByID) }
 								data-copy-slot="sockets.delete"
 							>Delete</button>
 						</td>
@@ -88,6 +95,40 @@ templ SocketsGrid(p SocketsListProps) {
 			</tbody>
 		</table>
 	}
+}
+
+// socketUsageLabel renders the per-row "used by" cell. "—" when usage
+// data isn't loaded; "0 (orphan)" when zero; "N edge(s)" otherwise.
+func socketUsageLabel(id int64, usage map[int64]int) string {
+	if usage == nil {
+		return "—"
+	}
+	n := usage[id]
+	if n == 0 {
+		return "0 (orphan)"
+	}
+	if n == 1 {
+		return "1 edge"
+	}
+	return fmt.Sprintf("%d edges", n)
+}
+
+// socketDeleteConfirm builds the per-socket delete confirm with the
+// real assignment-edge count so designers know exactly what they're
+// nulling out. ON DELETE SET NULL preserves the entity-type rows;
+// only the four nullable socket columns lose their reference.
+func socketDeleteConfirm(id int64, usage map[int64]int) string {
+	if usage == nil {
+		return "Delete this socket? Tile assignments referencing it become null."
+	}
+	n := usage[id]
+	if n == 0 {
+		return "Delete this socket? Nothing references it."
+	}
+	if n == 1 {
+		return "Delete this socket? 1 tile-edge assignment loses this edge (the entity stays; the edge becomes null)."
+	}
+	return fmt.Sprintf("Delete this socket? %d tile-edge assignments lose this edge (the entities stay; the edges become null).", n)
 }
 
 // colorHex turns a 0xRRGGBBAA int64 into a "#rrggbb" CSS color.

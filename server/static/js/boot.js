@@ -7,15 +7,19 @@
 (() => {
   "use strict";
 
-  // 1. Esc closes the topmost dismissible overlay.
+  // 1. Esc closes the topmost dismissible overlay. We pick the LAST
+  //    matching node in the DOM (which is also the visually-topmost
+  //    one given the z-index stack) so a confirm dialog spawned over
+  //    an existing detail modal dismisses the confirm first.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
     if (isTextEditingTarget(e.target)) return;
 
-    const dismissible = document.querySelector(
+    const all = document.querySelectorAll(
       ".bx-modal-backdrop, .bx-cmdk, [data-bx-dismissible]"
     );
-    if (!dismissible) return;
+    if (all.length === 0) return;
+    const dismissible = all[all.length - 1];
     e.preventDefault();
     dismissible.dispatchEvent(new CustomEvent("bx:dismiss", { bubbles: true }));
     if (dismissible.parentElement) dismissible.remove();
@@ -67,6 +71,23 @@
         break;
     }
   });
+
+  // 4b. Picker Enter-to-pick: pressing Enter inside the picker search
+  //     when exactly one result is visible synthesizes a click on that
+  //     card. Saves a round-trip click on a workflow people run dozens
+  //     of times an hour. Multi-result Enter is a no-op (no surprise
+  //     auto-pick); zero-result Enter is also a no-op. Wired via the
+  //     form's onsubmit so it works alongside the input's hx-trigger.
+  window.bxPickerSubmit = function (form) {
+    const modal = form.closest("[data-bx-picker-modal]");
+    if (!modal) return;
+    const cards = modal.querySelectorAll(".bx-picker-card");
+    // Only count cards still in the grid (not e.g. hidden by CSS).
+    /** @type {HTMLElement[]} */
+    const visible = Array.from(cards).filter((c) => c instanceof HTMLElement);
+    if (visible.length !== 1) return;
+    visible[0].click();
+  };
 
   // 5. Ref picker: when a card inside the picker modal is clicked,
   //    write its id into the calling form's hidden input + label, then
@@ -203,11 +224,335 @@
     layoutInput.value = JSON.stringify(out);
   });
 
-  // 7. Telemetry breadcrumb.
+  // 7b. Multi-select for grids tagged with [data-bx-multi-select-grid].
+  //     Driven by a [data-bx-multi-select-toggle] button in the page
+  //     toolbar. When toggled on:
+  //       - Card / row clicks toggle a selection class instead of
+  //         opening their detail (we capture the click and stop it
+  //         from reaching HTMX).
+  //       - A floating action bar appears with kind-aware buttons
+  //         (Delete / Promote-to-tile-entity for assets; Delete / +tile
+  //         tag for entities).
+  //     Toggling off (Cancel or the same toggle button) clears the
+  //     selection and restores normal click-to-open behavior.
+  (function () {
+    /** @type {{grid: HTMLElement|null, kind: string, ids: Set<string>, toggle: HTMLElement|null, bar: HTMLElement|null}} */
+    const ms = { grid: null, kind: "", ids: new Set(), toggle: null, bar: null };
+
+    document.body.addEventListener("click", (e) => {
+      const t = e.target instanceof HTMLElement
+        ? e.target.closest("[data-bx-multi-select-toggle]")
+        : null;
+      if (!t) return;
+      e.preventDefault();
+      const targetSel = t.getAttribute("data-bx-multi-select-target") || "";
+      const grid = targetSel ? document.querySelector(targetSel) : null;
+      if (!grid) return;
+      if (ms.grid === grid) {
+        msExit();
+      } else {
+        msExit();
+        msEnter(grid, t);
+      }
+    });
+
+    // Capture-phase click handler so we run BEFORE HTMX's bubble-phase
+    // listener and can stop card clicks from opening the detail modal
+    // when select mode is on.
+    document.addEventListener("click", (e) => {
+      if (!ms.grid) return;
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      if (!target || !ms.grid.contains(target)) return;
+      // Ignore clicks on action-bar controls themselves.
+      if (target.closest("[data-bx-multi-select-bar]")) return;
+      const card = target.closest("[data-bx-multi-select-id]");
+      if (!card) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const id = card.getAttribute("data-bx-multi-select-id") || "";
+      if (!id) return;
+      if (ms.ids.has(id)) {
+        ms.ids.delete(id);
+        card.classList.remove("is-selected");
+        card.setAttribute("aria-selected", "false");
+      } else {
+        ms.ids.add(id);
+        card.classList.add("is-selected");
+        card.setAttribute("aria-selected", "true");
+      }
+      msRefreshBar();
+    }, true);
+
+    // After every HTMX swap, if we were in select mode and the grid
+    // just rerendered, drop the selection (ids may no longer exist).
+    document.body.addEventListener("htmx:afterSwap", () => {
+      if (!ms.grid) return;
+      if (!document.body.contains(ms.grid)) {
+        msExit();
+      } else {
+        ms.ids.clear();
+        msRefreshBar();
+      }
+    });
+
+    function msEnter(grid, toggle) {
+      ms.grid   = grid;
+      ms.kind   = grid.getAttribute("data-bx-multi-select-kind") || "";
+      ms.toggle = toggle;
+      ms.ids.clear();
+      grid.classList.add("is-multi-select");
+      if (toggle) {
+        toggle.setAttribute("aria-pressed", "true");
+        toggle.textContent = "Cancel";
+      }
+      msRefreshBar();
+    }
+
+    function msExit() {
+      if (ms.grid) ms.grid.classList.remove("is-multi-select");
+      if (ms.toggle) {
+        ms.toggle.setAttribute("aria-pressed", "false");
+        ms.toggle.textContent = "Select";
+      }
+      if (ms.bar && ms.bar.parentElement) ms.bar.remove();
+      // Clean any lingering is-selected marks.
+      document.querySelectorAll("[data-bx-multi-select-id].is-selected").forEach((el) => {
+        el.classList.remove("is-selected");
+        el.setAttribute("aria-selected", "false");
+      });
+      ms.grid = null; ms.kind = ""; ms.toggle = null; ms.bar = null;
+      ms.ids.clear();
+    }
+
+    function msRefreshBar() {
+      if (!ms.grid) return;
+      const count = ms.ids.size;
+      if (count === 0) {
+        if (ms.bar && ms.bar.parentElement) ms.bar.remove();
+        ms.bar = null;
+        return;
+      }
+      if (!ms.bar) {
+        ms.bar = document.createElement("div");
+        ms.bar.className = "bx-multi-select-bar";
+        ms.bar.setAttribute("data-bx-multi-select-bar", "");
+        document.body.appendChild(ms.bar);
+      }
+      const ids = [...ms.ids].join(",");
+      const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") || "";
+      ms.bar.innerHTML = `
+        <span class="bx-mono bx-small">${count} selected</span>
+        <span style="flex:1"></span>
+        ${msKindActions(ms.kind, ids)}
+        <button type="button" class="bx-btn bx-btn--ghost bx-btn--small" data-bx-multi-select-cancel>Cancel</button>`;
+      ms.bar.querySelectorAll("[data-bx-multi-select-action]").forEach((btn) => {
+        btn.addEventListener("click", () => msAction(btn, ids, csrf));
+      });
+      ms.bar.querySelector("[data-bx-multi-select-cancel]")?.addEventListener("click", msExit);
+    }
+
+    function msKindActions(kind, ids) {
+      if (kind === "asset") {
+        return `
+          <button type="button" class="bx-btn bx-btn--small" data-bx-multi-select-action="promote"
+            data-url="/design/assets/promote-bulk?ids=${ids}"
+            data-confirm="Promote ${count(ids)} asset(s) into tile entities?"
+            title="Create a tile-tagged entity for each selected asset">+ Tile entity</button>
+          <button type="button" class="bx-btn bx-btn--danger bx-btn--small" data-bx-multi-select-action="delete"
+            data-url="/design/assets/delete-bulk"
+            data-target="#assets-grid"
+            data-confirm="Delete ${count(ids)} asset(s)? Variants and animation tags go with each. Entities using them will lose their sprite.">Delete</button>`;
+      }
+      if (kind === "entity") {
+        return `
+          <button type="button" class="bx-btn bx-btn--small" data-bx-multi-select-action="tag-tile"
+            data-url="/design/entities/tag-bulk?ids=${ids}&tag=tile&op=add"
+            data-target="#entities-grid">+ tile tag</button>
+          <button type="button" class="bx-btn bx-btn--danger bx-btn--small" data-bx-multi-select-action="delete"
+            data-url="/design/entities/delete-bulk"
+            data-target="#entities-grid"
+            data-confirm="Delete ${count(ids)} entity type(s)? Components, automations, and tile-edge assignments go with each.">Delete</button>`;
+      }
+      return "";
+    }
+
+    function count(ids) { return ids ? ids.split(",").length : 0; }
+
+    function msAction(btn, ids, csrf) {
+      const url = btn.getAttribute("data-url") || "";
+      const target = btn.getAttribute("data-target") || "";
+      const confirmMsg = btn.getAttribute("data-confirm") || "";
+      const action = btn.getAttribute("data-bx-multi-select-action") || "";
+      const proceed = () => {
+        // For "promote" the URL already carries ?ids=…; for delete +
+        // tag-tile we ship a form body so the server can read it via
+        // ParseForm. Both shapes are accepted by parseCommaIDs +
+        // firstNonEmpty.
+        const fd = new FormData();
+        fd.set("ids", ids);
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", url, true);
+        xhr.setRequestHeader("X-CSRF-Token", csrf);
+        xhr.setRequestHeader("Accept", "text/html");
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300 && target) {
+            const node = document.querySelector(target);
+            if (node) node.outerHTML = xhr.responseText;
+          }
+          msExit();
+        };
+        xhr.send(fd);
+        // For "promote" we want the upload-result fragment to swap into
+        // the modal-host, not the assets grid. Override target.
+        if (action === "promote") {
+          const host = document.getElementById("modal-host");
+          if (host) {
+            xhr.onload = () => {
+              if (xhr.status >= 200 && xhr.status < 300) {
+                // Re-render upload-result-style fragment in a quick modal.
+                host.innerHTML = `
+                  <div class="bx-modal-backdrop" data-bx-dismissible role="dialog" aria-modal="true">
+                    <div class="bx-modal" style="width: min(560px, 95vw);">
+                      <header class="bx-modal__header">
+                        <h2 style="margin:0; font-size: 14px;">Promotion result</h2>
+                        <button type="button" class="bx-btn bx-btn--ghost bx-btn--small"
+                                hx-on:click="this.closest('.bx-modal-backdrop').remove()" aria-label="Close">Esc</button>
+                      </header>
+                      <div class="bx-modal__body">${xhr.responseText}</div>
+                    </div>
+                  </div>`;
+              }
+              msExit();
+            };
+          }
+        }
+      };
+      if (confirmMsg) {
+        showBxConfirm(confirmMsg, btn).then((ok) => { if (ok) proceed(); });
+      } else {
+        proceed();
+      }
+    }
+  })();
+
+  // 7c. Quiet repeat draft-saved toasts. The first verbose toast in a
+  //     persisted session shows the "Push to Live" affordance; after
+  //     that the chrome's draft-count pill is the persistent surface
+  //     so the toast shrinks to a no-nag "Draft saved.". A 6s grace
+  //     window after the first verbose toast keeps it visible long
+  //     enough to read before the localStorage flag flips.
+  document.body.addEventListener("htmx:afterSwap", () => {
+    const toasts = document.querySelectorAll("[data-bx-draft-toast]:not([data-bx-draft-toast-handled])");
+    if (toasts.length === 0) return;
+    let alreadySeen = false;
+    try { alreadySeen = localStorage.getItem("bx_draft_toast_seen") === "1"; } catch (_) {}
+    toasts.forEach((toast) => {
+      toast.setAttribute("data-bx-draft-toast-handled", "1");
+      const verbose = toast.querySelector("[data-bx-draft-toast-verbose]");
+      const short   = toast.querySelector("[data-bx-draft-toast-short]");
+      if (alreadySeen && verbose && short) {
+        verbose.hidden = true;
+        short.hidden = false;
+      }
+    });
+    if (!alreadySeen) {
+      // Wait long enough that the user can scan the verbose copy at
+      // least once, then mark seen so the next save in any artifact
+      // editor renders the short version.
+      setTimeout(() => {
+        try { localStorage.setItem("bx_draft_toast_seen", "1"); } catch (_) {}
+      }, 6000);
+    }
+  });
+
+  // 8. Replace HTMX's native `confirm()` with our themed modal so the
+  //    brand-aligned design language carries into destructive actions
+  //    and the long count-aware confirm strings (asset/entity/socket
+  //    delete) wrap legibly. Falls back to native confirm() if HTMX
+  //    or the modal layer ever misbehaves.
+  document.body.addEventListener("htmx:confirm", (e) => {
+    const msg = e.detail.question;
+    if (!msg) return; // no hx-confirm on this element; let HTMX proceed.
+    e.preventDefault(); // we'll re-issue the request after the user decides.
+    showBxConfirm(msg, e.detail.elt).then((ok) => {
+      if (ok) e.detail.issueRequest(true);
+    });
+  });
+
+  // 9. Telemetry breadcrumb.
   console.info(
     "[boxland] boot.js loaded; surface=%s",
     document.body.dataset.surface || "unknown"
   );
+
+  /**
+   * Show a themed confirm dialog. Returns a Promise<boolean>.
+   * The "Confirm" button focus is delayed so an in-flight Enter keypress
+   * (which is how a lot of users dismiss the previous form) can't
+   * accidentally accept the dialog.
+   */
+  function showBxConfirm(message, sourceEl) {
+    return new Promise((resolve) => {
+      const dangerous = isDangerousAction(sourceEl);
+      const backdrop = document.createElement("div");
+      backdrop.className = "bx-modal-backdrop bx-modal-backdrop--confirm";
+      backdrop.setAttribute("data-bx-dismissible", "");
+      backdrop.setAttribute("role", "dialog");
+      backdrop.setAttribute("aria-modal", "true");
+      backdrop.innerHTML = `
+        <div class="bx-modal bx-modal--confirm" style="width: min(440px, 92vw);">
+          <header class="bx-modal__header">
+            <h2 style="margin:0; font-size: 14px;">${dangerous ? "Confirm deletion" : "Are you sure?"}</h2>
+          </header>
+          <div class="bx-modal__body">
+            <p style="margin:0; line-height: 1.45;"></p>
+          </div>
+          <footer class="bx-modal__footer" style="gap: var(--bx-s2); justify-content: flex-end;">
+            <button type="button" class="bx-btn bx-btn--ghost" data-bx-confirm-cancel>Cancel</button>
+            <button type="button" class="${dangerous ? "bx-btn bx-btn--danger" : "bx-btn bx-btn--primary"}" data-bx-confirm-ok>${dangerous ? "Delete" : "Confirm"}</button>
+          </footer>
+        </div>`;
+      // Use textContent so user-supplied counts can't inject HTML.
+      backdrop.querySelector("p").textContent = message;
+      document.body.appendChild(backdrop);
+
+      const cancel = () => { cleanup(); resolve(false); };
+      const ok     = () => { cleanup(); resolve(true);  };
+      const cleanup = () => {
+        backdrop.removeEventListener("bx:dismiss", cancel);
+        backdrop.remove();
+      };
+
+      backdrop.querySelector("[data-bx-confirm-cancel]").addEventListener("click", cancel);
+      backdrop.querySelector("[data-bx-confirm-ok]").addEventListener("click", ok);
+      backdrop.addEventListener("bx:dismiss", cancel);
+      // Click on the dim backdrop (outside the modal) cancels.
+      backdrop.addEventListener("click", (ev) => {
+        if (ev.target === backdrop) cancel();
+      });
+
+      // 250ms delay before focusing Confirm so a stray Enter can't
+      // auto-accept. Cancel keeps focus first so Esc/Enter both
+      // resolve to "no" until the user has time to read the message.
+      backdrop.querySelector("[data-bx-confirm-cancel]").focus();
+      setTimeout(() => {
+        const okBtn = backdrop.querySelector("[data-bx-confirm-ok]");
+        if (okBtn && document.body.contains(backdrop)) okBtn.focus();
+      }, 250);
+    });
+  }
+
+  /**
+   * Returns true when the source element looks like a destructive action
+   * (DELETE verb or .bx-btn--danger class). Drives the modal's red
+   * Confirm button so the affordance matches the action.
+   */
+  function isDangerousAction(el) {
+    if (!(el instanceof HTMLElement)) return false;
+    if (el.hasAttribute("hx-delete")) return true;
+    if (el.classList.contains("bx-btn--danger")) return true;
+    return false;
+  }
 
   function isTextEditingTarget(t) {
     if (!t || !(t instanceof HTMLElement)) return false;

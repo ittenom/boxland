@@ -86,6 +86,8 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /design/assets/{id}/draft",   auth(postAssetDraft(d)))
 	mux.Handle("POST /design/assets/{id}/replace", auth(postAssetReplace(d)))
 	mux.Handle("POST /design/assets/{id}/promote-to-entity", auth(postAssetPromoteToEntity(d)))
+	mux.Handle("POST /design/assets/promote-bulk",            auth(postAssetPromoteBulk(d)))
+	mux.Handle("POST /design/assets/delete-bulk",             auth(postAssetDeleteBulk(d)))
 
 	// Entity Manager surface (PLAN.md §5d).
 	mux.Handle("GET /design/entities",                       auth(getEntitiesList(d)))
@@ -96,6 +98,8 @@ func New(d Deps) http.Handler {
 	mux.Handle("DELETE /design/entities/{id}",               auth(deleteEntity(d)))
 	mux.Handle("POST /design/entities/{id}/draft",           auth(postEntityDraft(d)))
 	mux.Handle("POST /design/entities/{id}/duplicate",       auth(postEntityDuplicate(d)))
+	mux.Handle("POST /design/entities/delete-bulk",          auth(postEntityDeleteBulk(d)))
+	mux.Handle("POST /design/entities/tag-bulk",             auth(postEntityTagBulk(d)))
 	mux.Handle("POST /design/entities/{id}/components/add",  auth(postEntityComponentAdd(d)))
 	mux.Handle("POST /design/entities/{id}/components/{kind}", auth(postEntityComponentSave(d)))
 	mux.Handle("DELETE /design/entities/{id}/components/{kind}", auth(deleteEntityComponent(d)))
@@ -134,6 +138,7 @@ func New(d Deps) http.Handler {
 	mux.Handle("DELETE /design/maps/{id}",           auth(deleteMap(d)))
 	mux.Handle("GET /design/maps/{id}/settings",     auth(getMapSettingsModal(d)))
 	mux.Handle("POST /design/maps/{id}/draft",       auth(postMapDraft(d)))
+	mux.Handle("POST /design/maps/{id}/public-toggle", auth(postMapPublicToggle(d)))
 
 	// Authored-mode painting endpoints. JSON in / out. The design
 	// console's mapmaker JS pumps brush strokes through these; the
@@ -498,6 +503,7 @@ func renderHTML(w http.ResponseWriter, r *http.Request, c templ.Component) {
 func getAssetsList(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		opts := assetListOptsFromQuery(r)
+		filter := strings.TrimSpace(r.URL.Query().Get("filter"))
 		items, err := d.Assets.List(r.Context(), opts)
 		if err != nil {
 			slog.Error("assets list", "err", err)
@@ -519,14 +525,40 @@ func getAssetsList(d Deps) http.HandlerFunc {
 			slog.Warn("asset usage map", "err", err)
 		}
 
+		items = applyAssetFilter(items, filter, usage)
+
 		renderHTML(w, r, views.AssetsList(views.AssetsListProps{
-			Layout:     layout,
-			Items:      items,
-			ActiveKind: string(opts.Kind),
-			Search:     opts.Search,
-			PublicURL:  d.ObjectStore.PublicURL,
-			UsageByID:  usage,
+			Layout:       layout,
+			Items:        items,
+			ActiveKind:   string(opts.Kind),
+			Search:       opts.Search,
+			PublicURL:    d.ObjectStore.PublicURL,
+			UsageByID:    usage,
+			ActiveFilter: filter,
 		}))
+	}
+}
+
+// applyAssetFilter narrows the asset list to those matching the
+// ?filter= scope. "orphan" keeps assets with zero references; unknown
+// values are ignored (returns the input slice untouched). The chrome
+// badge in the toolbar advertises the active filter so the trim is
+// visible.
+func applyAssetFilter(items []assets.Asset, filter string, usage map[int64]int) []assets.Asset {
+	if filter == "" || usage == nil {
+		return items
+	}
+	switch filter {
+	case "orphan":
+		out := make([]assets.Asset, 0, len(items))
+		for _, a := range items {
+			if usage[a.ID] == 0 {
+				out = append(out, a)
+			}
+		}
+		return out
+	default:
+		return items
 	}
 }
 
@@ -546,6 +578,7 @@ func assetIDs(items []assets.Asset) []int64 {
 func getAssetsGrid(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		opts := assetListOptsFromQuery(r)
+		filter := strings.TrimSpace(r.URL.Query().Get("filter"))
 		items, err := d.Assets.List(r.Context(), opts)
 		if err != nil {
 			slog.Error("assets list (grid)", "err", err)
@@ -553,12 +586,14 @@ func getAssetsGrid(d Deps) http.HandlerFunc {
 			return
 		}
 		usage, _ := AssetUsageMap(r.Context(), d, assetIDs(items))
+		items = applyAssetFilter(items, filter, usage)
 		renderHTML(w, r, views.AssetsGrid(views.AssetsListProps{
-			Items:      items,
-			ActiveKind: string(opts.Kind),
-			Search:     opts.Search,
-			PublicURL:  d.ObjectStore.PublicURL,
-			UsageByID:  usage,
+			Items:        items,
+			ActiveKind:   string(opts.Kind),
+			Search:       opts.Search,
+			PublicURL:    d.ObjectStore.PublicURL,
+			UsageByID:    usage,
+			ActiveFilter: filter,
 		}))
 	}
 }
@@ -709,6 +744,277 @@ func postAssetPromoteToEntity(d Deps) http.HandlerFunc {
 	}
 }
 
+// postAssetPromoteBulk creates a tile-tagged entity for each asset id
+// in the ?ids= querystring and re-renders the AssetUploadResults
+// fragment with Promoted=true on success rows. Drives both the per-row
+// "+ Entity" affordance (single id) and the "+ Tile entity from each"
+// footer (comma-joined ids) without two endpoints.
+//
+// On error per id, the row stays not-promoted so the user can retry;
+// other rows still complete. The response is always the refreshed
+// fragment so HTMX outerHTML swaps replace the whole result list.
+func postAssetPromoteBulk(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		dr := CurrentDesigner(r.Context())
+		if dr == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		raw := r.URL.Query().Get("ids")
+		if raw == "" {
+			if err := r.ParseForm(); err == nil {
+				raw = r.FormValue("ids")
+			}
+		}
+		ids := parseCommaIDs(raw)
+		if len(ids) == 0 {
+			http.Error(w, "no ids", http.StatusBadRequest)
+			return
+		}
+
+		items := make([]views.AssetUploadItem, 0, len(ids))
+		ok := 0
+		for _, id := range ids {
+			a, err := d.Assets.FindByID(r.Context(), id)
+			if err != nil {
+				items = append(items, views.AssetUploadItem{
+					AssetID:    id,
+					OriginalFn: fmt.Sprintf("asset #%d", id),
+					Err:        "asset not found",
+				})
+				continue
+			}
+			item := views.AssetUploadItem{
+				AssetID:    a.ID,
+				Name:       a.Name,
+				Kind:       string(a.Kind),
+				OriginalFn: a.Name,
+			}
+			if a.Kind == assets.KindAudio {
+				// Audio can't be promoted (no sprite). Surface the
+				// row but mark it as already in the library so the
+				// user sees why nothing happened.
+				item.Reused = true
+				items = append(items, item)
+				continue
+			}
+			if _, err := promoteAssetToEntity(r.Context(), d, a, dr.ID); err != nil {
+				item.Err = err.Error()
+			} else {
+				item.Promoted = true
+				ok++
+			}
+			items = append(items, item)
+		}
+		renderHTML(w, r, views.AssetUploadResults(views.AssetUploadResultsProps{
+			Items:    items,
+			OKCount:  ok,
+			ErrCount: len(items) - ok,
+		}))
+	}
+}
+
+// promoteAssetToEntity creates a tile-tagged entity for the asset and
+// returns it. Idempotent-ish: if an entity with the same name already
+// exists, walks the "(N)" suffix the same way the single-id endpoint
+// does. Pulled out so postAssetPromoteToEntity, postAssetPromoteBulk,
+// and the upload-time promote-after-upload path all share the rules.
+func promoteAssetToEntity(ctx context.Context, d Deps, a *assets.Asset, designerID int64) (*entities.EntityType, error) {
+	baseName := a.Name
+	newName := baseName
+	for i := 2; i < 100; i++ {
+		if _, err := d.Entities.FindByName(ctx, newName); errors.Is(err, entities.ErrEntityTypeNotFound) {
+			break
+		}
+		newName = fmt.Sprintf("%s (%d)", baseName, i)
+	}
+	assetID := a.ID
+	tags := []string{"tile"} // bulk + upload-time promote always tag as tile
+	return d.Entities.Create(ctx, entities.CreateInput{
+		Name:          newName,
+		SpriteAssetID: &assetID,
+		Tags:          tags,
+		CreatedBy:     designerID,
+	})
+}
+
+// postAssetDeleteBulk deletes a list of assets and re-renders the
+// asset grid in place. Bound to 256 ids by parseCommaIDs so a
+// runaway request can't fan out an unbounded delete.
+//
+// Per-id failures are tolerated (already-gone assets, etc.); the
+// endpoint always returns the refreshed grid so the user sees what
+// actually happened.
+func postAssetDeleteBulk(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		ids := parseCommaIDs(firstNonEmpty(r.URL.Query().Get("ids"), r.FormValue("ids")))
+		if len(ids) == 0 {
+			http.Error(w, "no ids", http.StatusBadRequest)
+			return
+		}
+		for _, id := range ids {
+			if err := d.Assets.Delete(r.Context(), id); err != nil {
+				if errors.Is(err, assets.ErrAssetNotFound) {
+					continue
+				}
+				slog.Warn("bulk asset delete", "err", err, "id", id)
+			}
+		}
+		items, _ := d.Assets.List(r.Context(), assets.ListOpts{})
+		usage, _ := AssetUsageMap(r.Context(), d, assetIDs(items))
+		renderHTML(w, r, views.AssetsGrid(views.AssetsListProps{
+			Items:     items,
+			PublicURL: d.ObjectStore.PublicURL,
+			UsageByID: usage,
+		}))
+	}
+}
+
+// postEntityDeleteBulk deletes a list of entity types and re-renders
+// the entities grid in place. Mirrors postAssetDeleteBulk's tolerance
+// for per-id failures.
+func postEntityDeleteBulk(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		ids := parseCommaIDs(firstNonEmpty(r.URL.Query().Get("ids"), r.FormValue("ids")))
+		if len(ids) == 0 {
+			http.Error(w, "no ids", http.StatusBadRequest)
+			return
+		}
+		for _, id := range ids {
+			if err := d.Entities.Delete(r.Context(), id); err != nil {
+				if errors.Is(err, entities.ErrEntityTypeNotFound) {
+					continue
+				}
+				slog.Warn("bulk entity delete", "err", err, "id", id)
+			}
+		}
+		items, _ := d.Entities.List(r.Context(), entities.ListOpts{})
+		renderHTML(w, r, views.EntitiesGrid(views.EntitiesListProps{Items: items}))
+	}
+}
+
+// postEntityTagBulk adds or removes a tag on a list of entity types
+// (the bulk-select "Add tile tag" affordance is the v1 driver, but the
+// endpoint is generic so other tag operations can ride on it without a
+// schema change). Form fields:
+//
+//   ids=1,2,3   comma-joined entity ids (or repeated query params)
+//   tag=tile    the tag to add/remove
+//   op=add      "add" (default) or "remove"
+//
+// Returns the refreshed grid HTML so HTMX outerHTML swaps re-render in
+// place.
+func postEntityTagBulk(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		ids := parseCommaIDs(firstNonEmpty(r.URL.Query().Get("ids"), r.FormValue("ids")))
+		if len(ids) == 0 {
+			http.Error(w, "no ids", http.StatusBadRequest)
+			return
+		}
+		tag := strings.TrimSpace(firstNonEmpty(r.URL.Query().Get("tag"), r.FormValue("tag")))
+		if tag == "" {
+			http.Error(w, "tag is required", http.StatusBadRequest)
+			return
+		}
+		op := strings.TrimSpace(firstNonEmpty(r.URL.Query().Get("op"), r.FormValue("op")))
+		if op == "" {
+			op = "add"
+		}
+		for _, id := range ids {
+			et, err := d.Entities.FindByID(r.Context(), id)
+			if err != nil {
+				slog.Warn("bulk tag: find entity", "err", err, "id", id)
+				continue
+			}
+			next := applyTagOp(et.Tags, tag, op)
+			// SQL update direct so we don't roundtrip the full draft
+			// pipeline for a single-tag edit. The entity is already
+			// persisted; we're patching one column.
+			if _, err := d.Entities.Pool.Exec(r.Context(),
+				`UPDATE entity_types SET tags = $2 WHERE id = $1`,
+				id, next,
+			); err != nil {
+				slog.Warn("bulk tag: update", "err", err, "id", id)
+			}
+		}
+		items, _ := d.Entities.List(r.Context(), entities.ListOpts{})
+		renderHTML(w, r, views.EntitiesGrid(views.EntitiesListProps{Items: items}))
+	}
+}
+
+// applyTagOp returns the tag slice with `tag` either appended (if "add"
+// and not already present) or removed (if "remove"). Order is
+// preserved so the UI list doesn't reshuffle.
+func applyTagOp(tags []string, tag, op string) []string {
+	switch op {
+	case "remove":
+		out := make([]string, 0, len(tags))
+		for _, t := range tags {
+			if t != tag {
+				out = append(out, t)
+			}
+		}
+		return out
+	default: // add
+		for _, t := range tags {
+			if t == tag {
+				return tags
+			}
+		}
+		return append(append([]string{}, tags...), tag)
+	}
+}
+
+// firstNonEmpty returns the first non-empty argument. Used by the
+// bulk endpoints to accept ids/tag/op via either query string or form
+// body so HTMX callers can pick whichever is most ergonomic.
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+// parseCommaIDs splits "1,2,3" or repeated "?ids=1&ids=2" semantics
+// into a deduplicated int64 slice. Bound to 256 ids so a runaway
+// request can't fan out unbounded entity creates.
+func parseCommaIDs(raw string) []int64 {
+	const max = 256
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	if len(parts) > max {
+		parts = parts[:max]
+	}
+	out := make([]int64, 0, len(parts))
+	seen := map[int64]struct{}{}
+	for _, p := range parts {
+		n, err := strconvAtoi64(strings.TrimSpace(p))
+		if err != nil || n <= 0 {
+			continue
+		}
+		if _, dup := seen[n]; dup {
+			continue
+		}
+		seen[n] = struct{}{}
+		out = append(out, n)
+	}
+	return out
+}
+
 // templHTMLEscape escapes the few characters that matter inside a toast
 // payload. Templ does this automatically inside templates; here we're
 // emitting a literal byte string so we escape ourselves to keep the
@@ -789,12 +1095,53 @@ func postAssetDraft(d Deps) http.HandlerFunc {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(
-			`<div class="bx-toast bx-toast--success" data-copy-slot="assets.draft.saved">Draft saved. ` +
-				`<a href="#" hx-get="/design/publish/preview" hx-target="#publish-modal-host" hx-swap="innerHTML" style="text-decoration: underline;">Push to Live</a> ` +
-				`when you're ready to publish.</div>`,
-		))
+		writeDraftSavedToast(w, "asset")
+	}
+}
+
+// writeDraftSavedToast emits the canonical "draft saved" toast. The
+// markup is verbose (it nudges users toward Push to Live) but tagged
+// `data-bx-draft-toast` so boot.js can shrink it to a quiet "Draft
+// saved" once the user has seen the verbose version once. The chrome's
+// running draft-count pill is the persistent surface for that
+// affordance after that.
+func writeDraftSavedToast(w http.ResponseWriter, kind string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(
+		`<div class="bx-toast bx-toast--success" data-bx-draft-toast data-copy-slot="` + kind + `.draft.saved">` +
+			`<span data-bx-draft-toast-verbose>` +
+			draftToastVerboseFor(kind) +
+			` <a href="#" hx-get="/design/publish/preview" hx-target="#publish-modal-host" hx-swap="innerHTML" style="text-decoration: underline;">Push to Live</a> ` +
+			draftToastTailFor(kind) +
+			`</span>` +
+			`<span data-bx-draft-toast-short hidden>Draft saved.</span>` +
+			`</div>`,
+	))
+}
+
+// draftToastVerboseFor returns the verbose lead-in line used the first
+// time a designer sees the draft toast for a given artifact kind.
+// Tail is supplied by draftToastTailFor so kinds can describe their
+// own consequence (e.g. "to apply changes to the Mapmaker palette").
+func draftToastVerboseFor(kind string) string {
+	switch kind {
+	case "entity":
+		return `Draft saved.`
+	case "map":
+		return `Map draft saved.`
+	default:
+		return `Draft saved.`
+	}
+}
+
+func draftToastTailFor(kind string) string {
+	switch kind {
+	case "entity":
+		return `to apply changes to the Mapmaker palette and live game.`
+	case "map":
+		return `to make changes visible to players.`
+	default:
+		return `when you're ready to publish.`
 	}
 }
 
@@ -846,12 +1193,14 @@ func parseTags(raw string) []string {
 func getEntitiesList(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		opts := entityListOptsFromQuery(r)
+		filter := strings.TrimSpace(r.URL.Query().Get("filter"))
 		items, err := d.Entities.List(r.Context(), opts)
 		if err != nil {
 			slog.Error("entities list", "err", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
+		items = applyEntityFilter(items, filter)
 		layout := BuildChrome(r, d)
 		layout.Title = "Entities"
 		layout.Surface = "entity-manager"
@@ -859,9 +1208,10 @@ func getEntitiesList(d Deps) http.HandlerFunc {
 		layout.Variant = "no-rail"
 		layout.Crumbs = []views.Crumb{{Label: "Entities"}}
 		renderHTML(w, r, views.EntitiesList(views.EntitiesListProps{
-			Layout: layout,
-			Items:  items,
-			Search: opts.Search,
+			Layout:       layout,
+			Items:        items,
+			Search:       opts.Search,
+			ActiveFilter: filter,
 		}))
 	}
 }
@@ -869,16 +1219,40 @@ func getEntitiesList(d Deps) http.HandlerFunc {
 func getEntitiesGrid(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		opts := entityListOptsFromQuery(r)
+		filter := strings.TrimSpace(r.URL.Query().Get("filter"))
 		items, err := d.Entities.List(r.Context(), opts)
 		if err != nil {
 			slog.Error("entities grid", "err", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
+		items = applyEntityFilter(items, filter)
 		renderHTML(w, r, views.EntitiesGrid(views.EntitiesListProps{
-			Items:  items,
-			Search: opts.Search,
+			Items:        items,
+			Search:       opts.Search,
+			ActiveFilter: filter,
 		}))
+	}
+}
+
+// applyEntityFilter narrows the entity list to those matching the
+// ?filter= scope. "no-sprite" keeps entities missing a sprite asset;
+// unknown values are no-ops.
+func applyEntityFilter(items []entities.EntityType, filter string) []entities.EntityType {
+	if filter == "" {
+		return items
+	}
+	switch filter {
+	case "no-sprite":
+		out := make([]entities.EntityType, 0, len(items))
+		for _, et := range items {
+			if et.SpriteAssetID == nil {
+				out = append(out, et)
+			}
+		}
+		return out
+	default:
+		return items
 	}
 }
 
@@ -933,10 +1307,11 @@ func postEntityCreate(d Deps) http.HandlerFunc {
 			http.Error(w, "name is required", http.StatusBadRequest)
 			return
 		}
-		if _, err := d.Entities.Create(r.Context(), entities.CreateInput{
+		et, err := d.Entities.Create(r.Context(), entities.CreateInput{
 			Name:      name,
 			CreatedBy: dr.ID,
-		}); err != nil {
+		})
+		if err != nil {
 			if errors.Is(err, entities.ErrNameInUse) {
 				http.Error(w, err.Error(), http.StatusConflict)
 				return
@@ -945,10 +1320,32 @@ func postEntityCreate(d Deps) http.HandlerFunc {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		// Re-render grid with default filter.
+		// Same pattern as postMapCreate: from /design/entities, swap
+		// the grid; from anywhere else (home, chrome, deep link),
+		// open the freshly-created entity's detail modal so the user
+		// can immediately assign a sprite + components without
+		// hunting for the new row.
+		if !cameFromEntitiesList(r) && et != nil {
+			w.Header().Set("HX-Redirect", fmt.Sprintf("/design/entities/%d", et.ID))
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		items, _ := d.Entities.List(r.Context(), entities.ListOpts{})
 		renderHTML(w, r, views.EntitiesGrid(views.EntitiesListProps{Items: items}))
 	}
+}
+
+// cameFromEntitiesList returns true when the HTMX request originated
+// on the /design/entities list page. Mirrors cameFromMapsList — when
+// HX-Current-URL is absent (non-HTMX caller / test client), default
+// to "from list" so the old grid-returning behavior is preserved.
+func cameFromEntitiesList(r *http.Request) bool {
+	cur := r.Header.Get("HX-Current-URL")
+	if cur == "" {
+		return true
+	}
+	return strings.Contains(cur, "/design/entities") &&
+		!strings.Contains(cur, "/design/entities/")
 }
 
 func getEntityDetail(d Deps) http.HandlerFunc {
@@ -978,6 +1375,15 @@ func getEntityDetail(d Deps) http.HandlerFunc {
 			SpriteURL:   spriteURLFor(d, et),
 		}
 
+		// Connections rail data so the modal carries the "used by N maps"
+		// count needed to build a non-lying delete confirm. Soft-fails
+		// to an empty list rather than blocking the page render.
+		if rail, err := ConnectionsForEntity(r.Context(), d, id); err == nil && rail != nil {
+			props.UsedBy = rail.UsedBy
+		} else if err != nil {
+			slog.Warn("connections for entity", "err", err, "id", id)
+		}
+
 		// Wire automations if the service is available. Read failures
 		// degrade gracefully — missing automations just render the
 		// editor empty.
@@ -992,7 +1398,6 @@ func getEntityDetail(d Deps) http.HandlerFunc {
 		}
 
 		renderHTML(w, r, views.EntityDetail(props))
-		_ = ConnectionsForEntity // referenced for the rail when entity detail moves to a full surface
 	}
 }
 
@@ -1073,12 +1478,7 @@ func postEntityDraft(d Deps) http.HandlerFunc {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(
-			`<div class="bx-toast bx-toast--success">Draft saved. ` +
-				`<a href="#" hx-get="/design/publish/preview" hx-target="#publish-modal-host" hx-swap="innerHTML" style="text-decoration: underline;">Push to Live</a> ` +
-				`to apply changes to the Mapmaker palette and live game.</div>`,
-		))
+		writeDraftSavedToast(w, "entity")
 	}
 }
 
@@ -1355,6 +1755,11 @@ func getSocketsList(d Deps) http.HandlerFunc {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
+		usage, err := SocketUsageMap(r.Context(), d)
+		if err != nil {
+			slog.Warn("socket usage map", "err", err)
+			usage = nil // templ falls back to neutral "—"
+		}
 		layout := BuildChrome(r, d)
 		layout.Title = "Sockets"
 		layout.Surface = "edge-sockets"
@@ -1362,8 +1767,9 @@ func getSocketsList(d Deps) http.HandlerFunc {
 		layout.Variant = "no-rail"
 		layout.Crumbs = []views.Crumb{{Label: "Sockets"}}
 		renderHTML(w, r, views.SocketsList(views.SocketsListProps{
-			Layout: layout,
-			Items:  items,
+			Layout:    layout,
+			Items:     items,
+			UsageByID: usage,
 		}))
 	}
 }
@@ -1391,7 +1797,8 @@ func postSocketCreate(d Deps) http.HandlerFunc {
 			return
 		}
 		items, _ := d.Entities.ListSockets(r.Context())
-		renderHTML(w, r, views.SocketsGrid(views.SocketsListProps{Items: items}))
+		usage, _ := SocketUsageMap(r.Context(), d)
+		renderHTML(w, r, views.SocketsGrid(views.SocketsListProps{Items: items, UsageByID: usage}))
 	}
 }
 
@@ -1412,7 +1819,8 @@ func deleteSocket(d Deps) http.HandlerFunc {
 			return
 		}
 		items, _ := d.Entities.ListSockets(r.Context())
-		renderHTML(w, r, views.SocketsGrid(views.SocketsListProps{Items: items}))
+		usage, _ := SocketUsageMap(r.Context(), d)
+		renderHTML(w, r, views.SocketsGrid(views.SocketsListProps{Items: items, UsageByID: usage}))
 	}
 }
 
@@ -1569,12 +1977,14 @@ func postTileGroupLayout(d Deps) http.HandlerFunc {
 func getMapsList(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		search := strings.TrimSpace(r.URL.Query().Get("q"))
+		filter := strings.TrimSpace(r.URL.Query().Get("filter"))
 		items, err := d.Maps.List(r.Context(), search)
 		if err != nil {
 			slog.Error("maps list", "err", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
+		items = applyMapFilter(r, d, items, filter)
 		layout := BuildChrome(r, d)
 		layout.Title = "Maps"
 		layout.Surface = "maps"
@@ -1582,9 +1992,10 @@ func getMapsList(d Deps) http.HandlerFunc {
 		layout.Variant = "no-rail"
 		layout.Crumbs = []views.Crumb{{Label: "Maps"}}
 		renderHTML(w, r, views.MapsList(views.MapsListProps{
-			Layout: layout,
-			Items:  items,
-			Search: search,
+			Layout:       layout,
+			Items:        items,
+			Search:       search,
+			ActiveFilter: filter,
 		}))
 	}
 }
@@ -1592,13 +2003,54 @@ func getMapsList(d Deps) http.HandlerFunc {
 func getMapsGrid(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		search := strings.TrimSpace(r.URL.Query().Get("q"))
+		filter := strings.TrimSpace(r.URL.Query().Get("filter"))
 		items, err := d.Maps.List(r.Context(), search)
 		if err != nil {
 			slog.Error("maps grid", "err", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		renderHTML(w, r, views.MapsGrid(views.MapsListProps{Items: items, Search: search}))
+		items = applyMapFilter(r, d, items, filter)
+		renderHTML(w, r, views.MapsGrid(views.MapsListProps{Items: items, Search: search, ActiveFilter: filter}))
+	}
+}
+
+// applyMapFilter narrows the maps list to those matching ?filter=.
+// "empty" runs a single GROUP BY query against map_tiles to find
+// every map with at least one placement, then keeps the complement.
+// Soft-fails on query error: returns the input slice + a warning log
+// so a transient DB hiccup never empties the list.
+func applyMapFilter(r *http.Request, d Deps, items []mapsservice.Map, filter string) []mapsservice.Map {
+	if filter == "" {
+		return items
+	}
+	switch filter {
+	case "empty":
+		populated := map[int64]bool{}
+		rows, err := d.Maps.Pool.Query(r.Context(),
+			`SELECT DISTINCT map_id FROM map_tiles`)
+		if err != nil {
+			slog.Warn("maps filter: query populated maps", "err", err)
+			return items
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				slog.Warn("maps filter: scan id", "err", err)
+				return items
+			}
+			populated[id] = true
+		}
+		out := make([]mapsservice.Map, 0, len(items))
+		for _, m := range items {
+			if !populated[m.ID] {
+				out = append(out, m)
+			}
+		}
+		return out
+	default:
+		return items
 	}
 }
 
@@ -1674,7 +2126,7 @@ func postMapCreate(d Deps) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		_, err := d.Maps.Create(r.Context(), mapsservice.CreateInput{
+		m, err := d.Maps.Create(r.Context(), mapsservice.CreateInput{
 			Name:      r.FormValue("name"),
 			Width:     int32(parseIntOr(r.FormValue("width"), 64)),
 			Height:    int32(parseIntOr(r.FormValue("height"), 48)),
@@ -1691,9 +2143,37 @@ func postMapCreate(d Deps) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		// If the request came from /design/maps the caller's HX-target
+		// swap is what they want — refreshes the grid in place. From
+		// any other surface (the home page +Map button, or the chrome
+		// counts), redirect straight to the new map's editor so the
+		// user lands somewhere they can act on. Detect by HX-Current-URL.
+		if !cameFromMapsList(r) && m != nil {
+			w.Header().Set("HX-Redirect", fmt.Sprintf("/design/maps/%d", m.ID))
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		items, _ := d.Maps.List(r.Context(), "")
 		renderHTML(w, r, views.MapsGrid(views.MapsListProps{Items: items}))
 	}
+}
+
+// cameFromMapsList returns true when the HTMX request originated on
+// the /design/maps list page, where the caller wants its grid swapped
+// in place. Any other source with a positively-identified non-list
+// surface (home, chrome, deep link) gets the HX-Redirect path to the
+// new map's editor. Non-HTMX clients (curl, tests, server-to-server)
+// have no HX-Current-URL so we treat them as "from list" — keeps the
+// legacy POST-returns-grid behavior intact.
+func cameFromMapsList(r *http.Request) bool {
+	cur := r.Header.Get("HX-Current-URL")
+	if cur == "" {
+		return true
+	}
+	// HX-Current-URL is absolute; we only care about the path suffix.
+	// Match /design/maps and /design/maps?... but NOT /design/maps/123.
+	return strings.Contains(cur, "/design/maps") &&
+		!strings.Contains(cur, "/design/maps/")
 }
 
 func getMapmakerPage(d Deps) http.HandlerFunc {
@@ -2083,10 +2563,52 @@ func postMapDraft(d Deps) http.HandlerFunc {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(
-			`<div class="bx-toast bx-toast--success">Map draft saved. <a href="#" hx-get="/design/publish/preview" hx-target="#publish-modal-host" hx-swap="innerHTML" style="text-decoration: underline;">Push to Live</a> to make changes visible to players.</div>`,
-		))
+		writeDraftSavedToast(w, "map")
+	}
+}
+
+// postMapPublicToggle flips the map's `public` column directly (no
+// draft pipeline) and returns the refreshed badge for HTMX outerHTML
+// swap. Map visibility is the one map-level field that wants the
+// painting tempo, not the draft tempo: collapsing a 5-step "draft +
+// push to live" workflow into a single click matches how tile
+// placements already bypass drafts.
+//
+// We deliberately do NOT round-trip through the publish pipeline.
+// `maps.public` is a runtime metadata flag — players who hit
+// /play/maps see the new value on next page load. Other map fields
+// (instancing, persistence, spectator policy) still use the draft
+// pipeline because they invalidate caches / live world state.
+func postMapPublicToggle(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		dr := CurrentDesigner(r.Context())
+		if dr == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		id, err := pathID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		var nextPublic bool
+		err = d.Maps.Pool.QueryRow(r.Context(),
+			`UPDATE maps SET public = NOT public, updated_at = now()
+			 WHERE id = $1 RETURNING public`,
+			id,
+		).Scan(&nextPublic)
+		if err != nil {
+			slog.Error("map public toggle", "err", err, "map_id", id)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		// Return a refreshed badge that itself acts as the toggle, so
+		// the next click re-fires this endpoint. Outer-HTML swap
+		// replaces the whole element so click handlers stay consistent.
+		renderHTML(w, r, views.MapPublicBadge(views.MapPublicBadgeProps{
+			MapID:  id,
+			Public: nextPublic,
+		}))
 	}
 }
 
@@ -2236,19 +2758,38 @@ func postAssetUpload(d Deps) http.HandlerFunc {
 			return
 		}
 
+		// Optional upload-time promote: when the modal's checkbox was
+		// ticked, every successful sprite/tile asset (including reused
+		// rows that resolved to existing assets) gets a tile-tagged
+		// entity. Audio is skipped silently — it has no sprite.
+		// Errors per-asset are non-fatal: the row stays unpromoted
+		// and the rest of the batch keeps going.
+		promoteRequested := r.URL.Query().Get("promote") == "tile" ||
+			(r.FormValue("promote") == "tile")
+
 		ok, fail := 0, 0
 		viewItems := make([]views.AssetUploadItem, 0, len(results))
-		for _, r := range results {
-			item := views.AssetUploadItem{OriginalFn: r.OriginalFn}
-			if r.Err != nil {
+		for _, res := range results {
+			item := views.AssetUploadItem{OriginalFn: res.OriginalFn}
+			if res.Err != nil {
 				fail++
-				item.Err = r.Err.Error()
-			} else if r.Asset != nil {
+				item.Err = res.Err.Error()
+			} else if res.Asset != nil {
 				ok++
-				item.AssetID = r.Asset.ID
-				item.Name = r.Asset.Name
-				item.Kind = string(r.Asset.Kind)
-				item.Reused = r.Reused
+				item.AssetID = res.Asset.ID
+				item.Name = res.Asset.Name
+				item.Kind = string(res.Asset.Kind)
+				item.Reused = res.Reused
+				if promoteRequested && res.Asset.Kind != assets.KindAudio {
+					if _, perr := promoteAssetToEntity(r.Context(), d, res.Asset, dr.ID); perr == nil {
+						item.Promoted = true
+					} else {
+						slog.Warn("upload promote-to-entity",
+							"err", perr,
+							"asset_id", res.Asset.ID,
+						)
+					}
+				}
 			}
 			viewItems = append(viewItems, item)
 		}

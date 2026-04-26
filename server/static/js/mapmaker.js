@@ -360,6 +360,55 @@
 				const id = Number(first.getAttribute("data-bx-entity-type-id"));
 				if (id) setActiveEntity(state, id);
 			}
+
+			// Client-side filter input — matches against data-bx-palette-name
+			// (the entity name) so designers can find tiles fast in a
+			// project with dozens. Empty input shows everything; non-
+			// empty hides non-matching <li>s without touching state.
+			const filter = $("[data-bx-palette-filter]");
+			if (filter) {
+				filter.addEventListener("input", () => {
+					const q = filter.value.trim().toLowerCase();
+					$$(".bx-mapmaker__palette li[data-bx-entity-type-id]").forEach((li) => {
+						const name = (li.getAttribute("data-bx-palette-name") || "").toLowerCase();
+						li.style.display = !q || name.includes(q) ? "" : "none";
+					});
+				});
+			}
+
+			// Add-tile bridge: the asset picker writes the picked id
+			// into #mapmaker-add-tile. We listen for change, POST to
+			// promote-to-entity, then reload the page to pick up the
+			// new palette entry. Reload is cheaper than re-fetching
+			// + diff-rendering the palette + canvas state.
+			const addInput = $("[data-bx-mapmaker-add-tile]");
+			if (addInput) {
+				addInput.addEventListener("change", () => {
+					const id = Number(addInput.value);
+					if (!id) return;
+					const token = document
+						.querySelector('meta[name="csrf-token"]')
+						?.getAttribute("content") || "";
+					fetch(`/design/assets/${id}/promote-to-entity`, {
+						method: "POST",
+						credentials: "same-origin",
+						headers: { "X-CSRF-Token": token, "Accept": "text/html" },
+					}).then((r) => {
+						if (!r.ok) {
+							flash(`Could not add tile: HTTP ${r.status}`);
+							addInput.value = "";
+							return;
+						}
+						// HX-Redirect comes back as a header; we want
+						// to land back on THIS map's editor, not the
+						// new entity's page, so just reload in place.
+						window.location.reload();
+					}).catch((err) => {
+						flash(`Could not add tile: ${err.message || err}`);
+						addInput.value = "";
+					});
+				});
+			}
 		}
 
 		function setActiveEntity(state, id) {

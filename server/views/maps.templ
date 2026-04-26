@@ -11,6 +11,11 @@ type MapsListProps struct {
 	Layout LayoutProps
 	Items  []maps.Map
 	Search string
+
+	// ActiveFilter is the optional ?filter= scope: "" or "empty"
+	// (only maps with zero placements). The toolbar shows a chip +
+	// clear-filter affordance when this is set.
+	ActiveFilter string
 }
 
 templ MapsList(p MapsListProps) {
@@ -65,6 +70,11 @@ templ MapsList(p MapsListProps) {
 					style="max-width: 280px;"
 					data-copy-slot="maps.search.placeholder"
 				/>
+				if p.ActiveFilter != "" {
+					<input type="hidden" name="filter" value={ p.ActiveFilter }/>
+					<span class="bx-badge bx-badge--warn">{ mapFilterLabel(p.ActiveFilter) }</span>
+					<a href="/design/maps" class="bx-btn bx-btn--ghost bx-btn--small" title="Clear filter">× clear</a>
+				}
 			</form>
 
 			@MapsGrid(p)
@@ -154,6 +164,16 @@ func mapBadge(mode string) string {
 
 func mapThumbLabel(m maps.Map) string {
 	return fmt.Sprintf("%d × %d", m.Width, m.Height)
+}
+
+// mapFilterLabel turns the ?filter= scope into a chip label.
+func mapFilterLabel(f string) string {
+	switch f {
+	case "empty":
+		return "no entities placed"
+	default:
+		return f
+	}
 }
 
 func countMapMode(items []maps.Map, mode string) int {

@@ -18,6 +18,12 @@ type EntityDetailProps struct {
 	Descriptors map[components.Kind][]configurable.FieldDescriptor
 	SpriteURL   string                    // CDN URL of the sprite asset, "" if unset
 
+	// UsedBy is the list of maps that have placements of this entity-type,
+	// used to build a count-aware delete confirm so we don't silently
+	// nuke tiles. Populated by the handler from ConnectionsForEntity;
+	// each RailRef.Meta carries "× N" for the per-map placement count.
+	UsedBy []RailRef
+
 	// Automation editor data — empty if Deps.Automations isn't wired.
 	Automations         automations.AutomationSet
 	AutomationTriggers  *automations.Registry
@@ -122,7 +128,7 @@ templ EntityDetail(p EntityDetailProps) {
 					type="button"
 					class="bx-btn bx-btn--danger"
 					hx-delete={ fmt.Sprintf("/design/entities/%d", p.EntityType.ID) }
-					hx-confirm="Delete this entity type? Components, automations, and tile-edge assignments go with it."
+					hx-confirm={ entityDeleteConfirm(p.UsedBy) }
 					hx-target="#entities-grid"
 					hx-swap="outerHTML"
 					hx-on:htmx:after-request="document.querySelector('.bx-modal-backdrop')?.remove()"
@@ -168,24 +174,77 @@ templ ComponentEditor(entityTypeID int64, c entities.ComponentRow, descriptors [
 }
 
 // ComponentPicker is the "add component" affordance. Filters out kinds
-// already attached.
+// already attached. Renders as a one-click button-per-kind grid (with
+// inline descriptions) instead of a select+submit dance — designers
+// can read what each component does WITHOUT clicking Add and waiting
+// for a label-less option to populate the form.
 templ ComponentPicker(entityTypeID int64, allKinds []components.Kind, attached []entities.ComponentRow) {
-	<form
-		class="bx-comp__add"
-		hx-post={ fmt.Sprintf("/design/entities/%d/components/add", entityTypeID) }
-		hx-target="#modal-host"
-		hx-swap="innerHTML"
-	>
-		<select name="kind" class="bx-select" required>
-			<option value="" disabled selected data-copy-slot="entities.components.add">+ Add component…</option>
+	<details class="bx-comp__add-disclosure" data-bx-component-picker>
+		<summary class="bx-comp__kind" data-copy-slot="entities.components.add">+ Add component…</summary>
+		<div class="bx-comp__add-grid" style="margin-top: var(--bx-s2);">
 			for _, k := range allKinds {
 				if !alreadyAttached(k, attached) {
-					<option value={ string(k) }>{ string(k) }</option>
+					<form
+						hx-post={ fmt.Sprintf("/design/entities/%d/components/add", entityTypeID) }
+						hx-target="#modal-host"
+						hx-swap="innerHTML"
+					>
+						@CSRFInput()
+						<input type="hidden" name="kind" value={ string(k) }/>
+						<button
+							type="submit"
+							class="bx-btn bx-comp__add-card"
+							title={ componentKindHint(k) }
+						>
+							<span class="bx-comp__kind">{ string(k) }</span>
+							<span class="bx-tiny bx-muted bx-comp__add-card__hint">
+								{ componentKindHint(k) }
+							</span>
+						</button>
+					</form>
 				}
 			}
-		</select>
-		<button type="submit" class="bx-btn bx-btn--small" data-copy-slot="entities.components.add-btn">Add</button>
-	</form>
+		</div>
+	</details>
+}
+
+// componentKindHint returns a one-line description for each built-in
+// component kind. Centralised here so renames/additions land in one
+// place; the registry's Definition struct stays focused on runtime
+// concerns. Unknown kinds get a generic fallback.
+func componentKindHint(k components.Kind) string {
+	switch k {
+	case components.KindPosition:
+		return "World coordinates."
+	case components.KindVelocity:
+		return "Per-tick movement vector."
+	case components.KindSprite:
+		return "Visible image — pulls from an asset."
+	case components.KindCollider:
+		return "Solid AABB for physics + interaction."
+	case components.KindTile:
+		return "Treats this entity as a paintable map tile."
+	case components.KindStatic:
+		return "Doesn't tick — locked to its starting cell."
+	case "health":
+		return "HP pool, damage handling, on-death triggers."
+	case "inventory":
+		return "Slots that hold items the player can swap."
+	case "ai_behavior":
+		return "FSM that decides movement + actions."
+	case "spawner":
+		return "Periodically creates other entities."
+	case "resource":
+		return "Counter (mana, ammo) automations can read or change."
+	case "trigger":
+		return "Fires automation when something enters its area."
+	case "audio_emitter":
+		return "Plays a sound from this entity's position."
+	case "light_source":
+		return "Casts a colored radius of light at runtime."
+	default:
+		return "Configurable behavior module."
+	}
 }
 
 // ColliderOverlay paints the sprite (if any) plus a 1-px outline of the
@@ -272,6 +331,7 @@ templ AutomationEditor(entityTypeID int64, idx int, a automations.Automation, tr
 							hx-delete={ fmt.Sprintf("/design/entities/%d/automations/%d/actions/%d", entityTypeID, idx, j) }
 							hx-target={ "#" + automationsBlockID(entityTypeID) }
 							hx-swap="outerHTML"
+							hx-confirm={ removeActionConfirm(a, j) }
 							title="Remove action"
 						>×</button>
 					</div>
@@ -426,6 +486,59 @@ func triggerHumanLabel(kind string) string {
 	default:
 		return kind
 	}
+}
+
+// entityDeleteConfirm builds the delete confirm string with the real
+// blast radius. UsedBy is a list of maps with this entity placed; each
+// RailRef.Meta carries "× N" for the placement count on that map.
+// Sum those Ns to tell the designer how many tiles will vanish.
+func entityDeleteConfirm(usedBy []RailRef) string {
+	tiles := 0
+	for _, r := range usedBy {
+		tiles += parsePlacementMeta(r.Meta)
+	}
+	if len(usedBy) == 0 {
+		return "Delete this entity type? Components, automations, and tile-edge assignments go with it."
+	}
+	if len(usedBy) == 1 {
+		return fmt.Sprintf("Delete this entity type? %d tile placement(s) on \"%s\" will be removed, plus components, automations, and tile-edge assignments.",
+			tiles, usedBy[0].Label)
+	}
+	return fmt.Sprintf("Delete this entity type? %d tile placement(s) across %d maps will be removed, plus components, automations, and tile-edge assignments.",
+		tiles, len(usedBy))
+}
+
+// parsePlacementMeta extracts the integer N from a RailRef.Meta value
+// of the form "× N" (built by ConnectionsForEntity). Returns 0 for any
+// other shape so the confirm degrades to "1 map" framing rather than
+// claiming "0 placements".
+func parsePlacementMeta(meta string) int {
+	for i := 0; i < len(meta); i++ {
+		c := meta[i]
+		if c >= '0' && c <= '9' {
+			n := 0
+			for ; i < len(meta); i++ {
+				d := meta[i]
+				if d < '0' || d > '9' {
+					break
+				}
+				n = n*10 + int(d-'0')
+			}
+			return n
+		}
+	}
+	return 0
+}
+
+// removeActionConfirm returns the confirm string for the per-action ×
+// button. With more than one action, removal is harmless; with one
+// remaining, we tell the user the trigger config will stay (the server
+// re-seeds a placeholder despawn, so trigger setup is preserved).
+func removeActionConfirm(a automations.Automation, _ int) string {
+	if len(a.Actions) <= 1 {
+		return "Remove this action? The trigger config stays — we'll seed a placeholder so you can pick a new action."
+	}
+	return "Remove this action?"
 }
 
 // summarizeAction returns a one-line human description of an action

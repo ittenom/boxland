@@ -44,11 +44,7 @@ templ MapmakerPage(p MapmakerProps) {
 					<span class="bx-mono bx-small bx-muted">
 						{ fmt.Sprintf("%d × %d · %s", p.Map.Width, p.Map.Height, p.Map.Mode) }
 					</span>
-					if p.Map.Public {
-						<span class="bx-badge bx-badge--success" title="Players can find this on /play/maps">public</span>
-					} else {
-						<span class="bx-badge" title="Sandbox-only. Open Settings to publish.">private</span>
-					}
+					@MapPublicBadge(MapPublicBadgeProps{ MapID: p.Map.ID, Public: p.Map.Public })
 				</div>
 				<div class="bx-row">
 					<button
@@ -176,17 +172,48 @@ templ MapmakerToolbar(p MapmakerProps) {
 				{ stagedChipLabel(p.EntityDraftCount) } — push to apply
 			</button>
 		}
+
+		// Inline search + "Add tile from asset" affordance. Search
+		// stays purely client-side via boot.js's data-bx-palette-filter
+		// hook so the canvas never reloads. The Add button opens the
+		// shared asset picker, filtered to sprite/tile-kind assets;
+		// boot.js wires the picked id through /promote-to-entity and
+		// reloads the mapmaker page so the new tile shows up here.
+		<div class="bx-row" style="gap: var(--bx-s1); margin: var(--bx-s2) 0;">
+			<input
+				type="search"
+				placeholder="Filter palette"
+				class="bx-input bx-small"
+				style="flex:1; min-width: 0;"
+				data-bx-palette-filter
+				aria-label="Filter palette by name"
+			/>
+			<button
+				type="button"
+				class="bx-btn bx-btn--small"
+				hx-get="/design/picker/assets?tags=tile&tags=sprite&target_id=mapmaker-add-tile&target_label=mapmaker-add-tile-label"
+				hx-target="#modal-host"
+				hx-swap="innerHTML"
+				title="Pick an asset; we'll create a tile-tagged entity for it and add it to this palette"
+				data-copy-slot="mapmaker.palette.add"
+			>+ Tile</button>
+			// Hidden inputs the picker writes into. The change event
+			// (fired by boot.js) is intercepted by the script below
+			// and converted to a promote-to-entity POST.
+			<input type="hidden" id="mapmaker-add-tile" data-bx-mapmaker-add-tile/>
+			<span id="mapmaker-add-tile-label" hidden></span>
+		</div>
+
 		if len(p.PaletteEntityTypes) == 0 {
-			<p class="bx-small bx-muted" data-copy-slot="mapmaker.palette.empty">
-				No tile entities yet.
-				<br/>
-				<a href="/design/entities">Create one</a> and it appears here.
+			<p class="bx-small bx-muted" data-copy-slot="mapmaker.palette.empty" data-bx-palette-empty>
+				No tile entities yet. Use <strong>+ Tile</strong> above to make one from an existing asset.
 			</p>
 		}
 		<ol class="bx-mapmaker__palette" role="listbox" aria-label="Tile palette">
 			for i, e := range p.PaletteEntityTypes {
 				<li
 					data-bx-entity-type-id={ fmt.Sprintf("%d", e.ID) }
+					data-bx-palette-name={ e.Name }
 					if i == 0 { aria-selected="true" } else { aria-selected="false" }
 					title={ e.Name }
 				>
@@ -277,6 +304,65 @@ templ MapmakerProceduralPanel(p MapmakerProps) {
 			<p class="bx-small" data-bx-proc-error role="alert" style="color: var(--bx-danger); display: none;"></p>
 		</div>
 	</section>
+}
+
+// MapPublicBadgeProps drives the public/private toggle badge in the
+// Mapmaker header. Click → POST /design/maps/{id}/public-toggle →
+// the server flips the column and returns this same badge with the
+// new state, so the next click re-fires the endpoint without any
+// extra wiring.
+type MapPublicBadgeProps struct {
+	MapID  int64
+	Public bool
+}
+
+templ MapPublicBadge(p MapPublicBadgeProps) {
+	<button
+		type="button"
+		id={ fmt.Sprintf("map-public-badge-%d", p.MapID) }
+		class={ mapPublicBadgeClass(p.Public) }
+		hx-post={ fmt.Sprintf("/design/maps/%d/public-toggle", p.MapID) }
+		hx-target="this"
+		hx-swap="outerHTML"
+		hx-confirm={ mapPublicConfirm(p.Public) }
+		title={ mapPublicTitle(p.Public) }
+		data-bx-public-badge
+		data-public={ mapPublicAttr(p.Public) }
+	>
+		if p.Public {
+			public · click to make private
+		} else {
+			private · click to make public
+		}
+	</button>
+}
+
+func mapPublicBadgeClass(public bool) string {
+	if public {
+		return "bx-badge bx-badge--success bx-public-badge"
+	}
+	return "bx-badge bx-public-badge"
+}
+
+func mapPublicTitle(public bool) string {
+	if public {
+		return "Players can find this on /play/maps. Click to make it private (sandbox-only)."
+	}
+	return "Sandbox-only. Click to publish to /play/maps."
+}
+
+func mapPublicConfirm(public bool) string {
+	if public {
+		return "Make this map private? Players currently in the lobby will lose access on next refresh."
+	}
+	return "Publish this map? Players will see it at /play/maps immediately."
+}
+
+func mapPublicAttr(public bool) string {
+	if public {
+		return "1"
+	}
+	return "0"
 }
 
 // proceduralInitialSeed returns the persisted seed, or 1 as a sensible

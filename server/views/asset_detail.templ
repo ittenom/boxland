@@ -86,7 +86,7 @@ templ AssetDetail(p AssetDetailProps) {
 					type="button"
 					class="bx-btn bx-btn--danger"
 					hx-delete={ fmt.Sprintf("/design/assets/%d", p.Asset.ID) }
-					hx-confirm="Delete this asset? Variants and animation tags go with it."
+					hx-confirm={ assetDeleteConfirm(p.UsedBy) }
 					hx-target="#assets-grid"
 					hx-swap="outerHTML"
 					hx-on:htmx:after-request="document.querySelector('.bx-modal-backdrop')?.remove()"
@@ -114,6 +114,19 @@ templ AssetDetail(p AssetDetailProps) {
 			</footer>
 		</div>
 	</div>
+}
+
+// assetDeleteConfirm builds the delete confirm string with real impact
+// counts. The UsedBy list is already populated by the handler, so we
+// can tell users exactly how many entities will lose their sprite.
+func assetDeleteConfirm(usedBy []RailRef) string {
+	if len(usedBy) == 0 {
+		return "Delete this asset? Variants and animation tags go with it."
+	}
+	if len(usedBy) == 1 {
+		return "Delete this asset? 1 entity will lose its sprite. Variants and animation tags go with it."
+	}
+	return fmt.Sprintf("Delete this asset? %d entities will lose their sprite. Variants and animation tags go with it.", len(usedBy))
 }
 
 // assetDetailPreview picks the right preview surface (sprite/tile image,

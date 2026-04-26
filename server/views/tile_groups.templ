@@ -113,21 +113,30 @@ templ TileGroupDetail(p TileGroupDetailProps) {
 					hx-target="#tile-group-paint-status" hx-swap="innerHTML"
 					class="bx-stack"
 				>
-					<div class="bx-row" style="gap: var(--bx-s2); align-items: center;">
+					// Active-entity selector. Same chip+picker pattern as
+					// form.templ's refField so designers never type raw
+					// integer ids (huge typo footgun on the previous
+					// numeric input). The hidden input keeps the
+					// data-bx-active-entity hook used by boot.js's
+					// tile-cell click handler; data-bx-ref triggers the
+					// shared resolveRefLabels batch lookup so the chip
+					// shows "Goblin · #5" instead of "currently #5".
+					<div class="bx-row bx-ref-field" style="gap: var(--bx-s2); align-items: center;">
 						<label class="bx-label" for="active-entity-id" data-copy-slot="tilegroups.detail.active" style="margin: 0;">
 							Active entity
 						</label>
 						<input
 							id="active-entity-id"
-							type="number"
-							min="0"
+							type="hidden"
 							value="0"
-							class="bx-input bx-mono bx-small"
-							style="max-width: 96px; text-align: right;"
 							data-bx-active-entity
-							placeholder="0"
+							data-bx-ref="entity-type"
 						/>
-						<span class="bx-small bx-muted" id="active-entity-id-label">0 = clear</span>
+						<span
+							class="bx-ref-chip bx-mono bx-small"
+							id="active-entity-id-label"
+							data-bx-ref-label="entity-type"
+						>none chosen — click Choose</span>
 						<button
 							type="button"
 							class="bx-btn bx-btn--small"

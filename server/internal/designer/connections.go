@@ -140,6 +140,46 @@ func scanCountInto(rows pgx.Rows, target map[int64]int) error {
 	return nil
 }
 
+// SocketUsageMap returns a map of socket id → number of
+// tile_edge_assignments rows where the socket is referenced on any of
+// the four edge columns. A single row that uses the same socket on two
+// edges counts as 2 (matches "edges that lose their reference" framing).
+//
+// Cheap enough to call on every Sockets list render so the row "Used by"
+// column + the delete confirm both stay accurate without a separate
+// network round-trip.
+func SocketUsageMap(ctx context.Context, d Deps) (map[int64]int, error) {
+	out := map[int64]int{}
+	if d.Entities == nil {
+		return out, nil
+	}
+	rows, err := d.Entities.Pool.Query(ctx, `
+		SELECT socket_id, count(*) FROM (
+			SELECT north_socket_id AS socket_id FROM tile_edge_assignments WHERE north_socket_id IS NOT NULL
+			UNION ALL
+			SELECT east_socket_id  FROM tile_edge_assignments WHERE east_socket_id  IS NOT NULL
+			UNION ALL
+			SELECT south_socket_id FROM tile_edge_assignments WHERE south_socket_id IS NOT NULL
+			UNION ALL
+			SELECT west_socket_id  FROM tile_edge_assignments WHERE west_socket_id  IS NOT NULL
+		) refs
+		GROUP BY socket_id
+	`)
+	if err != nil {
+		return out, fmt.Errorf("socket usage: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var count int
+		if err := rows.Scan(&id, &count); err != nil {
+			return out, err
+		}
+		out[id] = count
+	}
+	return out, nil
+}
+
 // ConnectionsForEntity reports both directions for an entity type:
 // what assets / entities it depends on, what maps + entities reference
 // it, and a suggested-next CTA list.

@@ -31,7 +31,7 @@ type PickerProps struct {
 }
 
 templ PickerModal(p PickerProps) {
-	<div class="bx-modal-backdrop" data-bx-dismissible role="dialog" aria-modal="true">
+	<div class="bx-modal-backdrop" data-bx-dismissible role="dialog" aria-modal="true" data-bx-picker-modal>
 		<div class="bx-modal" style="width: min(720px, 95vw); max-height: 80vh;">
 			<header class="bx-modal__header">
 				<h2 style="margin:0;">{ p.Title }</h2>
@@ -49,12 +49,13 @@ templ PickerModal(p PickerProps) {
 					hx-target="#picker-grid"
 					hx-swap="outerHTML"
 					hx-trigger="input from:input changed delay:200ms"
+					onsubmit="event.preventDefault(); window.bxPickerSubmit && window.bxPickerSubmit(this);"
 				>
 					<input
 						type="search"
 						name="q"
 						value={ p.Search }
-						placeholder="Search by name"
+						placeholder="Search by name — Enter picks the only match"
 						class="bx-input"
 						style="flex:1; max-width: 320px;"
 						autofocus

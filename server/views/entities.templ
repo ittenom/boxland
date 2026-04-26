@@ -11,6 +11,11 @@ type EntitiesListProps struct {
 	Layout LayoutProps
 	Items  []entities.EntityType
 	Search string
+
+	// ActiveFilter is the optional ?filter= scope: "" or "no-sprite"
+	// (only entities with SpriteAssetID == nil). The toolbar shows
+	// what's active so the trim is never invisible to the user.
+	ActiveFilter string
 }
 
 templ EntitiesList(p EntitiesListProps) {
@@ -34,6 +39,13 @@ templ EntitiesList(p EntitiesListProps) {
 					</p>
 				</div>
 				<div class="bx-row">
+					<button
+						type="button"
+						class="bx-btn bx-btn--ghost bx-btn--small"
+						data-bx-multi-select-toggle
+						data-bx-multi-select-target="#entities-grid"
+						title="Select multiple entities to delete or tag in one go"
+					>Select</button>
 					<button
 						type="button"
 						class="bx-btn bx-btn--primary"
@@ -61,6 +73,11 @@ templ EntitiesList(p EntitiesListProps) {
 					style="max-width: 280px;"
 					data-copy-slot="entities.search.placeholder"
 				/>
+				if p.ActiveFilter != "" {
+					<input type="hidden" name="filter" value={ p.ActiveFilter }/>
+					<span class="bx-badge bx-badge--warn">{ entityFilterLabel(p.ActiveFilter) }</span>
+					<a href="/design/entities" class="bx-btn bx-btn--ghost bx-btn--small" title="Clear filter">× clear</a>
+				}
 			</form>
 
 			@EntitiesGrid(p)
@@ -81,7 +98,12 @@ templ EntitiesGrid(p EntitiesListProps) {
 			</p>
 		</div>
 	} else {
-		<table id="entities-grid" class="bx-table">
+		<table
+			id="entities-grid"
+			class="bx-table"
+			data-bx-multi-select-grid
+			data-bx-multi-select-kind="entity"
+		>
 			<thead>
 				<tr>
 					<th>Name</th>
@@ -94,7 +116,7 @@ templ EntitiesGrid(p EntitiesListProps) {
 			</thead>
 			<tbody>
 				for _, et := range p.Items {
-					<tr>
+					<tr data-bx-multi-select-id={ fmt.Sprintf("%d", et.ID) }>
 						<td>
 							<a
 								href={ templ.URL(fmt.Sprintf("/design/entities/%d", et.ID)) }
@@ -133,6 +155,16 @@ templ EntitiesGrid(p EntitiesListProps) {
 				}
 			</tbody>
 		</table>
+	}
+}
+
+// entityFilterLabel turns the ?filter= scope into a chip label.
+func entityFilterLabel(f string) string {
+	switch f {
+	case "no-sprite":
+		return "no sprite assigned"
+	default:
+		return f
 	}
 }
 

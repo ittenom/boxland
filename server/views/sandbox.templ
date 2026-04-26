@@ -108,7 +108,18 @@ templ SandboxGamePage(p SandboxGameProps) {
 			<header class="bx-row bx-row--apart" style="gap: var(--bx-s2);">
 				<span class="bx-badge bx-badge--accent" data-copy-slot="sandbox.hud.title">SANDBOX</span>
 				<span class="bx-mono bx-small" data-bx-instance-display>{ p.InstanceID }</span>
-				<a href="/design/maps" class="bx-btn bx-btn--ghost bx-btn--small" title="Exit sandbox">Exit</a>
+				// Exit returns to the surface that launched the sandbox
+				// (mapmaker page, maps list, home dashboard, etc.) when
+				// we have a same-origin referrer. Falls back to the per-
+				// map editor (most likely launch site) and finally to
+				// the maps list. The data-bx-sandbox-exit attribute is
+				// the hook for the tiny boot script below.
+				<a
+					href={ templ.URL(fmt.Sprintf("/design/maps/%d", p.Map.ID)) }
+					class="bx-btn bx-btn--ghost bx-btn--small"
+					title="Exit sandbox — returns to the page that launched it"
+					data-bx-sandbox-exit
+				>Exit</a>
 			</header>
 
 			<div class="bx-row bx-small">
@@ -150,6 +161,23 @@ templ SandboxGamePage(p SandboxGameProps) {
 		</aside>
 
 		<script type="module" src="/static/web/sandbox.js" defer></script>
+		<script>
+			// Smarter Exit: prefer document.referrer when it's same-origin
+			// and on a /design/* surface, so designers land back on the
+			// page that launched the sandbox. The href attribute remains
+			// as the safe fallback for users who right-click → open in
+			// new tab.
+			(function () {
+				var btn = document.querySelector("[data-bx-sandbox-exit]");
+				if (!btn) return;
+				try {
+					var ref = document.referrer ? new URL(document.referrer) : null;
+					if (ref && ref.origin === window.location.origin && ref.pathname.startsWith("/design/")) {
+						btn.setAttribute("href", ref.pathname + ref.search);
+					}
+				} catch (e) { /* keep the fallback href */ }
+			})();
+		</script>
 	}
 }
 
