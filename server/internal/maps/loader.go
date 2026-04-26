@@ -26,6 +26,7 @@ import (
 type EntityTypeMeta struct {
 	ID                   int64
 	SpriteAssetID        *int64
+	AtlasIndex           int32
 	DefaultAnimationID   *int64
 	ColliderW            int32
 	ColliderH            int32
@@ -104,6 +105,7 @@ func (s *Service) LoadChunk(
 		}
 		stores.Sprite.Set(e, components.Sprite{
 			AssetID: assetID,
+			Frame:   uint16(meta.AtlasIndex),
 			AnimID:  animID,
 		})
 

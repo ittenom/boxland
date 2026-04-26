@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"image"
+	"image/color"
 	"image/png"
 	"io"
 	"mime/multipart"
@@ -42,11 +43,20 @@ func makeStore(t *testing.T) *persistence.ObjectStore {
 	return store
 }
 
-// pngOf builds a tiny in-memory PNG of size w x h, single solid color.
-// Used for upload smoke tests so we don't need any fixture files on disk.
+// pngOf builds a tiny in-memory PNG of size w x h, filled with an opaque
+// solid color. Used for upload smoke tests so we don't need any fixture
+// files on disk. The fill is deliberate: tile-sheet uploads now reject
+// fully-transparent PNGs (every cell skipped → empty palette is the
+// designer's worst nightmare), so a one-pixel fill makes a "valid"
+// minimal sheet.
 func pngOf(t *testing.T, w, h int) []byte {
 	t.Helper()
 	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: 80, G: 130, B: 200, A: 255})
+		}
+	}
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
 		t.Fatalf("png encode: %v", err)

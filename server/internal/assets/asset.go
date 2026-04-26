@@ -156,6 +156,27 @@ func (s *Service) FindByID(ctx context.Context, id int64) (*Asset, error) {
 	return a, nil
 }
 
+// ListByIDs returns the assets matching the given ids in one query.
+// Order is not guaranteed; callers that need a stable order should
+// sort the result, but most use a map (id -> Asset) — see the
+// Mapmaker palette builder, which is the primary consumer and the
+// reason this exists (avoiding an N+1 over entity_types).
+//
+// Missing ids are silently dropped (no ErrAssetNotFound) — the
+// caller decides what an absent id means in context. Empty input
+// returns an empty slice without hitting the DB.
+func (s *Service) ListByIDs(ctx context.Context, ids []int64) ([]Asset, error) {
+	if len(ids) == 0 {
+		return []Asset{}, nil
+	}
+	return s.Repo.List(ctx, repo.ListOpts{
+		Where: squirrel.Eq{"id": ids},
+		// Bound to len(ids) so a future caller passing a giant slice
+		// can't blow the default Limit on Repo.List.
+		Limit: uint64(len(ids)),
+	})
+}
+
 // ListOpts are pagination + filter options exposed to handlers.
 type ListOpts struct {
 	Kind   Kind     // empty = all kinds

@@ -29,6 +29,10 @@ type UploadResult struct {
 	Asset      *Asset
 	Reused     bool   // true if an asset with the same content_addressed_path already existed
 	OriginalFn string // original filename from the multipart form
+	// TileCells / TileMeta are populated for kind=tile uploads.
+	// See MultiUploadResult for the long form.
+	TileCells []TileCell
+	TileMeta  TileSheetMetadata
 }
 
 // SupportedContentTypes maps the sniffed MIME type to the kind it produces.
@@ -142,6 +146,8 @@ func (s *Service) UploadMany(
 		}
 		entry.Asset = res.Asset
 		entry.Reused = res.Reused
+		entry.TileCells = res.TileCells
+		entry.TileMeta = res.TileMeta
 		out = append(out, entry)
 	}
 	return out, nil
@@ -192,10 +198,33 @@ func (s *Service) uploadFromHeader(
 	originalName := header.Filename
 	displayName := defaultDisplayName(originalName)
 
+	// Tile-sheet pre-flight: slice into 32x32 cells before we touch
+	// object storage so a malformed sheet (odd dimensions, fully
+	// transparent) fails fast with a clean error instead of leaving
+	// an unusable asset row behind. The cells + metadata feed into
+	// the per-cell entity_type fan-out in the upload handler.
+	var tileCells []TileCell
+	var tileMD TileSheetMetadata
+	if kind == KindTile {
+		cells, md, err := SliceTileSheet(body)
+		if err != nil {
+			return nil, err
+		}
+		tileCells = cells
+		tileMD = md
+	}
+
 	key := persistence.ContentAddressedKey("assets", body)
 
 	if existing, err := s.FindByContentPath(ctx, kind, key); err == nil {
-		return &UploadResult{Asset: existing, Reused: true, OriginalFn: originalName}, nil
+		// Re-uploads of an existing tile sheet still surface the slice
+		// info so the handler can backfill any cells that lacked an
+		// entity (e.g. designer ran the upload before tile auto-slice
+		// shipped, or deleted some cells and wants them back).
+		return &UploadResult{
+			Asset: existing, Reused: true, OriginalFn: originalName,
+			TileCells: tileCells, TileMeta: tileMD,
+		}, nil
 	} else if !errors.Is(err, ErrAssetNotFound) {
 		return nil, fmt.Errorf("dedup lookup: %w", err)
 	}
@@ -211,6 +240,10 @@ func (s *Service) uploadFromHeader(
 			if b, jerr := jsonMarshal(md); jerr == nil {
 				metadata = b
 			}
+		}
+	} else if kind == KindTile {
+		if b, jerr := MarshalTileSheetMetadata(tileMD); jerr == nil {
+			metadata = b
 		}
 	}
 
@@ -242,7 +275,10 @@ func (s *Service) uploadFromHeader(
 			return nil, err
 		}
 	}
-	return &UploadResult{Asset: asset, Reused: false, OriginalFn: originalName}, nil
+	return &UploadResult{
+		Asset: asset, Reused: false, OriginalFn: originalName,
+		TileCells: tileCells, TileMeta: tileMD,
+	}, nil
 }
 
 // MaxFilesPerUpload caps how many files a single multi-file upload
@@ -253,11 +289,22 @@ const MaxFilesPerUpload = 64
 // MultiUploadResult is the per-file outcome from UploadMany. Either
 // Asset is populated (success) or Err is set (this single file failed
 // — others in the batch may have succeeded).
+//
+// TileCells is populated when the resulting asset is kind=tile: it
+// lists every 32x32 sub-cell of the sheet (with NonEmpty true for
+// cells that contain at least one opaque pixel). The handler uses it
+// to fan out one entity_type per non-empty cell so a tile sheet
+// becomes paintable in the Mapmaker palette without any extra step.
+// Empty for sprite/audio assets and for tile-sheet uploads that
+// failed slicing (e.g. odd dimensions — the asset row is not
+// created in that case; Err carries the reason).
 type MultiUploadResult struct {
 	Asset      *Asset
 	Reused     bool
 	OriginalFn string
 	Err        error
+	TileCells  []TileCell
+	TileMeta   TileSheetMetadata
 }
 
 // normalizeContentType strips charset/parameters off DetectContentType output

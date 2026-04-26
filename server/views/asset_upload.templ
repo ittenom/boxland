@@ -82,34 +82,13 @@ templ AssetUploadModal(p AssetUploadModalProps) {
 						<label class="bx-label" data-copy-slot="assets.upload.kind">Kind</label>
 						<select name="kind" class="bx-select" data-bx-kind-select>
 							<option value="">Auto-detect from content</option>
-							<option value="sprite">Sprite</option>
-							<option value="tile">Tile</option>
+							<option value="sprite">Sprite — single 32×32 image</option>
+							<option value="tile">Tile sheet — sliced into 32×32 cells</option>
 							<option value="audio">Audio</option>
 						</select>
 						<small class="bx-help" data-copy-slot="assets.upload.kind-help">
-							PNG defaults to Sprite. Override for tiles so the renderer treats them correctly.
+							PNG defaults to Sprite. Pick <strong>Tile sheet</strong> when uploading an atlas — Boxland slices it into 32×32 cells and adds each cell to the Mapmaker palette automatically. Both axes must be a multiple of 32.
 						</small>
-					</div>
-					// One-click "make these paintable" affordance: when
-					// checked, the server creates a tile-tagged entity
-					// for every sprite/tile asset in the upload so they
-					// show up in the Mapmaker palette immediately. The
-					// JS below auto-checks it whenever Kind is "tile"
-					// (the highest-likelihood signal of intent).
-					<div class="bx-field">
-						<label class="bx-row" for="assets-upload-promote" style="gap: var(--bx-s2); align-items: center;">
-							<input
-								id="assets-upload-promote"
-								type="checkbox"
-								name="promote"
-								value="tile"
-								class="bx-checkbox"
-								data-bx-promote-toggle
-							/>
-							<span class="bx-label" style="margin: 0;" data-copy-slot="assets.upload.promote">
-								Also create a tile entity for each — paintable in the Mapmaker right away.
-							</span>
-						</label>
 					</div>
 					<div class="bx-row bx-row--end">
 						<button
@@ -135,21 +114,8 @@ templ AssetUploadModal(p AssetUploadModalProps) {
 						var pickD    = form.querySelector('[data-bx-pick-folder]');
 						var counter  = form.querySelector('[data-bx-drop-counter]');
 						var submit   = form.querySelector('[data-bx-upload-submit]');
-						var kindSel  = form.querySelector('[data-bx-kind-select]');
-						var promote  = form.querySelector('[data-bx-promote-toggle]');
 						var MAX      = 64;
 						var ACCEPT   = /\.(png|wav|ogg|mp3)$/i;
-
-						// Auto-check the "create tile entity" toggle when
-						// the user picks Kind=Tile — the strongest signal
-						// that they want paintable entities, not raw
-						// assets. Designers who toggle it back stay
-						// toggled back; we only nudge on kind change.
-						if (kindSel && promote) {
-							kindSel.addEventListener('change', function () {
-								promote.checked = (kindSel.value === 'tile');
-							});
-						}
 
 						function setQueue(list) {
 							var keep = [];
@@ -229,10 +195,14 @@ type AssetUploadItem struct {
 	Err        string
 
 	// Promoted is true after the asset was turned into a tile-tagged
-	// entity (either at upload time via the "Also create tile entity"
-	// checkbox, or after-the-fact via the per-row "+ Entity" button or
-	// the Promote-all footer action).
+	// entity via the per-row "+ Entity" button or the bulk promote
+	// action — only sprite assets need this; tile sheets auto-slice.
 	Promoted bool
+
+	// TileEntityCount is how many entity_types the auto-slicer
+	// created for a kind=tile upload. Renders the row's success
+	// caption, e.g. "added as tile · 24 paintable cells".
+	TileEntityCount int
 }
 
 // AssetUploadResultsProps drives the multi-file upload summary that
@@ -261,21 +231,23 @@ templ AssetUploadResults(p AssetUploadResultsProps) {
 							<span style="color: var(--bx-info);">↻</span>
 							<span class="bx-mono bx-small">{ it.OriginalFn }</span>
 							<span class="bx-muted">·</span>
-							<span class="bx-small bx-muted">already in library</span>
+							<span class="bx-small bx-muted">{ uploadReusedCaption(it) }</span>
 						} else {
 							<span style="color: var(--bx-success);">✓</span>
 							<span class="bx-mono bx-small">{ it.OriginalFn }</span>
 							<span class="bx-muted">·</span>
-							<span class="bx-small bx-muted">added as { it.Kind }</span>
+							<span class="bx-small bx-muted">{ uploadAddedCaption(it) }</span>
 						}
-						// Inline "+ Entity" affordance per success row.
-						// Skipped for audio (no sprite) and for items
-						// already promoted (server flips Promoted after
-						// the bulk + per-row promote endpoints run).
-						if it.AssetID > 0 && it.Err == "" && it.Kind != "audio" {
+						// Inline "+ Entity" affordance for SPRITE rows
+						// only. Tile sheets self-promote at slice time
+						// (one entity per non-empty cell); audio has
+						// no sprite. Sprite assets still need the
+						// one-click promote since not every uploaded
+						// PNG should become a paintable map decoration.
+						if it.AssetID > 0 && it.Err == "" && it.Kind == "sprite" {
 							<span style="margin-left: auto;"></span>
 							if it.Promoted {
-								<span class="bx-small" style="color: var(--bx-success);">→ tile entity</span>
+								<span class="bx-small" style="color: var(--bx-success);">→ entity</span>
 							} else {
 								<button
 									type="button"
@@ -283,7 +255,7 @@ templ AssetUploadResults(p AssetUploadResultsProps) {
 									hx-post={ fmt.Sprintf("/design/assets/promote-bulk?ids=%d", it.AssetID) }
 									hx-target="#asset-upload-result-inner"
 									hx-swap="outerHTML"
-									title="Create a tile-tagged entity using this asset's sprite"
+									title="Create a tile-tagged entity using this sprite — paintable in the Mapmaker"
 								>+ Entity</button>
 							}
 						}
@@ -300,8 +272,8 @@ templ AssetUploadResults(p AssetUploadResultsProps) {
 						hx-post={ "/design/assets/promote-bulk?ids=" + promotableIDs(p.Items) }
 						hx-target="#asset-upload-result-inner"
 						hx-swap="outerHTML"
-						title="Turn every uploaded sprite/tile into a tile-tagged entity in one step"
-					>+ Tile entity from each</button>
+						title="Turn every uploaded sprite into a tile-tagged entity in one step"
+					>+ Entity from each sprite</button>
 				}
 				<span style="flex: 1;"></span>
 				<button
@@ -317,14 +289,15 @@ templ AssetUploadResults(p AssetUploadResultsProps) {
 	</div>
 }
 
-// hasPromotables returns true when at least one row is a non-audio
-// successful upload that hasn't already been promoted to an entity.
-// Drives the "+ Tile entity from each" footer button visibility so it
-// hides itself once everything is promoted (or there's nothing to
-// promote — pure-audio uploads).
+// hasPromotables returns true when at least one row is a successful
+// SPRITE upload that hasn't already been promoted. Drives the bulk
+// promote footer button. Tile sheets self-promote at slice time
+// (autoSliceTileSheet); audio has no sprite. Sprite uploads are the
+// only kind that benefits from a one-click "make these paintable"
+// affordance after the fact.
 func hasPromotables(items []AssetUploadItem) bool {
 	for _, it := range items {
-		if it.AssetID > 0 && it.Err == "" && !it.Promoted && it.Kind != "audio" {
+		if it.AssetID > 0 && it.Err == "" && !it.Promoted && it.Kind == "sprite" {
 			return true
 		}
 	}
@@ -332,13 +305,14 @@ func hasPromotables(items []AssetUploadItem) bool {
 }
 
 // promotableIDs returns a comma-joined string of asset ids ready to be
-// promoted: successful, non-audio, not yet promoted. Plain ASCII safe
-// for an `ids=...` query param. Empty list returns "" so the resulting
-// URL is harmless if it ever escapes hasPromotables's gate.
+// promoted: successful sprites that aren't already promoted. Plain
+// ASCII safe for an `ids=...` query param. Empty list returns "" so
+// the resulting URL is harmless if it ever escapes hasPromotables's
+// gate.
 func promotableIDs(items []AssetUploadItem) string {
 	out := ""
 	for _, it := range items {
-		if it.AssetID > 0 && it.Err == "" && !it.Promoted && it.Kind != "audio" {
+		if it.AssetID > 0 && it.Err == "" && !it.Promoted && it.Kind == "sprite" {
 			if out != "" {
 				out += ","
 			}
@@ -346,6 +320,38 @@ func promotableIDs(items []AssetUploadItem) string {
 		}
 	}
 	return out
+}
+
+// uploadAddedCaption produces the per-row success caption. For tile
+// sheets we surface the slice count so the designer can confirm at a
+// glance that "tile sheet → N paintable cells" worked.
+func uploadAddedCaption(it AssetUploadItem) string {
+	if it.Kind == "tile" {
+		switch {
+		case it.TileEntityCount == 0:
+			return "added as tile sheet"
+		case it.TileEntityCount == 1:
+			return "added as tile sheet · 1 paintable cell"
+		default:
+			return "added as tile sheet · " + intToA(it.TileEntityCount) + " paintable cells"
+		}
+	}
+	return "added as " + it.Kind
+}
+
+// uploadReusedCaption is the caption for a re-uploaded asset. Tile
+// sheets still get the cell-count surfaced when re-slicing added
+// cells (e.g. designer deleted some and wants them back).
+func uploadReusedCaption(it AssetUploadItem) string {
+	if it.Kind == "tile" && it.TileEntityCount > 0 {
+		switch it.TileEntityCount {
+		case 1:
+			return "already in library · 1 new cell added"
+		default:
+			return "already in library · " + intToA(it.TileEntityCount) + " new cells added"
+		}
+	}
+	return "already in library"
 }
 
 func uploadResultSeverity(reused bool) string {

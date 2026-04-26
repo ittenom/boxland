@@ -16,6 +16,11 @@ import (
 // from the type's default (e.g. a unique boss outfit).
 type Sprite struct {
 	AssetID   uint32 `json:"asset_id"`
+	// Frame is the atlas-cell index inside AssetID — row-major, 32x32
+	// cells, top-left origin. 0 = first cell (the only cell on a plain
+	// 32x32 sprite). Populated from entity_types.atlas_index at load
+	// time so the renderer can draw a sub-rect of the source sheet.
+	Frame     uint16 `json:"frame"`
 	AnimID    uint32 `json:"anim_id"`
 	VariantID uint16 `json:"variant_id"`
 	Tint      uint32 `json:"tint"`        // 0xRRGGBBAA, 0 = none

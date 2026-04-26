@@ -25,11 +25,17 @@ type MapmakerProps struct {
 	EntityDraftCount int
 }
 
-// PaletteEntry is one tile selectable from the toolbar.
+// PaletteEntry is one tile selectable from the toolbar. The atlas
+// fields let the canvas + thumbnail draw the correct 32x32 sub-rect
+// of the source asset — without them every tile entity tied to a
+// shared tile sheet would render the same first cell.
 type PaletteEntry struct {
-	ID        int64
-	Name      string
-	SpriteURL string // optional CDN URL of the sprite preview
+	ID         int64
+	Name       string
+	SpriteURL  string // CDN URL of the source asset (PNG)
+	AtlasIndex int32  // row-major cell index inside SpriteURL
+	AtlasCols  int32  // sheet width in cells; defaults to 1 for plain sprites
+	TileSize   int32  // canonical 32; carried explicitly for forward compat
 }
 
 templ MapmakerPage(p MapmakerProps) {
@@ -173,12 +179,12 @@ templ MapmakerToolbar(p MapmakerProps) {
 			</button>
 		}
 
-		// Inline search + "Add tile from asset" affordance. Search
-		// stays purely client-side via boot.js's data-bx-palette-filter
-		// hook so the canvas never reloads. The Add button opens the
-		// shared asset picker, filtered to sprite/tile-kind assets;
-		// boot.js wires the picked id through /promote-to-entity and
-		// reloads the mapmaker page so the new tile shows up here.
+		// Inline search + "Add from sprite" affordance. Tile sheets
+		// auto-slice on upload, so the primary path to a paintable
+		// tile is just to upload one. This button covers the rarer
+		// "I uploaded a single sprite earlier and want it paintable
+		// now" case — picker is filtered to sprite-kind assets, and
+		// the bridge below promotes the picked one to an entity.
 		<div class="bx-row" style="gap: var(--bx-s1); margin: var(--bx-s2) 0;">
 			<input
 				type="search"
@@ -188,15 +194,21 @@ templ MapmakerToolbar(p MapmakerProps) {
 				data-bx-palette-filter
 				aria-label="Filter palette by name"
 			/>
+			<a
+				href="/design/assets"
+				class="bx-btn bx-btn--small bx-btn--primary"
+				title="Upload a tile sheet — it slices into paintable cells automatically"
+				data-copy-slot="mapmaker.palette.upload"
+			>↑ Upload sheet</a>
 			<button
 				type="button"
-				class="bx-btn bx-btn--small"
-				hx-get="/design/picker/assets?tags=tile&tags=sprite&target_id=mapmaker-add-tile&target_label=mapmaker-add-tile-label"
+				class="bx-btn bx-btn--small bx-btn--ghost"
+				hx-get="/design/picker/assets?tags=sprite&target_id=mapmaker-add-tile&target_label=mapmaker-add-tile-label"
 				hx-target="#modal-host"
 				hx-swap="innerHTML"
-				title="Pick an asset; we'll create a tile-tagged entity for it and add it to this palette"
+				title="Pick a single-sprite asset to make paintable. (Tile sheets are sliced automatically on upload.)"
 				data-copy-slot="mapmaker.palette.add"
-			>+ Tile</button>
+			>+ Sprite</button>
 			// Hidden inputs the picker writes into. The change event
 			// (fired by boot.js) is intercepted by the script below
 			// and converted to a promote-to-entity POST.
@@ -206,7 +218,7 @@ templ MapmakerToolbar(p MapmakerProps) {
 
 		if len(p.PaletteEntityTypes) == 0 {
 			<p class="bx-small bx-muted" data-copy-slot="mapmaker.palette.empty" data-bx-palette-empty>
-				No tile entities yet. Use <strong>+ Tile</strong> above to make one from an existing asset.
+				No tiles yet. <strong>↑ Upload sheet</strong> to drop in a 32×32 tile atlas — Boxland slices each cell into a paintable tile automatically.
 			</p>
 		}
 		<ol class="bx-mapmaker__palette" role="listbox" aria-label="Tile palette">
@@ -214,14 +226,17 @@ templ MapmakerToolbar(p MapmakerProps) {
 				<li
 					data-bx-entity-type-id={ fmt.Sprintf("%d", e.ID) }
 					data-bx-palette-name={ e.Name }
+					data-bx-sprite-url={ e.SpriteURL }
+					data-bx-atlas-index={ fmt.Sprintf("%d", e.AtlasIndex) }
+					data-bx-atlas-cols={ fmt.Sprintf("%d", paletteCols(e)) }
+					data-bx-tile-size={ fmt.Sprintf("%d", paletteTileSize(e)) }
 					if i == 0 { aria-selected="true" } else { aria-selected="false" }
 					title={ e.Name }
 				>
-					<span class="bx-mapmaker__palette__thumb bx-pixel">
-						if e.SpriteURL != "" {
-							<img src={ e.SpriteURL } alt={ e.Name } loading="lazy"/>
-						}
-					</span>
+					<span
+						class="bx-mapmaker__palette__thumb bx-pixel"
+						if e.SpriteURL != "" { style={ paletteThumbStyle(e) } }
+					></span>
 					<span class="bx-mapmaker__palette__name">{ e.Name }</span>
 				</li>
 			}
@@ -381,6 +396,55 @@ func stagedChipLabel(n int) string {
 		return "1 staged change"
 	}
 	return fmt.Sprintf("%d staged changes", n)
+}
+
+// paletteCols returns the AtlasCols for a palette entry, defaulting to 1
+// so plain (single-cell) sprites render cleanly without the server having
+// to fill the field at every call site.
+func paletteCols(e PaletteEntry) int32 {
+	if e.AtlasCols <= 0 {
+		return 1
+	}
+	return e.AtlasCols
+}
+
+// paletteTileSize returns the entry's TileSize defaulting to 32 — the
+// canonical Boxland cell size.
+func paletteTileSize(e PaletteEntry) int32 {
+	if e.TileSize <= 0 {
+		return 32
+	}
+	return e.TileSize
+}
+
+// paletteThumbStyle builds the CSS background-image + background-position
+// + background-size that clips the source PNG to the right 32x32 cell.
+//
+// Tile sheet of cols x rows: the inner element is sized to one cell,
+// the background-image is the full sheet scaled by `cols * thumbSize`
+// (so each cell ends up exactly thumbSize px), and background-position
+// shifts left by `col * thumbSize` and up by `row * thumbSize`.
+//
+// Single-cell sprites (cols=1) render as a plain background-image,
+// no shift. The math collapses naturally — no special case needed.
+//
+// Pixel-art crispness comes from .bx-pixel { image-rendering:
+// pixelated }, which is on the wrapping span.
+func paletteThumbStyle(e PaletteEntry) string {
+	cols := int(paletteCols(e))
+	idx := int(e.AtlasIndex)
+	col := idx % cols
+	row := idx / cols
+	thumb := 32 // CSS px the thumbnail occupies; matches palette grid
+	totalW := thumb * cols
+	// We don't know rows reliably from the palette payload, so size
+	// the background by width and let height be auto — the browser
+	// preserves aspect ratio and only the visible 32x32 window is
+	// shown anyway.
+	return fmt.Sprintf(
+		"background-image:url('%s');background-repeat:no-repeat;background-size:%dpx auto;background-position:-%dpx -%dpx;",
+		e.SpriteURL, totalW, col*thumb, row*thumb,
+	)
 }
 
 templ toolButton(id, hotkey, label string) {

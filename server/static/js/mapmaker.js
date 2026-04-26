@@ -57,8 +57,15 @@
 			activeLayer: Number(canvas.getAttribute("data-default-layer-id")) || 0,
 			activeEntity: 0,
 			tiles: new Map(),    // key="L:x:y" -> { layerId, x, y, entityTypeId }
-			images: new Map(),   // entityTypeId -> HTMLImageElement (or null while loading)
-			paletteByEntity: new Map(), // entityTypeId -> {name, spriteUrl}
+			// images keyed by SOURCE URL (not entity id) so a tile sheet
+			// referenced by 24 tile entities loads exactly once and every
+			// cell shares the bitmap. Saves memory and makes the canvas
+			// snap to fully-painted on the first onload tick.
+			images: new Map(),   // url -> HTMLImageElement | null (null while loading)
+			// paletteByEntity carries the atlas info so drawTile can
+			// slice the right 32x32 sub-rect of the source sheet.
+			// Shape: {name, spriteUrl, atlasIndex, atlasCols, tileSize}
+			paletteByEntity: new Map(),
 			procPreview: null,   // last bx:procedural-preview, drawn as ghost overlay
 			pending: 0,          // outstanding network requests
 		};
@@ -424,40 +431,47 @@
 			$$(".bx-mapmaker__palette li[data-bx-entity-type-id]").forEach((li) => {
 				const id = Number(li.getAttribute("data-bx-entity-type-id"));
 				const name = li.getAttribute("title") || `entity #${id}`;
-				const img = li.querySelector("img");
-				const url = img ? img.getAttribute("src") || "" : "";
-				if (id) state.paletteByEntity.set(id, { name, spriteUrl: url });
+				// data-bx-sprite-url is the FULL source sheet, not a
+				// per-cell crop — the renderer slices it via atlasIndex.
+				const spriteUrl = li.getAttribute("data-bx-sprite-url") || "";
+				const atlasIndex = Number(li.getAttribute("data-bx-atlas-index")) || 0;
+				const atlasCols = Math.max(1, Number(li.getAttribute("data-bx-atlas-cols")) || 1);
+				const tileSize = Number(li.getAttribute("data-bx-tile-size")) || 32;
+				if (id) {
+					state.paletteByEntity.set(id, {
+						name, spriteUrl, atlasIndex, atlasCols, tileSize,
+					});
+				}
 			});
 		}
 
 		function prefetchImages(state, tiles) {
-			const seen = new Set();
+			// Build the union of every URL referenced by tiles + palette
+			// and load each exactly once. The image cache is keyed by URL
+			// so dozens of palette entries that share a sheet share the
+			// bitmap.
+			const urls = new Set();
 			for (const t of tiles) {
-				if (seen.has(t.entityTypeId)) continue;
-				seen.add(t.entityTypeId);
-				ensureImage(state, t.entityTypeId);
+				const meta = state.paletteByEntity.get(t.entityTypeId);
+				if (meta && meta.spriteUrl) urls.add(meta.spriteUrl);
 			}
-			// Palette images too (so the designer's first stroke renders
-			// without a brief blank flash).
-			for (const id of state.paletteByEntity.keys()) ensureImage(state, id);
+			for (const meta of state.paletteByEntity.values()) {
+				if (meta.spriteUrl) urls.add(meta.spriteUrl);
+			}
+			for (const url of urls) ensureImage(state, url);
 		}
 
-		function ensureImage(state, entityTypeId) {
-			if (!entityTypeId || state.images.has(entityTypeId)) return;
-			const meta = state.paletteByEntity.get(entityTypeId);
-			if (!meta || !meta.spriteUrl) {
-				state.images.set(entityTypeId, null);
-				return;
-			}
+		function ensureImage(state, url) {
+			if (!url || state.images.has(url)) return;
 			const img = new Image();
 			img.crossOrigin = "anonymous";
 			img.onload = () => {
 				const canvas = $("[data-bx-mapmaker-canvas]");
 				if (canvas) canvas.dispatchEvent(new CustomEvent("bx:mapmaker-redraw"));
 			};
-			img.onerror = () => state.images.set(entityTypeId, null);
-			img.src = meta.spriteUrl;
-			state.images.set(entityTypeId, img);
+			img.onerror = () => state.images.set(url, null);
+			img.src = url;
+			state.images.set(url, img);
 		}
 
 		function bindProceduralOverlay(state, canvas) {
@@ -538,21 +552,45 @@
 		function drawTile(ctx, state, t) {
 			const px = t.x * TILE_PX;
 			const py = t.y * TILE_PX;
-			const img = state.images.get(t.entityTypeId);
-			if (img && img.complete && img.naturalWidth > 0) {
-				ctx.drawImage(img, px, py, TILE_PX, TILE_PX);
-			} else {
-				// Fallback chip: deterministic color from entity id +
-				// the id text so the map is still legible while images
-				// fetch (or for entities with no sprite assigned yet).
-				ctx.fillStyle = paletteColor(t.entityTypeId);
-				ctx.fillRect(px, py, TILE_PX, TILE_PX);
-				ctx.fillStyle = "rgba(0,0,0,0.6)";
-				ctx.font = "10px 'DM Mono', ui-monospace, monospace";
-				ctx.textBaseline = "top";
-				ctx.fillText(`#${t.entityTypeId}`, px + 3, py + 3);
-				if (!img) ensureImage(state, t.entityTypeId);
+			const meta = state.paletteByEntity.get(t.entityTypeId);
+			if (!meta || !meta.spriteUrl) {
+				// Entity has no sprite assigned yet — draw a subtle
+				// dashed outline so the cell is visibly placeholder
+				// without the noisy yellow chips that used to mask
+				// the actual rendering bug.
+				drawPendingCell(ctx, px, py);
+				return;
 			}
+			const img = state.images.get(meta.spriteUrl);
+			if (!img) {
+				ensureImage(state, meta.spriteUrl);
+				drawPendingCell(ctx, px, py);
+				return;
+			}
+			if (!img.complete || img.naturalWidth === 0) {
+				drawPendingCell(ctx, px, py);
+				return;
+			}
+			// Slice the source sheet to the entity's atlas cell.
+			// (cellPx, cols) come from the asset's tile-sheet metadata
+			// at upload time; single-frame sprites collapse to (32, 1).
+			const cellPx = meta.tileSize || 32;
+			const cols = Math.max(1, meta.atlasCols || 1);
+			const sx = (meta.atlasIndex % cols) * cellPx;
+			const sy = Math.floor(meta.atlasIndex / cols) * cellPx;
+			ctx.drawImage(img, sx, sy, cellPx, cellPx, px, py, TILE_PX, TILE_PX);
+		}
+
+		// drawPendingCell renders a 1px dashed outline so an unloaded /
+		// unsprited cell still telegraphs "tile lives here" without
+		// dominating the canvas.
+		function drawPendingCell(ctx, px, py) {
+			ctx.save();
+			ctx.strokeStyle = "rgba(255,255,255,0.18)";
+			ctx.setLineDash([2, 2]);
+			ctx.lineWidth = 1;
+			ctx.strokeRect(px + 0.5, py + 0.5, TILE_PX - 1, TILE_PX - 1);
+			ctx.restore();
 		}
 
 		function updateStatus(state) {
@@ -595,13 +633,6 @@
 			x1: Math.max(a.x, b.x),
 			y1: Math.max(a.y, b.y),
 		};
-	}
-
-	function paletteColor(n) {
-		// Stable 6-bucket palette tuned to the brand colors so unsprited
-		// tiles still look intentional.
-		const colors = ["#5ADBFF", "#FFDD4A", "#FE9000", "#3C6997", "#a0e8af", "#f78ae0"];
-		return colors[Math.abs(Number(n) || 0) % colors.length];
 	}
 
 	function fetchJSON(url, method, body) {

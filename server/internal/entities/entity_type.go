@@ -26,6 +26,11 @@ type EntityType struct {
 	ID                    int64     `db:"id"                       pk:"auto" json:"id"`
 	Name                  string    `db:"name"                               json:"name"`
 	SpriteAssetID         *int64    `db:"sprite_asset_id"                    json:"sprite_asset_id,omitempty"`
+	// AtlasIndex is the row-major 32x32 cell within sprite_asset_id
+	// that this entity's sprite uses (col + row*cols). 0 for plain
+	// 32x32 sprites (the only cell). Populated from tile-sheet uploads
+	// at slice time. Wire-format equivalent: Tile.frame.
+	AtlasIndex            int32     `db:"atlas_index"                        json:"atlas_index"`
 	DefaultAnimationID    *int64    `db:"default_animation_id"               json:"default_animation_id,omitempty"`
 	ColliderW             int32     `db:"collider_w"                         json:"collider_w"`
 	ColliderH             int32     `db:"collider_h"                         json:"collider_h"`
@@ -71,6 +76,7 @@ func New(pool *pgxpool.Pool, registry *components.Registry) *Service {
 type CreateInput struct {
 	Name                 string
 	SpriteAssetID        *int64
+	AtlasIndex           int32 // 32x32 cell within SpriteAssetID; 0 for single-sprite assets.
 	DefaultAnimationID   *int64
 	ColliderW            int32
 	ColliderH            int32
@@ -91,6 +97,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*EntityType, erro
 	row := &EntityType{
 		Name:                 in.Name,
 		SpriteAssetID:        in.SpriteAssetID,
+		AtlasIndex:           in.AtlasIndex,
 		DefaultAnimationID:   in.DefaultAnimationID,
 		ColliderW:            valOrDefault(in.ColliderW, 16),
 		ColliderH:            valOrDefault(in.ColliderH, 16),
@@ -170,6 +177,7 @@ func (s *Service) List(ctx context.Context, opts ListOpts) ([]EntityType, error)
 type EntityTypeMeta struct {
 	ID                   int64
 	SpriteAssetID        *int64
+	AtlasIndex           int32
 	DefaultAnimationID   *int64
 	ColliderW            int32
 	ColliderH            int32
@@ -189,6 +197,7 @@ func (s *Service) EntityTypeMeta(ctx context.Context, id int64) (*EntityTypeMeta
 	return &EntityTypeMeta{
 		ID:                   got.ID,
 		SpriteAssetID:        got.SpriteAssetID,
+		AtlasIndex:           got.AtlasIndex,
 		DefaultAnimationID:   got.DefaultAnimationID,
 		ColliderW:            got.ColliderW,
 		ColliderH:            got.ColliderH,
@@ -196,6 +205,22 @@ func (s *Service) EntityTypeMeta(ctx context.Context, id int64) (*EntityTypeMeta
 		ColliderAnchorY:      got.ColliderAnchorY,
 		DefaultCollisionMask: got.DefaultCollisionMask,
 	}, nil
+}
+
+// FindBySpriteAtlas returns every entity_type that already references
+// a given (sprite_asset_id, atlas_index) cell. The auto-slice tile-
+// upload pipeline uses this for idempotency: re-uploading the same
+// sheet (or splitting it later) won't produce duplicate palette
+// entries for cells that already have an entity.
+//
+// Returned slice is keyed by atlas_index in the caller — usually a
+// quick map[int32]EntityType — so we ORDER BY atlas_index for
+// deterministic iteration.
+func (s *Service) FindBySpriteAtlas(ctx context.Context, spriteAssetID int64) ([]EntityType, error) {
+	return s.Repo.List(ctx, repo.ListOpts{
+		Where: squirrel.Eq{"sprite_asset_id": spriteAssetID},
+		Order: "atlas_index ASC, id ASC",
+	})
 }
 
 // Delete removes one entity type. Components cascade via FK.

@@ -819,6 +819,12 @@ func postAssetPromoteBulk(d Deps) http.HandlerFunc {
 // exists, walks the "(N)" suffix the same way the single-id endpoint
 // does. Pulled out so postAssetPromoteToEntity, postAssetPromoteBulk,
 // and the upload-time promote-after-upload path all share the rules.
+//
+// Used for SPRITE assets (single-cell). Tile sheets go through
+// autoSliceTileSheet so each non-empty 32x32 cell gets its own
+// entity_type with the right atlas_index — the only way the Mapmaker
+// palette can render real tile artwork instead of a yellow #1213
+// chip.
 func promoteAssetToEntity(ctx context.Context, d Deps, a *assets.Asset, designerID int64) (*entities.EntityType, error) {
 	baseName := a.Name
 	newName := baseName
@@ -833,9 +839,82 @@ func promoteAssetToEntity(ctx context.Context, d Deps, a *assets.Asset, designer
 	return d.Entities.Create(ctx, entities.CreateInput{
 		Name:          newName,
 		SpriteAssetID: &assetID,
+		AtlasIndex:    0,
 		Tags:          tags,
 		CreatedBy:     designerID,
 	})
+}
+
+// autoSliceTileSheet creates one tile-tagged entity_type per non-empty
+// 32x32 cell of a freshly uploaded tile sheet. Idempotent against the
+// existing (sprite_asset_id, atlas_index) set so re-uploads or
+// re-slices don't pile up duplicate palette entries.
+//
+// Returns the number of entities ACTUALLY created (skipped + reused
+// cells don't count). Errors per-cell are logged and skipped — the
+// rest of the sheet still slices, so a partial failure leaves the
+// designer with a usable palette instead of nothing.
+//
+// Naming: "<asset name> #r{R}c{C}" — the column/row coordinates are
+// what designers use when tiles are arranged spatially in their
+// source app (Aseprite, Tiled, etc.), so it's the most legible
+// label for finding a specific cell in the palette.
+func autoSliceTileSheet(
+	ctx context.Context,
+	d Deps,
+	a *assets.Asset,
+	cells []assets.TileCell,
+	designerID int64,
+) (int, error) {
+	if d.Entities == nil {
+		return 0, errors.New("entities service not configured")
+	}
+	existing, err := d.Entities.FindBySpriteAtlas(ctx, a.ID)
+	if err != nil {
+		return 0, fmt.Errorf("lookup existing tile entities: %w", err)
+	}
+	have := make(map[int32]struct{}, len(existing))
+	for _, et := range existing {
+		have[et.AtlasIndex] = struct{}{}
+	}
+
+	assetID := a.ID
+	created := 0
+	for _, cell := range cells {
+		if !cell.NonEmpty {
+			continue
+		}
+		if _, ok := have[int32(cell.Index)]; ok {
+			continue
+		}
+		name := fmt.Sprintf("%s #r%dc%d", a.Name, cell.Row, cell.Col)
+		// Name uniqueness across the whole project is enforced by the
+		// entity_types_name_key constraint; bump the suffix on
+		// collision (e.g. two sheets with the same base name).
+		uniqueName := name
+		for i := 2; i < 100; i++ {
+			if _, ferr := d.Entities.FindByName(ctx, uniqueName); errors.Is(ferr, entities.ErrEntityTypeNotFound) {
+				break
+			}
+			uniqueName = fmt.Sprintf("%s (%d)", name, i)
+		}
+		if _, cerr := d.Entities.Create(ctx, entities.CreateInput{
+			Name:          uniqueName,
+			SpriteAssetID: &assetID,
+			AtlasIndex:    int32(cell.Index),
+			Tags:          []string{"tile"},
+			CreatedBy:     designerID,
+		}); cerr != nil {
+			slog.Warn("auto-slice cell create",
+				"err", cerr,
+				"asset_id", a.ID,
+				"atlas_index", cell.Index,
+			)
+			continue
+		}
+		created++
+	}
+	return created, nil
 }
 
 // postAssetDeleteBulk deletes a list of assets and re-renders the
@@ -2204,12 +2283,52 @@ func getMapmakerPage(d Deps) http.HandlerFunc {
 		if err == nil && len(ets) == 0 {
 			ets, err = d.Entities.List(r.Context(), entities.ListOpts{Limit: 200})
 		}
-		if err == nil {
+		if err == nil && len(ets) > 0 {
+			// Batch-load every referenced sprite asset in one query
+			// so the palette build is O(1) DB calls regardless of how
+			// many tile entities the project has. (Was N+1.)
+			assetIDs := make([]int64, 0, len(ets))
+			seen := make(map[int64]struct{}, len(ets))
 			for _, et := range ets {
-				entry := views.PaletteEntry{ID: et.ID, Name: et.Name}
-				if et.SpriteAssetID != nil && d.Assets != nil {
-					if a, err := d.Assets.FindByID(r.Context(), *et.SpriteAssetID); err == nil {
+				if et.SpriteAssetID == nil {
+					continue
+				}
+				if _, ok := seen[*et.SpriteAssetID]; ok {
+					continue
+				}
+				seen[*et.SpriteAssetID] = struct{}{}
+				assetIDs = append(assetIDs, *et.SpriteAssetID)
+			}
+			assetByID := make(map[int64]assets.Asset, len(assetIDs))
+			if d.Assets != nil && len(assetIDs) > 0 {
+				if rows, lerr := d.Assets.ListByIDs(r.Context(), assetIDs); lerr == nil {
+					for _, a := range rows {
+						assetByID[a.ID] = a
+					}
+				} else {
+					slog.Warn("palette assets bulk lookup", "err", lerr)
+				}
+			}
+			for _, et := range ets {
+				entry := views.PaletteEntry{
+					ID:         et.ID,
+					Name:       et.Name,
+					AtlasIndex: et.AtlasIndex,
+					TileSize:   assets.TileSize,
+					AtlasCols:  1,
+				}
+				if et.SpriteAssetID != nil {
+					if a, ok := assetByID[*et.SpriteAssetID]; ok {
 						entry.SpriteURL = d.ObjectStore.PublicURL(a.ContentAddressedPath)
+						// Tile sheets carry their grid dims in
+						// metadata_json; sprite assets fall through
+						// to the (1x1, idx 0) defaults above so the
+						// renderer still draws them as a single 32x32
+						// cell.
+						if md, derr := assets.DecodeTileSheetMetadata(a.MetadataJSON); derr == nil && md.Cols > 0 {
+							entry.AtlasCols = int32(md.Cols)
+							entry.TileSize = int32(md.TileSize)
+						}
 					}
 				}
 				palette = append(palette, entry)
@@ -2740,7 +2859,16 @@ func postAssetUpload(d Deps) http.HandlerFunc {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		kindOverride := assets.Kind(r.URL.Query().Get("kind"))
+		// Read kind from query (programmatic callers) OR the multipart
+		// form (the UI). Previously only the query was checked, so the
+		// modal's <select name="kind"> was silently ignored and tile
+		// uploads were classified as sprites. ParseMultipartForm is
+		// idempotent, so the inner UploadMany call is unaffected.
+		_ = r.ParseMultipartForm(int64(assets.MaxUploadBytes) * int64(assets.MaxFilesPerUpload))
+		kindOverride := assets.Kind(firstNonEmpty(
+			r.URL.Query().Get("kind"),
+			r.FormValue("kind"),
+		))
 
 		results, err := d.Assets.UploadMany(r.Context(), r, d.ObjectStore, dr.ID, kindOverride)
 		if err != nil {
@@ -2758,36 +2886,35 @@ func postAssetUpload(d Deps) http.HandlerFunc {
 			return
 		}
 
-		// Optional upload-time promote: when the modal's checkbox was
-		// ticked, every successful sprite/tile asset (including reused
-		// rows that resolved to existing assets) gets a tile-tagged
-		// entity. Audio is skipped silently — it has no sprite.
-		// Errors per-asset are non-fatal: the row stays unpromoted
-		// and the rest of the batch keeps going.
-		promoteRequested := r.URL.Query().Get("promote") == "tile" ||
-			(r.FormValue("promote") == "tile")
-
 		ok, fail := 0, 0
 		viewItems := make([]views.AssetUploadItem, 0, len(results))
 		for _, res := range results {
 			item := views.AssetUploadItem{OriginalFn: res.OriginalFn}
-			if res.Err != nil {
+			switch {
+			case res.Err != nil:
 				fail++
 				item.Err = res.Err.Error()
-			} else if res.Asset != nil {
+			case res.Asset != nil:
 				ok++
 				item.AssetID = res.Asset.ID
 				item.Name = res.Asset.Name
 				item.Kind = string(res.Asset.Kind)
 				item.Reused = res.Reused
-				if promoteRequested && res.Asset.Kind != assets.KindAudio {
-					if _, perr := promoteAssetToEntity(r.Context(), d, res.Asset, dr.ID); perr == nil {
-						item.Promoted = true
-					} else {
-						slog.Warn("upload promote-to-entity",
+				// Tile uploads auto-slice into one entity_type per
+				// non-empty 32x32 cell so the sheet is paintable in
+				// the Mapmaker palette without a "promote" step.
+				// Idempotent: cells that already have an entity
+				// (re-upload, sheet sliced before this code shipped,
+				// etc.) are skipped, so designers never see dupes.
+				if res.Asset.Kind == assets.KindTile && len(res.TileCells) > 0 {
+					n, perr := autoSliceTileSheet(r.Context(), d, res.Asset, res.TileCells, dr.ID)
+					if perr != nil {
+						slog.Warn("auto-slice tile sheet",
 							"err", perr,
 							"asset_id", res.Asset.ID,
 						)
+					} else {
+						item.TileEntityCount = n
 					}
 				}
 			}
@@ -3129,13 +3256,14 @@ func getPickerEntities(d Deps) http.HandlerFunc {
 			return
 		}
 		props := views.PickerProps{
-			Kind:      "entity-type",
-			Title:     "Choose an entity type",
-			Search:    opts.Search,
-			TagFilter: opts.Tags,
-			TargetID:  q.Get("target_id"),
-			TargetLbl: q.Get("target_label"),
-			Entities:  items,
+			Kind:         "entity-type",
+			Title:        "Choose an entity type",
+			Search:       opts.Search,
+			TagFilter:    opts.Tags,
+			TargetID:     q.Get("target_id"),
+			TargetLbl:    q.Get("target_label"),
+			Entities:     items,
+			EntitySprite: buildEntitySpritePreviews(r.Context(), d, items),
 		}
 		if r.Header.Get("HX-Request") == "true" && r.Header.Get("HX-Trigger-Name") == "q" {
 			renderHTML(w, r, views.PickerGrid(props))
@@ -3143,6 +3271,67 @@ func getPickerEntities(d Deps) http.HandlerFunc {
 		}
 		renderHTML(w, r, views.PickerModal(props))
 	}
+}
+
+// buildEntitySpritePreviews bulk-resolves the per-entity preview info
+// the picker grid needs. Single batched ListByIDs against assets — no
+// per-entity DB call. Entities without a sprite (or whose sprite was
+// deleted) are absent from the result map; the template falls back to
+// the kind pip in that case.
+func buildEntitySpritePreviews(
+	ctx context.Context,
+	d Deps,
+	ets []entities.EntityType,
+) map[int64]views.EntitySpritePreview {
+	if d.Assets == nil || d.ObjectStore == nil || len(ets) == 0 {
+		return nil
+	}
+	ids := make([]int64, 0, len(ets))
+	seen := make(map[int64]struct{}, len(ets))
+	for _, e := range ets {
+		if e.SpriteAssetID == nil {
+			continue
+		}
+		if _, ok := seen[*e.SpriteAssetID]; ok {
+			continue
+		}
+		seen[*e.SpriteAssetID] = struct{}{}
+		ids = append(ids, *e.SpriteAssetID)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := d.Assets.ListByIDs(ctx, ids)
+	if err != nil {
+		slog.Warn("entity sprite preview bulk lookup", "err", err)
+		return nil
+	}
+	byID := make(map[int64]assets.Asset, len(rows))
+	for _, a := range rows {
+		byID[a.ID] = a
+	}
+	out := make(map[int64]views.EntitySpritePreview, len(ets))
+	for _, e := range ets {
+		if e.SpriteAssetID == nil {
+			continue
+		}
+		a, ok := byID[*e.SpriteAssetID]
+		if !ok {
+			continue
+		}
+		preview := views.EntitySpritePreview{
+			URL:        d.ObjectStore.PublicURL(a.ContentAddressedPath),
+			AtlasIndex: e.AtlasIndex,
+			AtlasCols:  1,
+			TileSize:   assets.TileSize,
+		}
+		if md, derr := assets.DecodeTileSheetMetadata(a.MetadataJSON); derr == nil && md.Cols > 0 {
+			preview.AtlasCols = int32(md.Cols)
+			preview.TileSize = int32(md.TileSize)
+		}
+		out[e.ID] = preview
+	}
+	return out
 }
 
 // getPickerLookup answers a small batched name lookup so refField can

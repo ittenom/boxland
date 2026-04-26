@@ -1402,28 +1402,76 @@ p, li { font-size: 13px; line-height: 1.55; }
     padding: 0;
 }
 .bx-mapmaker__palette li {
-    padding: 4px var(--bx-s2);
+    padding: 4px 6px;
     background: var(--bx-bg-2);
     border: var(--bx-px) solid var(--bx-line);
     font-size: 11px;
     cursor: pointer;
-    display: flex; align-items: center; gap: var(--bx-s2);
+    display: flex; align-items: center; gap: 6px;
     overflow: hidden;
+    min-height: 38px;
 }
 .bx-mapmaker__palette li[aria-selected="true"] {
     background: var(--bx-bg-3);
     border-color: var(--bx-accent);
 }
+/* Palette thumbnail. Sized to the canonical 32px tile so the inline
+   background-image + background-position trick from paletteThumbStyle
+   in mapmaker.templ shows exactly the right cell with no scaling
+   surprises. Pixel-art crispness comes from .bx-pixel above. */
 .bx-mapmaker__palette__thumb {
-    width: 24px; height: 24px;
-    background: var(--bx-bg-0);
+    width: 32px; height: 32px;
+    background-color: var(--bx-bg-0);
     flex-shrink: 0;
     image-rendering: pixelated;
-    display: grid; place-items: center;
+    display: block;
 }
 .bx-mapmaker__palette__thumb img {
     max-width: 100%; max-height: 100%;
     image-rendering: pixelated;
+}
+
+/* Tile atlas grid in the asset detail modal — gives designers a
+   "see what tiles are inside this sheet" view that the old single-
+   img preview couldn't. Cells are 32 CSS px each (1:1 with the
+   source) for a crisp pixel-art read. Empty (alpha-0) cells get a
+   diagonal stripe so the slicer's "skipped this" decision is
+   visible at a glance. */
+.bx-tile-atlas-wrap {
+    width: 100%;
+}
+.bx-tile-atlas-summary {
+    display: flex; align-items: center; gap: 6px;
+    margin-bottom: var(--bx-s2);
+}
+.bx-tile-atlas {
+    /* grid-template-columns is set inline (depends on Cols) */
+    background: var(--bx-bg-0);
+}
+.bx-tile-atlas__cell {
+    display: block;
+    width: 32px; height: 32px;
+    image-rendering: pixelated;
+    background-color: var(--bx-bg-1);
+    transition: outline-color 60ms ease;
+    outline: 1px solid transparent;
+    outline-offset: -1px;
+}
+.bx-tile-atlas__cell:hover {
+    outline-color: var(--bx-accent);
+    z-index: 1;
+}
+.bx-tile-atlas__cell--empty {
+    background-color: var(--bx-bg-1) !important;
+    background-image: linear-gradient(
+        45deg,
+        transparent 46%,
+        rgba(255,255,255,0.08) 46%,
+        rgba(255,255,255,0.08) 54%,
+        transparent 54%
+    ) !important;
+    background-size: 8px 8px !important;
+    background-position: 0 0 !important;
 }
 .bx-mapmaker__palette__name {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

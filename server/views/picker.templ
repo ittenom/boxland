@@ -28,6 +28,21 @@ type PickerProps struct {
 	Assets     []assets.Asset
 	Entities   []entities.EntityType
 	PublicURL  func(string) string
+
+	// EntitySprite is a pre-resolved (entity_type_id -> sprite info)
+	// map populated by the picker handler so the entity grid can
+	// render real previews without an N+1 join. Keyed by entity_type
+	// ID; missing entries fall back to the "no sprite" pip.
+	EntitySprite map[int64]EntitySpritePreview
+}
+
+// EntitySpritePreview is the subset of asset metadata the picker needs
+// to render a 32x32 atlas-clipped preview of an entity_type's sprite.
+type EntitySpritePreview struct {
+	URL        string
+	AtlasIndex int32
+	AtlasCols  int32
+	TileSize   int32
 }
 
 templ PickerModal(p PickerProps) {
@@ -153,8 +168,16 @@ templ entityPickerCard(e entities.EntityType, p PickerProps) {
 		data-bx-target-label={ p.TargetLbl }
 		title={ e.Name }
 	>
-		<div class="bx-asset-card__thumb">
-			<span class="bx-asset-card__pip">{ entityKindLabel(e) }</span>
+		<div class="bx-asset-card__thumb bx-pixel">
+			if sp, ok := pickerSpriteFor(p, e.ID); ok {
+				<span
+					class="bx-picker-card__sprite"
+					style={ pickerSpriteStyle(sp) }
+					aria-hidden="true"
+				></span>
+			} else {
+				<span class="bx-asset-card__pip">{ entityKindLabel(e) }</span>
+			}
 		</div>
 		<div class="bx-asset-card__body">
 			<div class="bx-asset-card__name">{ e.Name }</div>
@@ -167,6 +190,39 @@ templ entityPickerCard(e entities.EntityType, p PickerProps) {
 			</div>
 		</div>
 	</button>
+}
+
+// pickerSpriteFor resolves the preview record for an entity, defaulting
+// to (false, _) when the picker handler couldn't produce one (e.g. the
+// entity has no SpriteAssetID, or the asset row was deleted).
+func pickerSpriteFor(p PickerProps, id int64) (EntitySpritePreview, bool) {
+	if p.EntitySprite == nil {
+		return EntitySpritePreview{}, false
+	}
+	sp, ok := p.EntitySprite[id]
+	if !ok || sp.URL == "" {
+		return EntitySpritePreview{}, false
+	}
+	return sp, true
+}
+
+// pickerSpriteStyle is the picker-card analog of paletteThumbStyle in
+// mapmaker.templ — same atlas-clip math, scaled up to 64px so the
+// thumbnails read well inside the modal grid.
+func pickerSpriteStyle(sp EntitySpritePreview) string {
+	cols := int(sp.AtlasCols)
+	if cols <= 0 {
+		cols = 1
+	}
+	idx := int(sp.AtlasIndex)
+	col := idx % cols
+	row := idx / cols
+	const thumb = 64
+	totalW := thumb * cols
+	return fmt.Sprintf(
+		"display:block;width:%dpx;height:%dpx;background-image:url('%s');background-repeat:no-repeat;background-size:%dpx auto;background-position:-%dpx -%dpx;image-rendering:pixelated;",
+		thumb, thumb, sp.URL, totalW, col*thumb, row*thumb,
+	)
 }
 
 // pickerSearchURL builds the GET endpoint for HTMX-driven search.

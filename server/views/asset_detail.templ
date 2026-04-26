@@ -134,6 +134,8 @@ func assetDeleteConfirm(usedBy []RailRef) string {
 templ assetDetailPreview(p AssetDetailProps) {
 	if p.Asset.Kind == assets.KindAudio {
 		@AudioPreview(p.Asset, p.PublicURL)
+	} else if p.Asset.Kind == assets.KindTile && p.PublicURL != nil {
+		@tileAtlasPreview(p)
 	} else if p.PublicURL != nil {
 		<div class="bx-asset-detail__preview bx-pixel">
 			<img src={ p.PublicURL(p.Asset.ContentAddressedPath) } alt={ p.Asset.Name }/>
@@ -141,6 +143,98 @@ templ assetDetailPreview(p AssetDetailProps) {
 	} else {
 		<div class="bx-asset-detail__preview"></div>
 	}
+}
+
+// tileAtlasPreview renders a tile sheet as its constituent 32x32 cells
+// laid out in a CSS grid. Each cell is a clipped div using the same
+// background-image + background-position trick the Mapmaker palette
+// uses, so designers see exactly the artwork they'll be painting with —
+// no second download, no extra round-trip.
+//
+// Empty cells (alpha-0) get a checkered placeholder so the designer
+// can tell "the slicer ran" from "the slicer didn't run." The
+// non_empty_index list comes from the metadata column populated at
+// upload time.
+templ tileAtlasPreview(p AssetDetailProps) {
+	if md, ok := decodeTileSheetMD(p.Asset); ok && md.Cols > 0 {
+		<div class="bx-tile-atlas-wrap bx-stack-tight">
+			<div class="bx-tile-atlas-summary bx-small bx-muted">
+				<strong>{ fmt.Sprintf("%d × %d", md.Cols, md.Rows) }</strong> cells
+				<span class="bx-muted">·</span>
+				<strong>{ fmt.Sprintf("%d", md.NonEmptyCount) }</strong> non-empty
+				<span class="bx-muted">·</span>
+				{ fmt.Sprintf("%d px tile", md.TileSize) }
+			</div>
+			<div
+				class="bx-tile-atlas bx-pixel"
+				style={ tileAtlasGridStyle(md) }
+			>
+				for r := 0; r < md.Rows; r++ {
+					for c := 0; c < md.Cols; c++ {
+						<span
+							class={ tileAtlasCellClass(md, r*md.Cols+c) }
+							style={ tileAtlasCellStyle(p.PublicURL(p.Asset.ContentAddressedPath), md, r, c) }
+							title={ fmt.Sprintf("r%d c%d · idx %d", r, c, r*md.Cols+c) }
+						></span>
+					}
+				}
+			</div>
+			<p class="bx-tiny bx-muted">
+				Each cell becomes one paintable tile in the Mapmaker palette.
+			</p>
+		</div>
+	} else {
+		<div class="bx-asset-detail__preview bx-pixel">
+			<img src={ p.PublicURL(p.Asset.ContentAddressedPath) } alt={ p.Asset.Name }/>
+		</div>
+	}
+}
+
+// decodeTileSheetMD reads the tile-sheet metadata back off the asset row.
+// Bool return is false when the metadata column is empty / non-tile-shaped
+// so the template can fall back to a plain image preview.
+func decodeTileSheetMD(a assets.Asset) (assets.TileSheetMetadata, bool) {
+	md, err := assets.DecodeTileSheetMetadata(a.MetadataJSON)
+	if err != nil || md.Cols == 0 || md.TileSize == 0 {
+		return assets.TileSheetMetadata{}, false
+	}
+	return md, true
+}
+
+// tileAtlasGridStyle sizes the grid so each cell is rendered at 2x its
+// source size — small enough to fit a 16x16 sheet on screen, big enough
+// to read at a glance. Cap by viewport via max-width; the overflow
+// scrolls.
+func tileAtlasGridStyle(md assets.TileSheetMetadata) string {
+	const cellPx = 32 // logical CSS px per cell in the preview
+	return fmt.Sprintf(
+		"display:grid;grid-template-columns:repeat(%d, %dpx);grid-auto-rows:%dpx;gap:1px;background:rgba(255,255,255,0.06);padding:1px;max-width:100%%;overflow:auto;",
+		md.Cols, cellPx, cellPx,
+	)
+}
+
+// tileAtlasCellClass tags non-empty vs empty cells so CSS can render
+// the empty-state placeholder distinctly without an extra <span>.
+func tileAtlasCellClass(md assets.TileSheetMetadata, idx int) string {
+	for _, ne := range md.NonEmptyIndex {
+		if ne == idx {
+			return "bx-tile-atlas__cell"
+		}
+	}
+	return "bx-tile-atlas__cell bx-tile-atlas__cell--empty"
+}
+
+// tileAtlasCellStyle clips the source PNG to a single (r, c) cell. The
+// background-size scales the *whole* sheet so each source-cell maps to
+// `cellPx` on screen; background-position shifts it so the right cell
+// is visible inside the 32x32 window.
+func tileAtlasCellStyle(url string, md assets.TileSheetMetadata, row, col int) string {
+	const cellPx = 32
+	totalW := cellPx * md.Cols
+	return fmt.Sprintf(
+		"background-image:url('%s');background-repeat:no-repeat;background-size:%dpx auto;background-position:-%dpx -%dpx;",
+		url, totalW, col*cellPx, row*cellPx,
+	)
 }
 
 // AudioPreview renders the waveform + native playback controls. The

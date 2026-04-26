@@ -167,6 +167,7 @@ func encodeTiles(b *flatbuffers.Builder, stores *ecs.Stores) flatbuffers.UOffset
 		var frame uint16
 		if sp := stores.Sprite.GetPtr(e); sp != nil {
 			asset = sp.AssetID
+			frame = sp.Frame
 		}
 		var edge uint8
 		var mask uint32 = 1
