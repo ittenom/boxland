@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -14,29 +12,15 @@ import (
 	"boxland/server/internal/settings"
 )
 
+// openPool returns an isolated, freshly-migrated DB. testdb.New wires its own t.Cleanup that drops the database when the test ends.
 func openPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://boxland:boxland_dev@localhost:5433/boxland?sslmode=disable"
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Skipf("postgres unavailable: %v", err)
-	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		t.Skipf("postgres unavailable: %v", err)
-	}
-	return pool
+	return testdb.New(t)
 }
 
 func TestService_GetEmptyReturnsObjectLiteral(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
-	testdb.Reset(t, pool)
 	svc := settings.New(pool)
 	got, err := svc.Get(context.Background(), settings.RealmDesigner, 123)
 	if err != nil {
@@ -50,7 +34,6 @@ func TestService_GetEmptyReturnsObjectLiteral(t *testing.T) {
 func TestService_SaveThenGetRoundTrip(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
-	testdb.Reset(t, pool)
 	svc := settings.New(pool)
 	ctx := context.Background()
 
@@ -74,7 +57,6 @@ func TestService_SaveThenGetRoundTrip(t *testing.T) {
 func TestService_RealmIsolation(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
-	testdb.Reset(t, pool)
 	svc := settings.New(pool)
 	ctx := context.Background()
 	if err := svc.Save(ctx, settings.RealmDesigner, 5, []byte(`{"font":"AtariGames"}`)); err != nil {
@@ -93,7 +75,6 @@ func TestService_RealmIsolation(t *testing.T) {
 func TestService_SaveUpsertOverwrites(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
-	testdb.Reset(t, pool)
 	svc := settings.New(pool)
 	ctx := context.Background()
 	if err := svc.Save(ctx, settings.RealmPlayer, 9, []byte(`{"font":"a"}`)); err != nil {
@@ -111,7 +92,6 @@ func TestService_SaveUpsertOverwrites(t *testing.T) {
 func TestService_SaveRejectsNonObject(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
-	testdb.Reset(t, pool)
 	svc := settings.New(pool)
 	ctx := context.Background()
 	if err := svc.Save(ctx, settings.RealmPlayer, 1, []byte(`[1,2,3]`)); err == nil {
@@ -125,7 +105,6 @@ func TestService_SaveRejectsNonObject(t *testing.T) {
 func TestService_InvalidRealm(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
-	testdb.Reset(t, pool)
 	svc := settings.New(pool)
 	_, err := svc.Get(context.Background(), settings.Realm("bogus"), 1)
 	if !errors.Is(err, settings.ErrInvalidRealm) {

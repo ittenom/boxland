@@ -90,11 +90,12 @@ test: test-go test-web realm-isolation test-scripts
 
 [working-directory: 'server']
 test-go:
-    # -p 1 so test PACKAGES run sequentially. The integration tests share
-    # a single dev Postgres instance and would clobber each other under
-    # parallel execution. Within one package, individual tests still run
-    # sequentially by default (no t.Parallel() anywhere yet).
-    go test -p 1 ./...
+    # Tests use github.com/peterldowns/pgtestdb for isolation: each call
+    # to testdb.New(t) returns a freshly-migrated, per-test PostgreSQL
+    # database (clones a content-hashed template in ~10-20ms, dropped on
+    # cleanup). Packages run safely in parallel — no -p 1 needed, and
+    # individual tests can opt into t.Parallel() without coordination.
+    go test ./...
 
 [working-directory: 'web']
 test-web:

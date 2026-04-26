@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"boxland/server/internal/auth/player"
-	"boxland/server/internal/persistence/testdb"
 )
 
 func TestRegistry_RegisterAndGet(t *testing.T) {
@@ -62,7 +61,6 @@ func TestNewPKCEVerifier_LengthOK(t *testing.T) {
 func TestLinkOrCreatePlayer_NewPlayerWithVerifiedEmail(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
-	testdb.Reset(t, pool)
 	svc := player.New(pool, []byte(testJWTSecret))
 
 	p, err := svc.LinkOrCreatePlayer(context.Background(),
@@ -84,7 +82,6 @@ func TestLinkOrCreatePlayer_NewPlayerWithVerifiedEmail(t *testing.T) {
 func TestLinkOrCreatePlayer_LinksToExistingEmail(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
-	testdb.Reset(t, pool)
 	svc := player.New(pool, []byte(testJWTSecret))
 	ctx := context.Background()
 
@@ -104,7 +101,6 @@ func TestLinkOrCreatePlayer_LinksToExistingEmail(t *testing.T) {
 func TestLinkOrCreatePlayer_SubsequentSignInReusesLink(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
-	testdb.Reset(t, pool)
 	svc := player.New(pool, []byte(testJWTSecret))
 	ctx := context.Background()
 
@@ -124,7 +120,6 @@ func TestLinkOrCreatePlayer_SubsequentSignInReusesLink(t *testing.T) {
 func TestLinkOrCreatePlayer_RejectsEmptyProviderUserID(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
-	testdb.Reset(t, pool)
 	svc := player.New(pool, []byte(testJWTSecret))
 
 	_, err := svc.LinkOrCreatePlayer(context.Background(), "google", "", "x@y.com", true)

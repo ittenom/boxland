@@ -14,7 +14,6 @@ import (
 	authdesigner "boxland/server/internal/auth/designer"
 	authplayer "boxland/server/internal/auth/player"
 	"boxland/server/internal/maps"
-	"boxland/server/internal/persistence/testdb"
 	"boxland/server/internal/proto"
 	"boxland/server/internal/sim/aoi"
 	"boxland/server/internal/sim/runtime"
@@ -61,7 +60,6 @@ func newSpectateFixture(t *testing.T) *spectateFixture {
 	t.Cleanup(pool.Close)
 	cli := openRedis(t)
 	t.Cleanup(cli.Close)
-	testdb.Reset(t, pool)
 
 	authD := authdesigner.New(pool)
 	d, err := authD.CreateDesigner(context.Background(), "spectate-d@x.com", "p", authdesigner.RoleEditor)

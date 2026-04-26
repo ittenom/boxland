@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -16,28 +14,16 @@ import (
 	"boxland/server/internal/persistence/testdb"
 )
 
+// openTestPool returns an isolated, freshly-migrated DB. testdb.New wires its own t.Cleanup that drops the database when the test ends.
 func openTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://boxland:boxland_dev@localhost:5433/boxland?sslmode=disable"
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Skipf("postgres unavailable: %v", err)
-	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		t.Skipf("postgres unavailable: %v", err)
-	}
-	return pool
+	return testdb.New(t)
 }
 
+// seedMap creates per-test fixtures (a designer + map). The pool is already
+// empty because testdb.New(t) returns a fresh database for every test.
 func seedMap(t *testing.T, pool *pgxpool.Pool) int64 {
 	t.Helper()
-	testdb.Reset(t, pool)
 	auth := authdesigner.New(pool)
 	d, err := auth.CreateDesigner(context.Background(), "groups-test@x.com", "p", authdesigner.RoleEditor)
 	if err != nil {

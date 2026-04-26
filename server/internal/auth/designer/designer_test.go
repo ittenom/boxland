@@ -4,44 +4,25 @@ import (
 	"context"
 	"errors"
 	"net"
-	"os"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"boxland/server/internal/auth/designer"
+	"boxland/server/internal/persistence/testdb"
 )
 
+// openTestPool returns an isolated, freshly-migrated DB. testdb.New wires its own t.Cleanup that drops the database when the test ends.
 func openTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://boxland:boxland_dev@localhost:5433/boxland?sslmode=disable"
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Skipf("postgres unavailable: %v", err)
-	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		t.Skipf("postgres unavailable: %v", err)
-	}
-	return pool
+	return testdb.New(t)
 }
 
-// resetDB wipes designer tables both before the test runs and after, so
-// tests are isolated regardless of run order.
-func resetDB(t *testing.T, pool *pgxpool.Pool) {
+// resetDB is a no-op kept for call-site compatibility — testdb.New(t)
+// already returns a fresh database for every test, so manual wipes
+// are redundant. Future cleanup pass: drop the helper + every call.
+func resetDB(t *testing.T, _ *pgxpool.Pool) {
 	t.Helper()
-	wipe := func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM designer_sessions`)
-		_, _ = pool.Exec(context.Background(), `DELETE FROM designers`)
-	}
-	wipe()
-	t.Cleanup(wipe)
 }
 
 func TestArgon2_Roundtrip(t *testing.T) {

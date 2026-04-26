@@ -3,46 +3,27 @@ package artifact_test
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"boxland/server/internal/configurable"
+	"boxland/server/internal/persistence/testdb"
 	"boxland/server/internal/publishing/artifact"
 )
 
+// openTestPool returns an isolated, freshly-migrated DB. testdb.New wires its own t.Cleanup that drops the database when the test ends.
 func openTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://boxland:boxland_dev@localhost:5433/boxland?sslmode=disable"
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Skipf("postgres unavailable: %v", err)
-	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		t.Skipf("postgres unavailable: %v", err)
-	}
-	return pool
+	return testdb.New(t)
 }
 
-func resetTables(t *testing.T, pool *pgxpool.Pool) {
+// resetTables is a no-op kept for call-site compatibility — testdb.New(t)
+// already returns a fresh database for every test, so manual wipes are
+// redundant. Future cleanup pass: drop the helper + every call.
+func resetTables(t *testing.T, _ *pgxpool.Pool) {
 	t.Helper()
-	for _, q := range []string{
-		`DELETE FROM publish_diffs`,
-		`DELETE FROM drafts`,
-	} {
-		if _, err := pool.Exec(context.Background(), q); err != nil {
-			t.Fatalf("reset %s: %v", q, err)
-		}
-	}
 }
 
 // recordingHandler captures every Publish call.

@@ -14,7 +14,6 @@ import (
 	authdesigner "boxland/server/internal/auth/designer"
 	authplayer "boxland/server/internal/auth/player"
 	"boxland/server/internal/maps"
-	"boxland/server/internal/persistence/testdb"
 	"boxland/server/internal/proto"
 	"boxland/server/internal/sim/runtime"
 	"boxland/server/internal/ws"
@@ -44,7 +43,6 @@ func newRealmFixture(t *testing.T) *realmFixture {
 	t.Cleanup(pool.Close)
 	cli := openRedis(t)
 	t.Cleanup(cli.Close)
-	testdb.Reset(t, pool)
 
 	authD := authdesigner.New(pool)
 	d, err := authD.CreateDesigner(context.Background(), "realm-iso-d@x.com", "p", authdesigner.RoleEditor)

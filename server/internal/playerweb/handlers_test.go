@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -21,23 +20,10 @@ import (
 	"boxland/server/internal/playerweb"
 )
 
+// openPool returns an isolated, freshly-migrated DB. testdb.New wires its own t.Cleanup that drops the database when the test ends.
 func openPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://boxland:boxland_dev@localhost:5433/boxland?sslmode=disable"
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Skipf("postgres unavailable: %v", err)
-	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		t.Skipf("postgres unavailable: %v", err)
-	}
-	return pool
+	return testdb.New(t)
 }
 
 // fixture spins up the playerweb mux with CSRF + LoadSession middleware
@@ -54,7 +40,6 @@ func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	pool := openPool(t)
 	t.Cleanup(pool.Close)
-	testdb.Reset(t, pool)
 
 	authP := authplayer.New(pool, []byte("test-jwt-secret-32-bytes-padded__"))
 	mapsSvc := maps.New(pool)

@@ -3,9 +3,7 @@ package automations_test
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -16,23 +14,10 @@ import (
 	"boxland/server/internal/persistence/testdb"
 )
 
+// openPool returns an isolated, freshly-migrated DB. testdb.New wires its own t.Cleanup that drops the database when the test ends.
 func openPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://boxland:boxland_dev@localhost:5433/boxland?sslmode=disable"
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Skipf("postgres unavailable: %v", err)
-	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		t.Skipf("postgres unavailable: %v", err)
-	}
-	return pool
+	return testdb.New(t)
 }
 
 func newEntityType(t *testing.T, pool *pgxpool.Pool, name string) int64 {
@@ -53,7 +38,6 @@ func newEntityType(t *testing.T, pool *pgxpool.Pool, name string) int64 {
 func TestService_GetEmpty(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
-	testdb.Reset(t, pool)
 	svc := automations.New(pool, automations.DefaultTriggers(), automations.DefaultActions())
 	id := newEntityType(t, pool, "empty-auto")
 	got, err := svc.Get(context.Background(), id)
@@ -68,7 +52,6 @@ func TestService_GetEmpty(t *testing.T) {
 func TestService_SaveValidatesBeforePersist(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
-	testdb.Reset(t, pool)
 	svc := automations.New(pool, automations.DefaultTriggers(), automations.DefaultActions())
 	id := newEntityType(t, pool, "validates")
 
@@ -87,7 +70,6 @@ func TestService_SaveValidatesBeforePersist(t *testing.T) {
 func TestService_RoundTrip(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
-	testdb.Reset(t, pool)
 	svc := automations.New(pool, automations.DefaultTriggers(), automations.DefaultActions())
 	id := newEntityType(t, pool, "roundtrip")
 
@@ -114,7 +96,6 @@ func TestService_RoundTrip(t *testing.T) {
 func TestService_DeleteIdempotent(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
-	testdb.Reset(t, pool)
 	svc := automations.New(pool, automations.DefaultTriggers(), automations.DefaultActions())
 	id := newEntityType(t, pool, "del")
 	if err := svc.Delete(context.Background(), id); err != nil {

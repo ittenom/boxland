@@ -3,9 +3,7 @@ package hud_test
 import (
 	"context"
 	"errors"
-	"os"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -15,23 +13,10 @@ import (
 	"boxland/server/internal/persistence/testdb"
 )
 
+// openPool returns an isolated, freshly-migrated DB. testdb.New wires its own t.Cleanup that drops the database when the test ends.
 func openPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://boxland:boxland_dev@localhost:5433/boxland?sslmode=disable"
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Skipf("postgres unavailable: %v", err)
-	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		t.Skipf("postgres unavailable: %v", err)
-	}
-	return pool
+	return testdb.New(t)
 }
 
 func seed(t *testing.T, pool *pgxpool.Pool, name string) (designerID, mapID int64) {
@@ -54,7 +39,6 @@ func seed(t *testing.T, pool *pgxpool.Pool, name string) (designerID, mapID int6
 func TestRepo_GetEmpty_ReturnsCanonicalEmpty(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
-	testdb.Reset(t, pool)
 
 	designerID, mapID := seed(t, pool, "empty")
 	repo := &hud.Repo{Pool: pool}
@@ -73,7 +57,6 @@ func TestRepo_GetEmpty_ReturnsCanonicalEmpty(t *testing.T) {
 func TestRepo_Mutate_AddsAndPersists(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
-	testdb.Reset(t, pool)
 
 	designerID, mapID := seed(t, pool, "mutate")
 	repo := &hud.Repo{Pool: pool}
@@ -102,7 +85,6 @@ func TestRepo_Mutate_AddsAndPersists(t *testing.T) {
 func TestRepo_TenantIsolation(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
-	testdb.Reset(t, pool)
 
 	dA, mapA := seed(t, pool, "alice")
 	dB, mapB := seed(t, pool, "bob")
@@ -135,7 +117,6 @@ func TestRepo_TenantIsolation(t *testing.T) {
 func TestRepo_GetForPlayer_ReturnsEmptyForUnknownMap(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
-	testdb.Reset(t, pool)
 
 	repo := &hud.Repo{Pool: pool}
 	got, err := repo.GetForPlayer(context.Background(), 999_999_999)

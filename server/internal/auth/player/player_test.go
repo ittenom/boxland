@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
-	"os"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -14,23 +12,10 @@ import (
 	"boxland/server/internal/persistence/testdb"
 )
 
+// openTestPool returns an isolated, freshly-migrated DB. testdb.New wires its own t.Cleanup that drops the database when the test ends.
 func openTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://boxland:boxland_dev@localhost:5433/boxland?sslmode=disable"
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Skipf("postgres unavailable: %v", err)
-	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		t.Skipf("postgres unavailable: %v", err)
-	}
-	return pool
+	return testdb.New(t)
 }
 
 const testJWTSecret = "test-secret-key-do-not-use-in-prod"
@@ -38,7 +23,6 @@ const testJWTSecret = "test-secret-key-do-not-use-in-prod"
 func TestCreatePlayer_DefaultsToUnverified(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
-	testdb.Reset(t, pool)
 	svc := player.New(pool, []byte(testJWTSecret))
 
 	p, err := svc.CreatePlayer(context.Background(), "Player@x.com", "hunter2!")
@@ -56,7 +40,6 @@ func TestCreatePlayer_DefaultsToUnverified(t *testing.T) {
 func TestCreatePlayer_DuplicateEmailRejected(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
-	testdb.Reset(t, pool)
 	svc := player.New(pool, []byte(testJWTSecret))
 
 	_, _ = svc.CreatePlayer(context.Background(), "dup@x.com", "p")
@@ -69,7 +52,6 @@ func TestCreatePlayer_DuplicateEmailRejected(t *testing.T) {
 func TestLogin_RejectsUnverifiedEmail(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
-	testdb.Reset(t, pool)
 	svc := player.New(pool, []byte(testJWTSecret))
 	ctx := context.Background()
 
@@ -83,7 +65,6 @@ func TestLogin_RejectsUnverifiedEmail(t *testing.T) {
 func TestEmailVerification_HappyPath(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
-	testdb.Reset(t, pool)
 	svc := player.New(pool, []byte(testJWTSecret))
 	ctx := context.Background()
 
@@ -112,7 +93,6 @@ func TestEmailVerification_HappyPath(t *testing.T) {
 func TestEmailVerification_DoubleConsumeRejected(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
-	testdb.Reset(t, pool)
 	svc := player.New(pool, []byte(testJWTSecret))
 	ctx := context.Background()
 
@@ -130,7 +110,6 @@ func TestEmailVerification_DoubleConsumeRejected(t *testing.T) {
 func TestEmailVerification_ExpiredRejected(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
-	testdb.Reset(t, pool)
 	svc := player.New(pool, []byte(testJWTSecret))
 	ctx := context.Background()
 
@@ -151,7 +130,6 @@ func TestEmailVerification_ExpiredRejected(t *testing.T) {
 func TestRefreshSession_Lifecycle(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
-	testdb.Reset(t, pool)
 	svc := player.New(pool, []byte(testJWTSecret))
 	ctx := context.Background()
 
@@ -183,7 +161,6 @@ func TestRefreshSession_Lifecycle(t *testing.T) {
 func TestJWT_Roundtrip(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
-	testdb.Reset(t, pool)
 	svc := player.New(pool, []byte(testJWTSecret))
 	ctx := context.Background()
 
@@ -220,7 +197,6 @@ func TestJWT_RejectsUnknownToken(t *testing.T) {
 func TestJWT_RejectsTokenSignedWithDifferentKey(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
-	testdb.Reset(t, pool)
 	a := player.New(pool, []byte("key-a"))
 	b := player.New(pool, []byte("key-b"))
 	ctx := context.Background()

@@ -3,9 +3,7 @@ package flags_test
 import (
 	"context"
 	"errors"
-	"os"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -15,31 +13,16 @@ import (
 	"boxland/server/internal/persistence/testdb"
 )
 
-// openTestPool mirrors the pattern used by maps_test / assets_test --
-// real Postgres at TEST_DATABASE_URL or the dev compose port.
+// openTestPool returns an isolated, freshly-migrated DB. testdb.New wires its own t.Cleanup that drops the database when the test ends.
 func openTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://boxland:boxland_dev@localhost:5433/boxland?sslmode=disable"
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Skipf("postgres unavailable: %v", err)
-	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		t.Skipf("postgres unavailable: %v", err)
-	}
-	return pool
+	return testdb.New(t)
 }
 
 // seedMap creates a designer + map so flag rows have FK targets.
+// The pool is already empty because testdb.New(t) returns a fresh database for every test.
 func seedMap(t *testing.T, pool *pgxpool.Pool) int64 {
 	t.Helper()
-	testdb.Reset(t, pool)
 	auth := authdesigner.New(pool)
 	d, err := auth.CreateDesigner(context.Background(), "flags-test@x.com", "p", authdesigner.RoleEditor)
 	if err != nil {

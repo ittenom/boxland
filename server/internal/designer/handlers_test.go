@@ -6,10 +6,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -18,30 +16,16 @@ import (
 	"boxland/server/internal/persistence/testdb"
 )
 
+// openTestPool returns an isolated, freshly-migrated DB. testdb.New wires its own t.Cleanup that drops the database when the test ends.
 func openTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://boxland:boxland_dev@localhost:5433/boxland?sslmode=disable"
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Skipf("postgres unavailable: %v", err)
-	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		t.Skipf("postgres unavailable: %v", err)
-	}
-	return pool
+	return testdb.New(t)
 }
 
-// resetDB delegates to the shared testdb helper. Designer rows themselves
-// are wiped there; tests create their own designers afterwards.
+// resetDB creates per-test fixtures (a designer, etc.). The pool is already
+// empty because testdb.New(t) returns a fresh database for every test.
 func resetDB(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
-	testdb.Reset(t, pool)
 }
 
 // buildHandler wires the same middleware stack the production binary uses,
