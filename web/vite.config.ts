@@ -26,6 +26,7 @@ export default defineConfig({
       "@game": resolve(here, "src/game"),
       "@settings": resolve(here, "src/settings"),
       "@audio": resolve(here, "src/audio"),
+      "@character-generator": resolve(here, "src/character-generator"),
       "@proto": resolve(here, "src/net/proto/boxland/proto"),
       "@shared": resolve(here, "../shared"),
     },
@@ -55,10 +56,11 @@ export default defineConfig({
       // Per-page entries get added here as their modules land (game in task
       // #116, mapmaker in #104, sandbox in #131, pixel editor in #61).
       input: {
-        boot:     resolve(here, "src/boot.ts"),
-        game:     resolve(here, "src/game/entry-game.ts"),
-        settings: resolve(here, "src/settings/entry-settings.ts"),
-        sandbox:  resolve(here, "src/sandbox/entry-sandbox.ts"),
+        boot:                 resolve(here, "src/boot.ts"),
+        game:                 resolve(here, "src/game/entry-game.ts"),
+        settings:             resolve(here, "src/settings/entry-settings.ts"),
+        sandbox:              resolve(here, "src/sandbox/entry-sandbox.ts"),
+        "character-generator": resolve(here, "src/character-generator/entry-character-generator.ts"),
       },
       // Stable filenames so the Templ pages can <script src="/static/web/<entry>.js"/>
       // without templating in build hashes. Long-cache headers come from

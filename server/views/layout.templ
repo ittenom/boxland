@@ -61,13 +61,14 @@ type Crumb struct {
 // ProjectInfo is the chrome's identity strip: project name + per-kind
 // counts + draft total. Single-tenant for now, so ProjectName is a stub.
 type ProjectInfo struct {
-	Name       string
-	AssetCount int
-	EntityCount int
-	MapCount    int
-	SocketCount int
-	GroupCount  int
-	DraftCount  int
+	Name           string
+	AssetCount     int
+	EntityCount    int
+	MapCount       int
+	SocketCount    int
+	GroupCount     int
+	CharacterCount int // sum of NPC templates + (later) player characters
+	DraftCount     int
 }
 
 // ProjectIndex is the data the left tree renders. Each section is a
@@ -75,12 +76,13 @@ type ProjectInfo struct {
 // whole project, only enough for "where am I" glances. The Home + Settings
 // links are baked into the tree component, not here.
 type ProjectIndex struct {
-	Loaded   bool
-	Assets   IndexSection
-	Entities IndexSection
-	Maps     IndexSection
-	Sockets  IndexSection
-	Groups   IndexSection
+	Loaded     bool
+	Assets     IndexSection
+	Entities   IndexSection
+	Maps       IndexSection
+	Sockets    IndexSection
+	Groups     IndexSection
+	Characters IndexSection
 }
 
 type IndexSection struct {
@@ -135,6 +137,7 @@ templ Layout(p LayoutProps) {
 			<title>{ pageTitle(p) }</title>
 			<link rel="icon" href="/static/img/boxland.svg" type="image/svg+xml"/>
 			<link rel="stylesheet" href="/static/css/pixel.css"/>
+			<link rel="stylesheet" href="/static/css/character-generator.css"/>
 			<script>
 				// No-flash theme detection. Runs synchronously in <head> so the
 				// data-theme attribute is set before any paint. Falls back to
@@ -414,6 +417,14 @@ templ ProjectTree(p LayoutProps) {
 			Active:  activeMatch(p.ActiveKind, p.ActiveID, "group"),
 			NewHref: "/design/tile-groups",
 			ListHref: "/design/tile-groups",
+		})
+		@treeSection(treeProps{
+			Kind:    "character",
+			Title:   "Characters",
+			Section: p.Tree.Characters,
+			Active:  activeMatch(p.ActiveKind, p.ActiveID, "character"),
+			NewHref: "/design/characters",
+			ListHref: "/design/characters",
 		})
 	</nav>
 }

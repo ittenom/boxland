@@ -9,14 +9,14 @@ Boxland is a designer-friendly MMORPG engine that makes it easy to turn on your 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/)
 - [Go](https://go.dev/dl/) 
 - [Node](https://nodejs.org/) 
-- [Just](https://just.systems)
+- Go-installed Boxland CLI (`go install ./server/cmd/boxland`) or `go run ./server/cmd/boxland` from this checkout
 
 (2) Clone the Boxland repo to your device or server.
 
 (3) From the boxland/ directory, run
 
 ```
-just design
+boxland
 ```
 
 This works the same on Windows, macOS, and Linux. Boxland will provision a virtual machine with Postgres, Redis, Mailpit, and MinIO services. Then it sets up a database, runs the web server, runs the game server, and if everything works you'll see this:
@@ -37,16 +37,16 @@ This works the same on Windows, macOS, and Linux. Boxland will provision a virtu
 ### Other recipes
 
 ```
-just                   # list available recipes
-just up                # just the Docker dependencies (no server)
-just down              # stop the Docker dependencies
-just serve             # run the Go server only (you build the web bundle yourself)
-just dev               # Vite dev server (HMR-friendly TS edits; expects `just serve` running)
-just test              # Go + TS tests + the realm-isolation invariant
-just build             # Production server binary + web bundle
-just bench             # ECS microbenchmarks (regression-gated)
-just gen-fb            # Regenerate FlatBuffers Go + TS code from /schemas/
-just migrate           # Run SQL migrations
+boxland              # open the interactive terminal launch interface
+boxland install      # check/install dependencies with official fallback links
+boxland design       # dependencies, migrations, web build, staging, then server
+boxland up           # Docker dependencies only
+boxland down         # stop Docker dependencies
+boxland serve        # run the Go server only
+boxland test         # Go + TS tests + realm-isolation invariant
+boxland migrate up   # run SQL migrations
+boxland backup export ./backups/boxland.tar.gz
+boxland backup import ./backups/boxland.tar.gz --yes
 ```
 
 ## License

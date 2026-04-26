@@ -35,6 +35,14 @@ const (
 	KindPaletteVariant Kind = "palette_variant"
 	KindEdgeSocketType Kind = "edge_socket_type"
 	KindTileGroup      Kind = "tile_group"
+
+	// Character generator artifacts. See server/internal/characters
+	// and docs/superpowers/plans/2026-04-26-character-generator-plan.md.
+	KindCharacterSlot       Kind = "character_slot"
+	KindCharacterPart       Kind = "character_part"
+	KindCharacterStatSet    Kind = "character_stat_set"
+	KindCharacterTalentTree Kind = "character_talent_tree"
+	KindNpcTemplate         Kind = "npc_template"
 )
 
 // Op enumerates the kind of change a draft represents.

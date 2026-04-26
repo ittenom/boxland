@@ -1,0 +1,168 @@
+package views
+
+import (
+	"fmt"
+
+	"boxland/server/internal/characters"
+)
+
+// CharactersListProps drives the Character Generator landing page. The
+// page is a four-card dashboard: slots, parts, talent trees, NPC
+// templates. Each card shows live counts and links into its CRUD
+// surface. Stat sets get their own card once Phase 3 lands; for Phase 1
+// we fold them into the talent-trees card to keep the dashboard
+// compact (no row to count yet).
+type CharactersListProps struct {
+	Layout LayoutProps
+
+	SlotCount        int
+	PartCount        int
+	StatSetCount     int
+	TalentTreeCount  int
+	NpcTemplateCount int
+
+	// Recent NPC templates for the "recent" strip below the cards.
+	// Bounded by the handler.
+	RecentNpcTemplates []characters.NpcTemplate
+}
+
+templ CharactersList(p CharactersListProps) {
+	@Layout(p.Layout) {
+		<div class="bx-work__strip">
+			<span class="bx-work__chip">
+				<span class="bx-dot bx-dot--entity"></span>
+				<strong>{ formatIntPad(p.NpcTemplateCount) }</strong> NPC templates
+			</span>
+			<span class="bx-work__chip bx-work__chip--muted">
+				layered sprites · stats · talents · published as live entities
+			</span>
+		</div>
+
+		<div class="bx-work__body bx-stack">
+			<header class="bx-row bx-row--apart">
+				<div>
+					<h1 data-copy-slot="characters.title">Characters</h1>
+					<p class="bx-muted bx-small" data-copy-slot="characters.lede">
+						Compose layered sprites from parts. Save as NPC templates or player characters.
+					</p>
+				</div>
+				<div class="bx-row">
+					<a
+						class="bx-btn bx-btn--primary"
+						href="/design/characters/npc-templates/new"
+						hx-get="/design/characters/npc-templates/new"
+						hx-target="#modal-host"
+						hx-swap="innerHTML"
+						data-copy-slot="characters.new.npc"
+					>+ New NPC template</a>
+				</div>
+			</header>
+
+			<div class="bx-cards">
+				@charactersCard(charactersCardProps{
+					Title: "Slots", Count: p.SlotCount,
+					Help: "Body, hair, headwear, weapons. The vocabulary the generator picks from.",
+					Href: "/design/characters/slots",
+					Dot:  "asset",
+				})
+				@charactersCard(charactersCardProps{
+					Title: "Parts", Count: p.PartCount,
+					Help: "Existing sprite assets registered into a slot.",
+					Href: "/design/characters/parts",
+					Dot:  "entity",
+				})
+				@charactersCard(charactersCardProps{
+					Title: "Stat sets & talents", Count: p.StatSetCount + p.TalentTreeCount,
+					Help: "Designer-defined stat models and talent graphs.",
+					Href: "/design/characters/stat-sets",
+					Dot:  "group",
+				})
+				@charactersCard(charactersCardProps{
+					Title: "NPC templates", Count: p.NpcTemplateCount,
+					Help: "Composed characters that bake to a sprite asset on publish.",
+					Href: "/design/characters/npc-templates",
+					Dot:  "map",
+				})
+			</div>
+
+			if len(p.RecentNpcTemplates) > 0 {
+				<section class="bx-stack-tight" style="margin-top: var(--bx-s4);">
+					<h2 class="bx-h3" data-copy-slot="characters.recent">Recent NPC templates</h2>
+					<table class="bx-table">
+						<thead>
+							<tr>
+								<th>Name</th>
+								<th>Tags</th>
+								<th>Bake</th>
+								<th>Entity type</th>
+							</tr>
+						</thead>
+						<tbody>
+							for _, npc := range p.RecentNpcTemplates {
+								<tr>
+									<td>
+										<a
+											href={ templ.URL(fmt.Sprintf("/design/characters/generator/%d", npc.ID)) }
+										>{ npc.Name }</a>
+									</td>
+									<td>
+										for _, t := range npc.Tags {
+											<span class="bx-badge">{ t }</span>
+										}
+									</td>
+									<td class="bx-small">
+										if npc.ActiveBakeID != nil {
+											<span style="color: var(--bx-success);">✓ baked</span>
+										} else {
+											<span class="bx-muted">no bake yet</span>
+										}
+									</td>
+									<td class="bx-small">
+										if npc.EntityTypeID != nil {
+											<span class="bx-mono">#{ formatIntPad(int(*npc.EntityTypeID)) }</span>
+										} else {
+											<span class="bx-muted">unset</span>
+										}
+									</td>
+								</tr>
+							}
+						</tbody>
+					</table>
+				</section>
+			} else {
+				<div class="bx-panel" style="text-align:center; margin-top: var(--bx-s4);">
+					<p class="bx-muted" data-copy-slot="characters.empty">
+						No NPC templates yet. Start by registering parts, then compose your first character.
+					</p>
+				</div>
+			}
+		</div>
+
+		<div id="modal-host"></div>
+	}
+}
+
+// charactersCardProps drives the small dashboard cards. Kept local
+// because the shape isn't reused outside this file.
+type charactersCardProps struct {
+	Title string
+	Count int
+	Help  string
+	Href  string
+	Dot   string // "asset" | "entity" | "map" | "automation"
+}
+
+templ charactersCard(p charactersCardProps) {
+	<a class="bx-card" href={ templ.URL(p.Href) } style="text-decoration:none;">
+		<header class="bx-row bx-row--apart">
+			<span class="bx-row">
+				<span class={ "bx-dot", "bx-dot--" + p.Dot }></span>
+				<strong class="bx-card__title">{ p.Title }</strong>
+			</span>
+			<span class="bx-mono bx-muted">{ formatIntPad(p.Count) }</span>
+		</header>
+		<p class="bx-card__meta" style="margin-top: var(--bx-s2);">
+			{ p.Help }
+		</p>
+	</a>
+}

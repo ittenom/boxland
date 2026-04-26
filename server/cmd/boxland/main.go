@@ -17,7 +17,11 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
+	goruntime "runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -26,6 +30,8 @@ import (
 	authdesigner "boxland/server/internal/auth/designer"
 	authplayer "boxland/server/internal/auth/player"
 	"boxland/server/internal/automations"
+	"boxland/server/internal/backup"
+	"boxland/server/internal/characters"
 	"boxland/server/internal/config"
 	designerhandlers "boxland/server/internal/designer"
 	"boxland/server/internal/entities"
@@ -40,6 +46,7 @@ import (
 	"boxland/server/internal/publishing/artifact"
 	"boxland/server/internal/settings"
 	"boxland/server/internal/sim/runtime"
+	"boxland/server/internal/tli"
 	"boxland/server/internal/ws"
 )
 
@@ -49,10 +56,38 @@ func main() {
 	logging.Init(logging.FromEnv())
 
 	if len(os.Args) < 2 {
-		usage()
-		os.Exit(2)
+		if err := tli.RunAndExec(); err != nil {
+			slog.Error("tli failed", "err", err)
+			os.Exit(1)
+		}
+		return
 	}
 	switch os.Args[1] {
+	case "install":
+		if err := runInstall(); err != nil {
+			slog.Error("install failed", "err", err)
+			os.Exit(1)
+		}
+	case "design":
+		if err := runDesign(); err != nil {
+			slog.Error("design failed", "err", err)
+			os.Exit(1)
+		}
+	case "up":
+		if err := runExternal("docker", "compose", "-f", filepath.Join("docker", "docker-compose.yml"), "up", "-d"); err != nil {
+			slog.Error("up failed", "err", err)
+			os.Exit(1)
+		}
+	case "down":
+		if err := runExternal("docker", "compose", "-f", filepath.Join("docker", "docker-compose.yml"), "down"); err != nil {
+			slog.Error("down failed", "err", err)
+			os.Exit(1)
+		}
+	case "logs":
+		if err := runExternal("docker", "compose", "-f", filepath.Join("docker", "docker-compose.yml"), "logs", "-f", "--tail=100"); err != nil {
+			slog.Error("logs failed", "err", err)
+			os.Exit(1)
+		}
 	case "serve":
 		if err := runServe(); err != nil {
 			slog.Error("serve failed", "err", err)
@@ -61,6 +96,26 @@ func main() {
 	case "migrate":
 		if err := runMigrate(os.Args[2:]); err != nil {
 			slog.Error("migrate failed", "err", err)
+			os.Exit(1)
+		}
+	case "backup":
+		if err := runBackup(os.Args[2:]); err != nil {
+			slog.Error("backup failed", "err", err)
+			os.Exit(1)
+		}
+	case "test":
+		if err := runTest(); err != nil {
+			slog.Error("test failed", "err", err)
+			os.Exit(1)
+		}
+	case "build-web":
+		if err := runWeb("npm", "run", "build", "--silent"); err != nil {
+			slog.Error("build-web failed", "err", err)
+			os.Exit(1)
+		}
+	case "stage-web":
+		if err := runExternal("node", filepath.Join("web", "scripts", "stage-web.mjs")); err != nil {
+			slog.Error("stage-web failed", "err", err)
 			os.Exit(1)
 		}
 	case "seed":
@@ -75,7 +130,213 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: boxland <serve|migrate [up|down|version]|seed|version>")
+	fmt.Fprintln(os.Stderr, "usage: boxland [install|design|up|down|logs|serve|migrate [up|down|version]|backup export|import|test|version]")
+}
+
+func runInstall() error {
+	fmt.Println("Boxland install checks")
+	fmt.Println()
+	reqs := []installRequirement{
+		{Name: "Docker Desktop", Cmd: "docker", VersionArgs: []string{"--version"}, URL: "https://www.docker.com/products/docker-desktop/", Packages: map[string]string{"winget": "Docker.DockerDesktop", "choco": "docker-desktop", "brew": "--cask docker", "apt": "docker.io docker-compose-plugin", "dnf": "docker docker-compose-plugin", "pacman": "docker docker-compose"}},
+		{Name: "Go", Cmd: "go", VersionArgs: []string{"version"}, URL: "https://go.dev/dl/", Packages: map[string]string{"winget": "GoLang.Go", "choco": "golang", "brew": "go", "apt": "golang-go", "dnf": "golang", "pacman": "go"}},
+		{Name: "Node.js", Cmd: "node", VersionArgs: []string{"--version"}, URL: "https://nodejs.org/", Packages: map[string]string{"winget": "OpenJS.NodeJS.LTS", "choco": "nodejs-lts", "brew": "node", "apt": "nodejs npm", "dnf": "nodejs npm", "pacman": "nodejs npm"}},
+		{Name: "npm", Cmd: "npm", VersionArgs: []string{"--version"}, URL: "https://docs.npmjs.com/downloading-and-installing-node-js-and-npm", Packages: map[string]string{"winget": "OpenJS.NodeJS.LTS", "choco": "nodejs-lts", "brew": "node", "apt": "npm", "dnf": "npm", "pacman": "npm"}},
+	}
+	for _, r := range reqs {
+		if err := ensureRequirement(r); err != nil {
+			return err
+		}
+	}
+	fmt.Println()
+	fmt.Println("Installing web dependencies...")
+	if err := runWeb("npm", "install", "--silent", "--no-audit", "--no-fund"); err != nil {
+		return err
+	}
+	fmt.Println("Building Boxland CLI to ./bin ...")
+	if err := os.MkdirAll("bin", 0o755); err != nil {
+		return err
+	}
+	out := filepath.Join("bin", executableName("boxland"))
+	if err := runExternal("go", "build", "-o", out, "./server/cmd/boxland"); err != nil {
+		return err
+	}
+	fmt.Printf("\nInstalled local CLI: %s\n", out)
+	fmt.Println("Run `boxland` if it is on PATH, or run the binary above directly.")
+	return nil
+}
+
+type installRequirement struct {
+	Name        string
+	Cmd         string
+	VersionArgs []string
+	URL         string
+	Packages    map[string]string
+}
+
+func ensureRequirement(r installRequirement) error {
+	if path, err := exec.LookPath(r.Cmd); err == nil {
+		fmt.Printf("✓ %-15s %s\n", r.Name, path)
+		_ = runExternal(r.Cmd, r.VersionArgs...)
+		return nil
+	}
+	fmt.Printf("✗ %-15s missing\n", r.Name)
+	attempts := installAttempts(r)
+	if len(attempts) == 0 {
+		fmt.Printf("  No supported package manager found. Install from %s\n", hyperlink(r.URL, r.URL))
+		return nil
+	}
+	for _, a := range attempts {
+		fmt.Printf("  Trying: %s\n", strings.Join(a, " "))
+		if err := runExternal(a[0], a[1:]...); err != nil {
+			fmt.Printf("  Installer failed: %v\n", err)
+			continue
+		}
+		if path, err := exec.LookPath(r.Cmd); err == nil {
+			fmt.Printf("✓ %-15s %s\n", r.Name, path)
+			return nil
+		}
+	}
+	fmt.Printf("  Could not install automatically. Install from %s\n", hyperlink(r.URL, r.URL))
+	return nil
+}
+
+func installAttempts(r installRequirement) [][]string {
+	candidates := packageManagersForPlatform()
+	out := make([][]string, 0, len(candidates))
+	for _, pm := range candidates {
+		if _, err := exec.LookPath(pm); err != nil {
+			continue
+		}
+		pkg := r.Packages[pm]
+		if pkg == "" {
+			continue
+		}
+		out = append(out, installCommand(pm, pkg))
+	}
+	return out
+}
+
+func packageManagersForPlatform() []string {
+	switch goruntime.GOOS {
+	case "windows":
+		return []string{"winget", "choco"}
+	case "darwin":
+		return []string{"brew"}
+	default:
+		return []string{"brew", "apt", "dnf", "pacman"}
+	}
+}
+
+func installCommand(pm, pkg string) []string {
+	parts := strings.Fields(pkg)
+	switch pm {
+	case "winget":
+		return []string{"winget", "install", "--id", pkg, "--exact", "--source", "winget", "--accept-package-agreements", "--accept-source-agreements"}
+	case "choco":
+		return []string{"choco", "install", pkg, "-y"}
+	case "brew":
+		return append([]string{"brew", "install"}, parts...)
+	case "apt":
+		return append([]string{"sudo", "apt-get", "install", "-y"}, parts...)
+	case "dnf":
+		return append([]string{"sudo", "dnf", "install", "-y"}, parts...)
+	case "pacman":
+		return append([]string{"sudo", "pacman", "-S", "--needed", "--noconfirm"}, parts...)
+	default:
+		return []string{pm, "install", pkg}
+	}
+}
+
+func executableName(base string) string {
+	if goruntime.GOOS == "windows" {
+		return base + ".exe"
+	}
+	return base
+}
+
+func hyperlink(url, label string) string {
+	return "\x1b]8;;" + url + "\x1b\\" + label + "\x1b]8;;\x1b\\"
+}
+
+func runBackup(args []string) error {
+	if len(args) < 2 {
+		return fmt.Errorf("usage: boxland backup <export|import> <path> [--yes]")
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	switch args[0] {
+	case "export":
+		return backup.Export(ctx, cfg, args[1], backup.Options{Version: Version})
+	case "import":
+		yes := false
+		for _, a := range args[2:] {
+			if a == "--yes" {
+				yes = true
+			}
+		}
+		return backup.Import(ctx, cfg, args[1], yes, backup.Options{Version: Version})
+	default:
+		return fmt.Errorf("unknown backup subcommand %q", args[0])
+	}
+}
+
+func runDesign() error {
+	steps := [][]string{
+		{"boxland", "up"},
+		{"boxland", "migrate", "up"},
+		{"npm", "install", "--silent", "--no-audit", "--no-fund"},
+		{"npm", "run", "build", "--silent"},
+		{"boxland", "stage-web"},
+		{"boxland", "serve"},
+	}
+	for _, step := range steps {
+		var err error
+		if step[0] == "npm" {
+			err = runWeb(step[0], step[1:]...)
+		} else {
+			err = runExternal(step[0], step[1:]...)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func runTest() error {
+	steps := []func() error{
+		func() error { return runServer("go", "test", "./...") },
+		func() error { return runWeb("npm", "test") },
+		func() error {
+			return runServer("go", "test", "-count=1", "-run", "TestRealmIsolation_|TestSpectate_(SandboxInstance|PrivateMap)_", "./internal/ws/...")
+		},
+		func() error { return runExternal("node", filepath.Join("web", "scripts", "scripts.test.mjs")) },
+	}
+	for _, step := range steps {
+		if err := step(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func runWeb(name string, args ...string) error { return runIn(filepath.Join("web"), name, args...) }
+func runServer(name string, args ...string) error {
+	return runIn(filepath.Join("server"), name, args...)
+}
+func runExternal(name string, args ...string) error { return runIn("", name, args...) }
+func runIn(dir, name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	return cmd.Run()
 }
 
 func runMigrate(args []string) error {
@@ -158,11 +419,24 @@ func runServe() error {
 	entitySvc := entities.New(pgPool, componentRegistry)
 	mapsSvc := mapsservice.New(pgPool)
 	settingsSvc := settings.New(pgPool)
+	charactersSvc := characters.New(pgPool)
+	// Bake-on-publish needs the object store + asset service. Two-step
+	// wiring lets the chrome / repo CRUD construct the Service without
+	// pulling in the asset graph.
+	charactersSvc.SetBakeDeps(objStore, assetSvc)
 
 	publishRegistry := artifact.NewRegistry()
 	publishRegistry.Register(assets.NewHandler(assetSvc))
 	publishRegistry.Register(entities.NewHandler(entitySvc))
 	publishRegistry.Register(mapsservice.NewHandler(mapsSvc))
+	// Character generator artifacts. NPC-template publish runs the bake
+	// pipeline inline (Phase 2); the other four kinds are pure metadata
+	// updates to their live row.
+	publishRegistry.Register(characters.NewSlotHandler(charactersSvc))
+	publishRegistry.Register(characters.NewPartHandler(charactersSvc))
+	publishRegistry.Register(characters.NewStatSetHandler(charactersSvc))
+	publishRegistry.Register(characters.NewTalentTreeHandler(charactersSvc))
+	publishRegistry.Register(characters.NewNpcTemplateHandler(charactersSvc))
 	publishPipeline := artifact.NewPipeline(pgPool, publishRegistry)
 
 	// Automation registries + persistence service. The two registries are
@@ -248,6 +522,7 @@ func runServe() error {
 		Flags:              flagsSvc,
 		HUD:                hudRepo,
 		HUDWidgets:         hudWidgets,
+		Characters:         charactersSvc,
 	}
 	loadSessionMW := designerhandlers.LoadSession(designerDeps)
 	// Order matters: CSRF must run on every request to mint the cookie;
@@ -260,8 +535,8 @@ func runServe() error {
 		Maps:          mapsSvc,
 		Settings:      settingsSvc,
 		HUD:           hudRepo,
-		Assets:        assetSvc,  // /play/asset-catalog reads from this
-		ObjectStore:   objStore,  // CDN URLs for the asset catalog
+		Assets:        assetSvc, // /play/asset-catalog reads from this
+		ObjectStore:   objStore, // CDN URLs for the asset catalog
 		SecureCookies: cfg.Env == "prod",
 		// WSURL left empty -> handlers derive ws://host/ws from the
 		// request. Production deployments behind a reverse proxy can

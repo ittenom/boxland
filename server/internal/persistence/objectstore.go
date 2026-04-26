@@ -90,6 +90,11 @@ func ContentAddressedKey(prefix string, body []byte) string {
 	return path.Join(prefix, hexSum[:2], hexSum[2:4], hexSum)
 }
 
+// S3Client exposes the underlying S3 client for infrastructure tooling such as
+// full-instance backup/restore. Product code should prefer the narrow ObjectStore
+// methods above so access control remains centralized.
+func (o *ObjectStore) S3Client() *s3.Client { return o.client }
+
 // Put uploads body at key with the given content-type. Idempotent for
 // content-addressed keys: re-uploading identical bytes is a no-op semantically.
 func (o *ObjectStore) Put(ctx context.Context, key, contentType string, body io.Reader, size int64) error {

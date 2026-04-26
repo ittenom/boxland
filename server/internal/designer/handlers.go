@@ -21,6 +21,7 @@ import (
 	"boxland/server/internal/assets"
 	authdesigner "boxland/server/internal/auth/designer"
 	"boxland/server/internal/automations"
+	"boxland/server/internal/characters"
 	"boxland/server/internal/configurable"
 	"boxland/server/internal/entities"
 	"boxland/server/internal/entities/components"
@@ -73,6 +74,11 @@ type Deps struct {
 	// Flags + ActionGroups before allowing a save.
 	HUD        *hud.Repo
 	HUDWidgets *hud.Registry
+
+	// Character generator domain. Owns slot/part/recipe/bake/stat-set
+	// /talent-tree/NPC-template CRUD plus the publish artifact
+	// handlers. See server/internal/characters.
+	Characters *characters.Service
 }
 
 // New returns an http.Handler with the designer routes mounted under
@@ -142,6 +148,28 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /design/tile-groups/{id}", auth(getTileGroupDetail(d)))
 	mux.Handle("DELETE /design/tile-groups/{id}", auth(deleteTileGroup(d)))
 	mux.Handle("POST /design/tile-groups/{id}/layout", auth(postTileGroupLayout(d)))
+
+	// Character generator (Phase 1: dashboard + slot/part/NPC-template
+	// CRUD + draft endpoints. Generator UI in Phase 2.) See
+	// docs/superpowers/plans/2026-04-26-character-generator-plan.md.
+	mux.Handle("GET /design/characters", auth(getCharactersList(d)))
+	mux.Handle("POST /design/characters/slots", auth(postCharacterSlot(d)))
+	mux.Handle("DELETE /design/characters/slots/{id}", auth(deleteCharacterSlot(d)))
+	mux.Handle("POST /design/characters/slots/{id}/draft", auth(postCharacterSlotDraft(d)))
+	mux.Handle("POST /design/characters/parts", auth(postCharacterPart(d)))
+	mux.Handle("DELETE /design/characters/parts/{id}", auth(deleteCharacterPart(d)))
+	mux.Handle("POST /design/characters/parts/{id}/draft", auth(postCharacterPartDraft(d)))
+	mux.Handle("GET /design/characters/npc-templates/new", auth(getCharacterNpcTemplateNewModal(d)))
+	mux.Handle("POST /design/characters/npc-templates", auth(postCharacterNpcTemplate(d)))
+	mux.Handle("DELETE /design/characters/npc-templates/{id}", auth(deleteCharacterNpcTemplate(d)))
+	mux.Handle("POST /design/characters/npc-templates/{id}/draft", auth(postCharacterNpcTemplateDraft(d)))
+	mux.Handle("POST /design/characters/npc-templates/{id}/attach-recipe", auth(postCharacterNpcTemplateAttachRecipe(d)))
+	mux.Handle("GET /design/characters/generator/{id}", auth(getCharacterGeneratorPage(d)))
+	// Recipe + catalog endpoints for the Generator UI (Phase 2).
+	mux.Handle("GET /design/characters/catalog", auth(getCharacterCatalog(d)))
+	mux.Handle("POST /design/characters/recipes", auth(postCharacterRecipe(d)))
+	mux.Handle("GET /design/characters/recipes/{id}", auth(getCharacterRecipe(d)))
+	mux.Handle("POST /design/characters/recipes/{id}", auth(updateCharacterRecipe(d)))
 
 	// Mapmaker (PLAN.md §5e). Painting is over WS (DesignerCommand
 	// PlaceTiles/EraseTiles/PlaceLighting); these HTTP routes only
@@ -1310,6 +1338,12 @@ func draftToastVerboseFor(kind string) string {
 		return `Draft saved.`
 	case "map":
 		return `Map draft saved.`
+	case "character_slot":
+		return `Slot draft saved.`
+	case "character_part":
+		return `Part draft saved.`
+	case "npc_template":
+		return `NPC template draft saved.`
 	default:
 		return `Draft saved.`
 	}
@@ -1321,6 +1355,10 @@ func draftToastTailFor(kind string) string {
 		return `to apply changes to the Mapmaker palette and live game.`
 	case "map":
 		return `to make changes visible to players.`
+	case "character_slot", "character_part":
+		return `to make this change visible to the character generator.`
+	case "npc_template":
+		return `to bake the sprite and link the NPC entity type.`
 	default:
 		return `when you're ready to publish.`
 	}

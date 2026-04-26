@@ -87,11 +87,12 @@
     --bx-danger:  #FF5E6D;
 
     /* artifact-kind dots (used in tree, badges) */
-    --bx-kind-asset:  #FFDD4A;
-    --bx-kind-entity: #5ADBFF;
-    --bx-kind-map:    #5ADFB0;
-    --bx-kind-socket: #b08fff;
-    --bx-kind-group:  #FE9000;
+    --bx-kind-asset:     #FFDD4A;
+    --bx-kind-entity:    #5ADBFF;
+    --bx-kind-map:       #5ADFB0;
+    --bx-kind-socket:    #b08fff;
+    --bx-kind-group:     #FE9000;
+    --bx-kind-character: #FF5E9F; /* jewel pink for character generator artifacts */
 
     /* checker pattern under previews */
     --bx-checker-a: #04162a;
@@ -134,11 +135,12 @@
     --bx-warn:    #FE9000;
     --bx-danger:  #d63a4a;
 
-    --bx-kind-asset:  #FE9000;
-    --bx-kind-entity: #094074;
-    --bx-kind-map:    #2fa56b;
-    --bx-kind-socket: #7a5fcf;
-    --bx-kind-group:  #d63a4a;
+    --bx-kind-asset:     #FE9000;
+    --bx-kind-entity:    #094074;
+    --bx-kind-map:       #2fa56b;
+    --bx-kind-socket:    #7a5fcf;
+    --bx-kind-group:     #d63a4a;
+    --bx-kind-character: #c4337a; /* jewel pink — light theme variant */
 
     --bx-checker-a: #ffffff;
     --bx-checker-b: #e4ecf4;
@@ -980,11 +982,12 @@ p, li { font-size: 13px; line-height: 1.55; }
 
 /* -- Dot (artifact-kind color cue) ----------------------------------- */
 .bx-dot { display: inline-block; width: 8px; height: 8px; flex-shrink: 0; }
-.bx-dot--asset  { background: var(--bx-kind-asset); }
-.bx-dot--entity { background: var(--bx-kind-entity); }
-.bx-dot--map    { background: var(--bx-kind-map); }
-.bx-dot--socket { background: var(--bx-kind-socket); }
-.bx-dot--group  { background: var(--bx-kind-group); }
+.bx-dot--asset     { background: var(--bx-kind-asset); }
+.bx-dot--entity    { background: var(--bx-kind-entity); }
+.bx-dot--map       { background: var(--bx-kind-map); }
+.bx-dot--socket    { background: var(--bx-kind-socket); }
+.bx-dot--group     { background: var(--bx-kind-group); }
+.bx-dot--character { background: var(--bx-kind-character); }
 
 
 /* -- Command palette ------------------------------------------------- */

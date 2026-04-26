@@ -41,6 +41,8 @@
       "@settings/*":   ["settings/*"],
       "@audio":        ["audio/index.ts"],
       "@audio/*":      ["audio/*"],
+      "@character-generator":   ["character-generator/index.ts"],
+      "@character-generator/*": ["character-generator/*"],
       "@proto/*":      ["net/proto/boxland/proto/*"],
       "@shared/*":     ["../../shared/*"]
     }

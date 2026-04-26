@@ -1,0 +1,337 @@
+/* Boxland — character generator styles.
+ *
+ * Loaded alongside pixel.css on /design/characters/generator/{id}.
+ * Lives in its own file so it can be hot-reloaded without re-parsing
+ * the full design-tool stylesheet. Conventions match pixel.css:
+ *   - bx-* class prefix
+ *   - design tokens (var(--bx-s2), var(--bx-bg-2), var(--bx-line))
+ *   - integer scaling, no blur, visible focus
+ */
+
+.bx-character-generator {
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    gap: var(--bx-s3);
+    height: 100%;
+}
+
+/* Tab strip */
+.bx-character-generator__tabs {
+    display: flex;
+    gap: var(--bx-s1);
+    border-bottom: 1px solid var(--bx-line);
+    padding-bottom: var(--bx-s1);
+}
+
+.bx-character-generator__tab {
+    appearance: none;
+    background: transparent;
+    color: var(--bx-fg-2);
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-radius: 4px 4px 0 0;
+    padding: var(--bx-s2) var(--bx-s3);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 13px;
+}
+
+.bx-character-generator__tab:hover {
+    color: var(--bx-fg-0);
+}
+
+.bx-character-generator__tab[aria-selected="true"] {
+    background: var(--bx-bg-2);
+    border-color: var(--bx-line);
+    color: var(--bx-kind-character);
+    font-weight: 600;
+}
+
+.bx-character-generator__tab:focus-visible {
+    outline: 2px solid var(--bx-focus);
+    outline-offset: 2px;
+}
+
+/* Three-column layout */
+.bx-character-generator__grid {
+    display: grid;
+    grid-template-columns: 280px 1fr 280px;
+    gap: var(--bx-s3);
+    align-items: start;
+    min-height: 0;
+}
+
+@media (max-width: 1100px) {
+    .bx-character-generator__grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.bx-character-generator__preview,
+.bx-character-generator__editor,
+.bx-character-generator__summary {
+    background: var(--bx-bg-2);
+    border: 1px solid var(--bx-line);
+    border-radius: 4px;
+    padding: var(--bx-s3);
+    display: flex;
+    flex-direction: column;
+    gap: var(--bx-s3);
+}
+
+.bx-character-generator__preview-frame {
+    background-image:
+        linear-gradient(45deg, var(--bx-checker-a) 25%, transparent 25%),
+        linear-gradient(-45deg, var(--bx-checker-a) 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, var(--bx-checker-a) 75%),
+        linear-gradient(-45deg, transparent 75%, var(--bx-checker-a) 75%);
+    background-size: 8px 8px;
+    background-position: 0 0, 0 4px, 4px -4px, -4px 0;
+    background-color: var(--bx-checker-b);
+    display: grid;
+    place-items: center;
+    padding: var(--bx-s3);
+    border: 1px solid var(--bx-line);
+}
+
+.bx-character-generator__preview-frame canvas {
+    image-rendering: pixelated;
+    width: 128px;
+    height: 128px;
+}
+
+.bx-character-generator__preview-controls {
+    display: flex;
+    flex-direction: column;
+    gap: var(--bx-s2);
+}
+
+.bx-character-generator__field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--bx-s1);
+}
+
+.bx-character-generator__bake-badge {
+    font-size: 11px;
+    text-align: center;
+}
+
+/* Slot picker */
+.bx-character-generator__slots {
+    display: flex;
+    flex-direction: column;
+    gap: var(--bx-s2);
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
+.bx-character-generator__slot {
+    border: 1px solid var(--bx-line);
+    border-radius: 3px;
+    padding: var(--bx-s2);
+    background: var(--bx-bg-1);
+    display: flex;
+    flex-direction: column;
+    gap: var(--bx-s1);
+}
+
+.bx-character-generator__slot--required .bx-character-generator__slot-label::after {
+    content: " *";
+    color: var(--bx-danger);
+}
+
+.bx-character-generator__slot--filled {
+    border-left: 3px solid var(--bx-kind-character);
+}
+
+.bx-character-generator__slot-label {
+    font-weight: 600;
+    font-size: 12px;
+    color: var(--bx-fg-1);
+}
+
+.bx-character-generator__slot-row {
+    display: flex;
+    gap: var(--bx-s2);
+    align-items: center;
+}
+
+.bx-character-generator__slot-thumb {
+    width: 32px;
+    height: 32px;
+    image-rendering: pixelated;
+    background-color: var(--bx-bg-2);
+    border: 1px solid var(--bx-line);
+    flex-shrink: 0;
+}
+
+.bx-character-generator__slot-select {
+    flex: 1;
+}
+
+/* Stat allocator */
+.bx-character-generator__stats {
+    display: flex;
+    flex-direction: column;
+    gap: var(--bx-s2);
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
+.bx-character-generator__stat-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto auto;
+    gap: var(--bx-s2);
+    align-items: center;
+    padding: var(--bx-s2);
+    background: var(--bx-bg-1);
+    border: 1px solid var(--bx-line);
+    border-radius: 3px;
+}
+
+.bx-character-generator__stat-row--derived {
+    border-style: dashed;
+    color: var(--bx-fg-2);
+}
+
+.bx-character-generator__stat-label {
+    font-weight: 600;
+    font-size: 12px;
+}
+
+.bx-character-generator__stat-value {
+    font-family: var(--bx-font-pixel, var(--bx-font));
+    min-width: 32px;
+    text-align: right;
+}
+
+.bx-character-generator__stat-step {
+    appearance: none;
+    width: 24px;
+    height: 24px;
+    border-radius: 3px;
+    border: 1px solid var(--bx-line);
+    background: var(--bx-bg-2);
+    color: var(--bx-fg-0);
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.bx-character-generator__stat-step:hover { background: var(--bx-bg-3); }
+.bx-character-generator__stat-step:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.bx-character-generator__stat-budget {
+    font-size: 11px;
+    color: var(--bx-muted);
+    border-top: 1px dashed var(--bx-line);
+    padding-top: var(--bx-s2);
+}
+
+/* Talent picker */
+.bx-character-generator__talents {
+    display: flex;
+    flex-direction: column;
+    gap: var(--bx-s3);
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
+.bx-character-generator__talent-tree {
+    border: 1px solid var(--bx-line);
+    border-radius: 3px;
+    padding: var(--bx-s2);
+    background: var(--bx-bg-1);
+}
+
+.bx-character-generator__talent-tree-name {
+    font-weight: 600;
+    font-size: 13px;
+    margin-bottom: var(--bx-s1);
+}
+
+.bx-character-generator__talent-node {
+    display: grid;
+    grid-template-columns: 1fr auto auto auto;
+    gap: var(--bx-s2);
+    align-items: center;
+    padding: var(--bx-s1) var(--bx-s2);
+}
+
+.bx-character-generator__talent-node--ranked {
+    background: rgba(255, 94, 159, 0.06);
+    border-left: 3px solid var(--bx-kind-character);
+}
+
+.bx-character-generator__talent-node--blocked {
+    color: var(--bx-fg-3);
+}
+
+.bx-character-generator__talent-node-name {
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.bx-character-generator__talent-node-desc {
+    grid-column: 1 / -1;
+    font-size: 11px;
+    color: var(--bx-fg-2);
+}
+
+/* Summary panel */
+.bx-character-generator__summary-list {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: var(--bx-s1) var(--bx-s2);
+    margin: 0;
+    font-size: 12px;
+}
+
+.bx-character-generator__summary-list dt {
+    color: var(--bx-fg-2);
+}
+
+.bx-character-generator__summary-list dd {
+    margin: 0;
+    color: var(--bx-fg-0);
+    font-family: var(--bx-font-pixel, var(--bx-font));
+    text-align: right;
+}
+
+.bx-character-generator__validation {
+    border-top: 1px dashed var(--bx-line);
+    padding-top: var(--bx-s2);
+}
+
+.bx-character-generator__validation ul {
+    list-style: none;
+    padding: 0;
+    margin: var(--bx-s1) 0 0 0;
+    font-size: 11px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--bx-s1);
+}
+
+.bx-character-generator__validation li {
+    color: var(--bx-warn);
+}
+
+.bx-character-generator__validation li.bx-character-generator__validation--ok {
+    color: var(--bx-success);
+}
+
+/* Action bar */
+.bx-character-generator__actions {
+    background: var(--bx-bg-2);
+    border: 1px solid var(--bx-line);
+    border-radius: 4px;
+    padding: var(--bx-s2) var(--bx-s3);
+    display: flex;
+    gap: var(--bx-s2);
+    align-items: center;
+}
+
+.bx-character-generator__actions .bx-spacer {
+    flex: 1;
+}

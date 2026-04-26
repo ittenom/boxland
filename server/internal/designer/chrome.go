@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"boxland/server/internal/assets"
+	"boxland/server/internal/characters"
 	"boxland/server/internal/entities"
 	mapsservice "boxland/server/internal/maps"
 	"boxland/server/views"
@@ -86,6 +87,19 @@ func BuildChrome(r *http.Request, d Deps) views.LayoutProps {
 		} else {
 			out.Project.MapCount = len(items)
 			out.Tree.Maps = makeMapSection(items)
+		}
+	}
+
+	// Characters (NPC templates power the tree section; full counts
+	// also include slots + parts but the tree shows NPC templates as
+	// the most-actionable rollup).
+	if d.Characters != nil {
+		items, err := d.Characters.ListNpcTemplates(ctx)
+		if err != nil {
+			slog.Warn("chrome: list npc templates", "err", err)
+		} else {
+			out.Project.CharacterCount = len(items)
+			out.Tree.Characters = makeCharacterSection(items)
 		}
 	}
 
@@ -200,6 +214,27 @@ func makeGroupSection(items []entities.TileGroup) views.IndexSection {
 			Name: g.Name,
 			Meta: fmt.Sprintf("%d×%d", g.Width, g.Height),
 			Href: fmt.Sprintf("/design/tile-groups/%d", g.ID),
+		})
+	}
+	return out
+}
+
+func makeCharacterSection(items []characters.NpcTemplate) views.IndexSection {
+	out := views.IndexSection{Total: len(items)}
+	for _, n := range items {
+		if len(out.Items) >= treeItemsPerSection {
+			break
+		}
+		warn := ""
+		if n.ActiveBakeID == nil {
+			warn = "no bake yet"
+		}
+		out.Items = append(out.Items, views.IndexItem{
+			ID:   n.ID,
+			Name: n.Name,
+			Meta: "npc",
+			Warn: warn,
+			Href: fmt.Sprintf("/design/characters/npc-templates/%d", n.ID),
 		})
 	}
 	return out
