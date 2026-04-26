@@ -146,6 +146,12 @@ func runServe() error {
 	playerAuthSvc := authplayer.New(pgPool, []byte(cfg.JWTSigningSecret))
 	assetSvc := assets.New(pgPool)
 	importerRegistry := assets.DefaultRegistry()
+	// Wire the importer registry into the asset service so sprite
+	// uploads auto-slice + synthesize walk_*/idle animations at
+	// upload time. The designer-side upload handler already passes
+	// the `kind` override; the service uses the registry only for
+	// sprite kinds.
+	assetSvc.Importers = importerRegistry
 	bakeJob := assets.NewBakeJob(pgPool, objStore, assetSvc)
 
 	componentRegistry := components.Default()
@@ -182,7 +188,13 @@ func runServe() error {
 	// Live game runtime: per-(map, instance) MapInstances live here. Any
 	// JoinMap / DesignerCommand reaching the WS gateway gets routed
 	// through this manager.
-	instanceMgr := runtime.NewInstanceManager(pgPool, redisCli.Client, mapsSvc)
+	//
+	// SystemDeps wires the canonical per-instance system pipeline.
+	// Animation system needs the asset catalog so it can look up the
+	// `walk_<facing>`/`idle` clip for a given sprite.
+	instanceMgr := runtime.NewInstanceManager(pgPool, redisCli.Client, mapsSvc, runtime.SystemDeps{
+		Animations: &runtime.AssetsAnimationCatalog{Svc: assetSvc},
+	})
 
 	// Wire the publish pipeline's post-commit hook to broadcast a
 	// LivePublish (HotSwap) to every running map. Each affected
@@ -248,6 +260,8 @@ func runServe() error {
 		Maps:          mapsSvc,
 		Settings:      settingsSvc,
 		HUD:           hudRepo,
+		Assets:        assetSvc,  // /play/asset-catalog reads from this
+		ObjectStore:   objStore,  // CDN URLs for the asset catalog
 		SecureCookies: cfg.Env == "prod",
 		// WSURL left empty -> handlers derive ws://host/ws from the
 		// request. Production deployments behind a reverse proxy can

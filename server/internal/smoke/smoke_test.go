@@ -186,7 +186,7 @@ func TestSmoke_DesignerToPlayerEndToEnd(t *testing.T) {
 	}
 
 	// --- 6. WS gateway: player handshake + JoinMap ---
-	mgr := runtime.NewInstanceManager(pool, cli, mapsSvc)
+	mgr := runtime.NewInstanceManager(pool, cli, mapsSvc, runtime.SystemDeps{})
 	dispatcher := ws.NewDispatcher()
 	ws.RegisterDefaultVerbs(dispatcher)
 	ws.RegisterAuthoringVerbs(dispatcher, ws.AuthoringDeps{

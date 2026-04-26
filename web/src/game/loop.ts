@@ -121,6 +121,11 @@ export interface GameLoopOptions {
 	 *  "follow"; the Settings.spectator.freeCam preference flips this
 	 *  to "free-cam" when boot picks the player up. */
 	initialCameraMode?: CameraMode;
+	/** Optional hook fired with every freshly-seen asset id. The
+	 *  game/entry-game wiring forwards these to RemoteAssetCatalog.ensure()
+	 *  so the renderer's TextureCache has the URL + frame metadata
+	 *  ready before the next paint. Tests omit this. */
+	onAssetIds?: (ids: number[]) => void;
 }
 
 /**
@@ -141,6 +146,8 @@ export class GameLoop {
 	private readonly scheduler: LoopScheduler;
 	private readonly config: GameBootConfig;
 	private readonly audio: SoundEngine | undefined;
+	private readonly onAssetIds: ((ids: number[]) => void) | undefined;
+	private readonly seenAssetIds = new Set<number>();
 
 	private state: LocalState = freshLocalState();
 	private rafHandle: unknown = null;
@@ -161,6 +168,7 @@ export class GameLoop {
 		this.bus = opts.bus ?? new CommandBus();
 		this.mailbox = opts.mailbox ?? new Mailbox();
 		this.audio = opts.audio;
+		this.onAssetIds = opts.onAssetIds;
 		this.spectator = opts.spectator ?? false;
 		this.camera = new GameCamera();
 		if (opts.initialCameraMode) this.camera.setMode(opts.initialCameraMode);
@@ -342,6 +350,32 @@ export class GameLoop {
 		if (!this.hostHinted && applied.addedIds.length > 0 && this.state.hostId === 0n) {
 			this.state.hostId = applied.addedIds[0]!;
 			this.hostHinted = true;
+		}
+
+		// Collect asset ids the catalog hasn't seen yet so the texture
+		// pipeline can prefetch them before the next paint. We look at
+		// added (newly entered AOI) AND moved (in case an entity's
+		// type/asset changed via SetSprite automation) — `seenAssetIds`
+		// dedups so it costs O(1) per id.
+		if (this.onAssetIds && (applied.addedIds.length > 0 || applied.movedIds.length > 0)) {
+			const fresh: number[] = [];
+			const collect = (id: bigint) => {
+				const ent = this.mailbox.getEntity(id);
+				if (!ent) return;
+				// Today the renderer adapter uses `typeId` as the
+				// asset_id (legacy from before the catalog wiring);
+				// fold that here so the collected ids match what the
+				// catalog will be asked for. Once typeId/assetId are
+				// untangled this becomes ent.assetId only.
+				const assetID = ent.typeId;
+				if (assetID > 0 && !this.seenAssetIds.has(assetID)) {
+					this.seenAssetIds.add(assetID);
+					fresh.push(assetID);
+				}
+			};
+			for (const id of applied.addedIds) collect(id);
+			for (const id of applied.movedIds) collect(id);
+			if (fresh.length > 0) this.onAssetIds(fresh);
 		}
 
 		// Reconcile if the server moved our host.

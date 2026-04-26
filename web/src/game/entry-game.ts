@@ -14,7 +14,7 @@ import { SoundEngine, type SoundCatalog, type AudioCameraReader } from "@audio";
 import { applyAudio, loadLocal } from "@settings";
 
 import { GameLoop, type RendererLike, type HudLike } from "./loop";
-import { PlaceholderCatalog } from "./catalog";
+import { RemoteAssetCatalog } from "./catalog";
 import type { CachedEntity } from "@net";
 import type { ConnState } from "@net";
 import type { GameBootConfig } from "./types";
@@ -100,11 +100,15 @@ function buildHud(): HudLike {
 export async function bootGame(host: HTMLElement = document.getElementById("bx-game-host") as HTMLElement): Promise<GameLoop | null> {
 	if (!host) return null;
 	const config = readBootConfig(host);
+	// One catalog for the whole page. Asset prefetch is wired below
+	// (loop.onAssetIds → catalog.ensure) so newly-seen assets land
+	// before the next paint.
+	const catalog = new RemoteAssetCatalog();
 	const app = await BoxlandApp.create({
 		host,
 		worldViewW: 480,
 		worldViewH: 320,
-		catalog: new PlaceholderCatalog(),
+		catalog,
 	});
 	// Lazy SoundEngine -- the AudioContext only constructs on the
 	// first user gesture (Chrome autoplay rule). Hand the loop the
@@ -150,6 +154,11 @@ export async function bootGame(host: HTMLElement = document.getElementById("bx-g
 		audio,
 		spectator,
 		initialCameraMode: localSettings.spectator.freeCam ? "free-cam" : "follow",
+		// Forward freshly-seen asset ids into the catalog so the
+		// renderer's TextureCache has a real CDN URL by the time
+		// the next paint asks for it. Fire-and-forget — ensure() is
+		// idempotent under concurrent calls.
+		onAssetIds: (ids) => { void catalog.ensure(ids); },
 	});
 	cachedLoop = loop;
 	// Reflect mode in the HUD on boot.

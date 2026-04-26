@@ -13,6 +13,7 @@
 
 import { Container, Sprite } from "pixi.js";
 
+import { AnimClock, type AnimResolver } from "./anim-clock";
 import { DebugOverlay } from "./debug";
 import { Hud } from "./hud";
 import { LightingLayer, type LightingCell } from "./lighting";
@@ -60,9 +61,16 @@ export class Scene {
 	private readonly sprites = new Map<EntityId, Sprite>();
 	private readonly sortKeys = new Map<Sprite, SortKey>();
 	private layout: ViewportLayout;
+	private readonly clock = new AnimClock();
+	private readonly animResolver: AnimResolver;
 
-	constructor(catalog: AssetCatalog, private readonly opts: SceneOptions) {
+	constructor(private readonly catalog: AssetCatalog, private readonly opts: SceneOptions) {
 		this.textures = new TextureCache(catalog);
+		// Cached resolver: prefer the catalog's clock-friendly lookup
+		// when supplied, otherwise no-op (frame index passes through
+		// unmodified). Bound once so we don't re-bind per tick.
+		const lookup = catalog.animationByID?.bind(catalog);
+		this.animResolver = lookup ? (a, id) => lookup(a, id) : () => undefined;
 		this.lighting = new LightingLayer({
 			worldViewW: opts.worldViewW,
 			worldViewH: opts.worldViewH,
@@ -113,8 +121,15 @@ export class Scene {
 	/**
 	 * Apply a new set of Renderables. Existing sprites are kept and updated;
 	 * sprites whose ids dropped out of `renderables` are removed.
+	 *
+	 * Mutates `renderables[i].anim_frame` in place to reflect the
+	 * wall-clock cycle position (forward / reverse / pingpong, fps
+	 * from the catalog's animation row). Callers that need the
+	 * server-supplied frame for other purposes should snapshot the
+	 * field before calling update().
 	 */
 	async update(renderables: Renderable[], camera: Camera): Promise<void> {
+		this.clock.tick(this.now(), renderables, this.animResolver);
 		const seen = new Set<EntityId>();
 		for (const r of renderables) {
 			seen.add(r.id);
@@ -216,6 +231,13 @@ export class Scene {
 	/** Number of currently mounted sprites — handy for tests. */
 	size(): number {
 		return this.sprites.size;
+	}
+
+	/** now() in ms — wraps performance.now / Date.now. Indirected so
+	 *  tests can subclass + override to drive the frame clock
+	 *  deterministically without standing up a fake performance API. */
+	protected now(): number {
+		return typeof performance !== "undefined" ? performance.now() : Date.now();
 	}
 
 	/**

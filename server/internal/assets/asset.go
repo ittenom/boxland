@@ -65,12 +65,22 @@ var (
 
 // Service holds dependencies the asset surface needs. Public field so
 // tests can swap or inspect the Repo if needed.
+//
+// Importers, when non-nil, drives the sprite-upload pre-flight: PNGs
+// arriving without an Aseprite sidecar get auto-sliced + walk_*
+// animations synthesized at upload time. Tests pass nil to skip the
+// importer path; production wires `assets.DefaultRegistry()` here in
+// cmd/boxland.
 type Service struct {
-	Pool *pgxpool.Pool
-	Repo *repo.Repo[Asset]
+	Pool      *pgxpool.Pool
+	Repo      *repo.Repo[Asset]
+	Importers *Registry
 }
 
-// New constructs a Service.
+// New constructs a Service. The importer registry is wired separately
+// so existing test setup (which passes a bare Pool) keeps working;
+// callers wanting upload-time animation synthesis should set
+// `svc.Importers = assets.DefaultRegistry()` after New.
 func New(pool *pgxpool.Pool) *Service {
 	return &Service{
 		Pool: pool,

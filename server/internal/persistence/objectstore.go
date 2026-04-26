@@ -141,3 +141,13 @@ func (o *ObjectStore) PresignGet(ctx context.Context, key string, ttl time.Durat
 	}
 	return out.URL, nil
 }
+
+// ObjectStoreForTest returns an ObjectStore that supports PublicURL only
+// (no S3 client, no bucket). Useful for handler tests that need the URL
+// builder but have no MinIO available. Calling Put/Get on the returned
+// store panics — read-only by construction.
+func ObjectStoreForTest(publicBase string) *ObjectStore {
+	return &ObjectStore{
+		publicBase: strings.TrimRight(publicBase, "/"),
+	}
+}

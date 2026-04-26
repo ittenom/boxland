@@ -79,7 +79,7 @@ func newSpectateFixture(t *testing.T) *spectateFixture {
 
 	mapsSvc := maps.New(pool)
 
-	mgr := runtime.NewInstanceManager(pool, cli, mapsSvc)
+	mgr := runtime.NewInstanceManager(pool, cli, mapsSvc, runtime.SystemDeps{})
 	dispatcher := boxws.NewDispatcher()
 	boxws.RegisterDefaultVerbs(dispatcher)
 	deps := boxws.AuthoringDeps{MapsService: mapsSvc, Instances: mgr}

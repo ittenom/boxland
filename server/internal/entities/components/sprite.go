@@ -25,6 +25,13 @@ type Sprite struct {
 	VariantID uint16 `json:"variant_id"`
 	Tint      uint32 `json:"tint"`        // 0xRRGGBBAA, 0 = none
 	Layer     int16  `json:"layer"`       // render layer; higher draws on top
+	// Facing matches the EntityState.facing wire encoding (0=N, 1=E,
+	// 2=S, 3=W). Set by the animation system from the entity's
+	// velocity each tick; stays sticky on a zero-velocity tick so a
+	// stationary entity keeps its last-walked direction. Encoded into
+	// the broadcast Diff so the renderer (and any spectator) can pick
+	// the correct directional walk clip on its own.
+	Facing    uint8  `json:"facing"`
 }
 
 func (s Sprite) Validate() error {

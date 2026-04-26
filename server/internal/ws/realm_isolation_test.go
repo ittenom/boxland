@@ -68,7 +68,7 @@ func newRealmFixture(t *testing.T) *realmFixture {
 		t.Fatal(err)
 	}
 
-	mgr := runtime.NewInstanceManager(pool, cli, mapsSvc)
+	mgr := runtime.NewInstanceManager(pool, cli, mapsSvc, runtime.SystemDeps{})
 	dispatcher := ws.NewDispatcher()
 	ws.RegisterDefaultVerbs(dispatcher)
 	deps := ws.AuthoringDeps{MapsService: mapsSvc, Instances: mgr}

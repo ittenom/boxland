@@ -106,6 +106,20 @@ export interface AssetCatalog {
 	urlFor(asset_id: AssetId, variant_id?: number): string;
 	/** Look up the source rect for a frame; returns undefined if unknown. */
 	frame(asset_id: AssetId, anim_id: AnimId, frame: number): AnimationFrame | undefined;
+	/** Optional clock-friendly animation lookup. When supplied, the
+	 *  renderer's frame clock advances `anim_frame` from wall-clock
+	 *  time using (frame_from, frame_to, fps, direction). Catalogs
+	 *  without this (e.g. PlaceholderCatalog) simply leave the
+	 *  server-supplied frame index alone. */
+	animationByID?(asset_id: AssetId, anim_id: AnimId): AnimationLookup | undefined;
+}
+
+/** Minimum animation metadata the frame clock needs. */
+export interface AnimationLookup {
+	frame_from: number;
+	frame_to: number;
+	fps: number;
+	direction: "forward" | "reverse" | "pingpong";
 }
 
 /** Camera intent: where in world sub-pixels is the viewport centered? */

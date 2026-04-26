@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"path/filepath"
@@ -92,7 +93,7 @@ func (s *Service) Upload(
 		}
 		return nil, fmt.Errorf("read file: %w", err)
 	}
-	return s.uploadFromHeader(ctx, header, store, designerID, kindOverride)
+	return s.uploadFromHeader(ctx, header, nil, store, designerID, kindOverride)
 }
 
 // UploadMany reads every file under the multipart "files" field and runs
@@ -137,7 +138,9 @@ func (s *Service) UploadMany(
 
 	out := make([]MultiUploadResult, 0, len(headers))
 	for _, h := range headers {
-		res, err := s.uploadFromHeader(ctx, h, store, designerID, kindOverride)
+		// Pass the full sibling list so a PNG can pick up its
+		// matching .json sidecar without a parser-override.
+		res, err := s.uploadFromHeader(ctx, h, headers, store, designerID, kindOverride)
 		entry := MultiUploadResult{OriginalFn: h.Filename}
 		if err != nil {
 			entry.Err = err
@@ -155,9 +158,14 @@ func (s *Service) UploadMany(
 
 // uploadFromHeader is the shared per-file pipeline used by both Upload
 // and UploadMany. Reads, dedups, stores, inserts.
+//
+// `siblings` is the full multipart-form file slice for multi-file
+// uploads (so a PNG can pick up its sidecar JSON automatically). Pass
+// nil for single-file uploads.
 func (s *Service) uploadFromHeader(
 	ctx context.Context,
 	header *multipart.FileHeader,
+	siblings []*multipart.FileHeader,
 	store *persistence.ObjectStore,
 	designerID int64,
 	kindOverride Kind,
@@ -214,6 +222,27 @@ func (s *Service) uploadFromHeader(
 		tileMD = md
 	}
 
+	// Sprite-sheet pre-flight: auto-detect the importer (Aseprite if
+	// a sidecar is alongside, otherwise uniform-grid auto-slice with
+	// canonical 32×32 cells), and synthesize walk_*/idle animations
+	// for the common 4-row top-down layout. Importer failures here
+	// are fatal (same policy as tile pre-flight): a bad PNG should
+	// never produce an asset row with no animations.
+	//
+	// Sidecar source: an upload header named "<base>.json" alongside
+	// "<base>.png" — we check the multipart form for it. The form is
+	// parsed once at the top of (Upload|UploadMany), so accessing
+	// r.MultipartForm here is safe.
+	var spriteImport *ImportResult
+	if kind == KindSprite && s.Importers != nil {
+		sidecar := readSidecar(header, siblings)
+		ir, err := DefaultSpriteImport(ctx, s.Importers, header.Filename, body, sidecar, AutoSliceConfig{})
+		if err != nil {
+			return nil, err
+		}
+		spriteImport = ir
+	}
+
 	key := persistence.ContentAddressedKey("assets", body)
 
 	if existing, err := s.FindByContentPath(ctx, kind, key); err == nil {
@@ -221,6 +250,22 @@ func (s *Service) uploadFromHeader(
 		// info so the handler can backfill any cells that lacked an
 		// entity (e.g. designer ran the upload before tile auto-slice
 		// shipped, or deleted some cells and wants them back).
+		//
+		// Symmetrically for sprites: if the existing row predates the
+		// upload-time animation persistence (or had its rows wiped by
+		// a manual cleanup), backfill them so the runtime catalog
+		// always sees a populated set on a re-upload. Idempotent —
+		// ReplaceAnimations with the same input is a no-op net of
+		// the DELETE+INSERT pair.
+		if spriteImport != nil && len(spriteImport.Animations) > 0 {
+			rows, lerr := s.ListAnimations(ctx, existing.ID)
+			if lerr == nil && len(rows) == 0 {
+				if rerr := s.ReplaceAnimations(ctx, existing.ID, spriteImport.Animations); rerr != nil {
+					slog.Warn("upload: backfill animations on reuse",
+						"asset_id", existing.ID, "err", rerr)
+				}
+			}
+		}
 		return &UploadResult{
 			Asset: existing, Reused: true, OriginalFn: originalName,
 			TileCells: tileCells, TileMeta: tileMD,
@@ -243,6 +288,13 @@ func (s *Service) uploadFromHeader(
 		}
 	} else if kind == KindTile {
 		if b, jerr := MarshalTileSheetMetadata(tileMD); jerr == nil {
+			metadata = b
+		}
+	} else if kind == KindSprite && spriteImport != nil {
+		// Persist the sheet metadata (grid, frame count, source) so
+		// the runtime catalog can rebuild source rects without
+		// re-parsing the PNG. See web/src/game/catalog.ts.
+		if b, jerr := jsonMarshal(spriteImport.SheetMetadata); jerr == nil {
 			metadata = b
 		}
 	}
@@ -275,6 +327,20 @@ func (s *Service) uploadFromHeader(
 			return nil, err
 		}
 	}
+
+	// Persist parsed animations once the asset row exists. Failures
+	// here downgrade to a structured warn-log: the asset is already
+	// usable (renderer falls back to frame 0), and a subsequent
+	// re-import or designer-driven edit can backfill rows. We do
+	// NOT roll back the asset row — half-imported sheets are still
+	// preferable to a hard upload failure.
+	if spriteImport != nil && len(spriteImport.Animations) > 0 {
+		if err := s.ReplaceAnimations(ctx, asset.ID, spriteImport.Animations); err != nil {
+			slog.Warn("upload: persist animations",
+				"asset_id", asset.ID, "name", asset.Name, "err", err)
+		}
+	}
+
 	return &UploadResult{
 		Asset: asset, Reused: false, OriginalFn: originalName,
 		TileCells: tileCells, TileMeta: tileMD,
@@ -305,6 +371,42 @@ type MultiUploadResult struct {
 	Err        error
 	TileCells  []TileCell
 	TileMeta   TileSheetMetadata
+}
+
+// readSidecar locates and reads an Aseprite-style JSON sidecar from
+// `siblings` whose base name matches `header`. Aseprite's "Export
+// Sprite Sheet" UI produces "<base>.png" + "<base>.json" by default,
+// so when both files arrive in the same multi-file upload we can wire
+// the sidecar through automatically — designers don't need to flip
+// the parser-override dropdown.
+//
+// Returns nil and no error when no sidecar exists. Read errors are
+// non-fatal: missing/unreadable sidecar simply means we fall back to
+// auto-slicing.
+func readSidecar(header *multipart.FileHeader, siblings []*multipart.FileHeader) []byte {
+	if header == nil {
+		return nil
+	}
+	target := strings.TrimSuffix(filepath.Base(header.Filename), filepath.Ext(header.Filename)) + ".json"
+	for _, sib := range siblings {
+		if sib == nil || sib == header {
+			continue
+		}
+		if !strings.EqualFold(filepath.Base(sib.Filename), target) {
+			continue
+		}
+		f, err := sib.Open()
+		if err != nil {
+			return nil
+		}
+		body, err := io.ReadAll(io.LimitReader(f, MaxUploadBytes+1))
+		_ = f.Close()
+		if err != nil || len(body) == 0 || len(body) > MaxUploadBytes {
+			return nil
+		}
+		return body
+	}
+	return nil
 }
 
 // normalizeContentType strips charset/parameters off DetectContentType output

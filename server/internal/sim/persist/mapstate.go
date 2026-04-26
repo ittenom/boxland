@@ -128,6 +128,7 @@ func ApplyMapState(w *ecs.World, ms *proto.MapState) int {
 			AnimID:    uint32(es.AnimId()),
 			VariantID: es.VariantId(),
 			Tint:      es.Tint(),
+			Facing:    es.Facing(),
 		})
 		count++
 	}
@@ -209,11 +210,13 @@ func encodeEntities(b *flatbuffers.Builder, stores *ecs.Stores) flatbuffers.UOff
 		var animFrame uint16
 		var variantID uint16
 		var tint uint32
+		var facing uint8
 		if sp := stores.Sprite.GetPtr(e); sp != nil {
 			asset = sp.AssetID
 			animID = uint16(sp.AnimID)
 			variantID = sp.VariantID
 			tint = sp.Tint
+			facing = sp.Facing
 		}
 		_ = animFrame
 
@@ -221,6 +224,7 @@ func encodeEntities(b *flatbuffers.Builder, stores *ecs.Stores) flatbuffers.UOff
 		proto.EntityStateAddId(b, uint64(e))
 		proto.EntityStateAddX(b, pos.X)
 		proto.EntityStateAddY(b, pos.Y)
+		proto.EntityStateAddFacing(b, facing)
 		proto.EntityStateAddAnimId(b, animID)
 		proto.EntityStateAddAnimFrame(b, animFrame)
 		proto.EntityStateAddVariantId(b, variantID)

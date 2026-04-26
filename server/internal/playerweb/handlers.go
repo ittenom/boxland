@@ -12,9 +12,11 @@ import (
 
 	"github.com/a-h/templ"
 
+	"boxland/server/internal/assets"
 	"boxland/server/internal/auth/player"
 	"boxland/server/internal/hud"
 	"boxland/server/internal/maps"
+	"boxland/server/internal/persistence"
 	"boxland/server/internal/settings"
 	"boxland/server/views"
 )
@@ -27,6 +29,8 @@ type Deps struct {
 	Maps          *maps.Service
 	Settings      *settings.Service
 	HUD           *hud.Repo // per-realm HUD layouts (read-only on the player surface)
+	Assets        *assets.Service             // sprite catalog + animations for the renderer
+	ObjectStore   *persistence.ObjectStore    // public URLs for the asset catalog endpoint
 	SecureCookies bool      // true in prod; false in dev so http://localhost works
 	WSURL         string    // absolute ws://... or wss://... URL the client opens
 	ServerName    string    // displayed under the top nav; "Default server" until multi-tenant
@@ -48,6 +52,7 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /play/maps",          auth(getMaps(d)))
 	mux.Handle("GET /play/game/{id}",     auth(getGame(d)))
 	mux.Handle("GET /play/maps/{id}/hud", auth(getMapHUD(d)))
+	mux.Handle("GET /play/asset-catalog",  auth(getAssetCatalog(d)))
 	mux.Handle("POST /play/ws-ticket",    auth(postWSTicket(d)))
 	mux.Handle("GET /play/settings",      auth(getSettingsPage(d)))
 	if d.Settings != nil {

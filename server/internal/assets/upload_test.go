@@ -223,6 +223,83 @@ func TestUpload_DifferentBytesProduceDifferentRows(t *testing.T) {
 	}
 }
 
+func TestUpload_SpritePersistsSynthesizedWalkAnimations(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	designerID := resetDB(t, pool)
+	store := makeStore(t)
+	svc := assets.New(pool)
+	svc.Importers = assets.DefaultRegistry()
+
+	// 4 cols × 4 rows = top-down character strip.
+	body := pngOf(t, 4*32, 4*32)
+	res, err := svc.Upload(context.Background(),
+		makeUploadRequest(t, "hero.png", body, "image/png"),
+		store, designerID, "")
+	if err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+	if res.Reused {
+		t.Fatalf("first upload should not be Reused")
+	}
+	rows, err := svc.ListAnimations(context.Background(), res.Asset.ID)
+	if err != nil {
+		t.Fatalf("ListAnimations: %v", err)
+	}
+	names := make(map[string]assets.AnimationRow, len(rows))
+	for _, r := range rows {
+		names[r.Name] = r
+	}
+	for _, want := range []string{
+		assets.AnimWalkN, assets.AnimWalkE, assets.AnimWalkS, assets.AnimWalkW, assets.AnimIdle,
+	} {
+		if _, ok := names[want]; !ok {
+			t.Errorf("upload should have synthesized %q (got %v)", want, rows)
+		}
+	}
+	// Sheet metadata folded into the asset row so the runtime catalog
+	// can compute frame rects without re-parsing the PNG.
+	mdStr := string(res.Asset.MetadataJSON)
+	if !strings.Contains(mdStr, `"grid_w"`) || !strings.Contains(mdStr, `"cols"`) {
+		t.Errorf("sprite metadata should carry grid info, got %s", mdStr)
+	}
+}
+
+func TestUpload_SpriteAnimationsBackfilledOnReuse(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	designerID := resetDB(t, pool)
+	store := makeStore(t)
+	svc := assets.New(pool)
+	// First upload: importers off → no animations persisted.
+	body := pngOf(t, 4*32, 4*32)
+	first, err := svc.Upload(context.Background(),
+		makeUploadRequest(t, "hero.png", body, "image/png"),
+		store, designerID, "")
+	if err != nil {
+		t.Fatalf("first upload: %v", err)
+	}
+	rows, _ := svc.ListAnimations(context.Background(), first.Asset.ID)
+	if len(rows) != 0 {
+		t.Fatalf("pre-condition: expected 0 rows when importer disabled, got %d", len(rows))
+	}
+	// Now re-upload with importers wired: must backfill.
+	svc.Importers = assets.DefaultRegistry()
+	second, err := svc.Upload(context.Background(),
+		makeUploadRequest(t, "hero-v2.png", body, "image/png"),
+		store, designerID, "")
+	if err != nil {
+		t.Fatalf("re-upload: %v", err)
+	}
+	if !second.Reused {
+		t.Errorf("expected reuse on identical bytes")
+	}
+	rows, _ = svc.ListAnimations(context.Background(), second.Asset.ID)
+	if len(rows) == 0 {
+		t.Errorf("animations should have been backfilled on reuse")
+	}
+}
+
 func TestUpload_WAVPopulatesAudioMetadata(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()

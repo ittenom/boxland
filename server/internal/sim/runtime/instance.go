@@ -26,7 +26,19 @@ import (
 	"boxland/server/internal/sim/ecs"
 	"boxland/server/internal/sim/persist"
 	"boxland/server/internal/sim/spatial"
+	"boxland/server/internal/sim/systems"
 )
+
+// SystemDeps bundles the dependencies the per-instance system stack
+// needs at construction time. Held on the manager (one set per
+// process) and copied into each new MapInstance so its scheduler can
+// register the canonical system pipeline (movement, animation, …).
+//
+// The Animation system's Catalog is the only required field today;
+// future systems (AI, triggers) extend this struct.
+type SystemDeps struct {
+	Animations systems.AnimationCatalog
+}
 
 // MapInstance is one live runtime for (mapID, instanceID).
 type MapInstance struct {
@@ -72,9 +84,15 @@ type HotSwap struct {
 	AssetURLsToReload []string
 }
 
-// NewMapInstance constructs an empty instance and runs recovery from
-// (map_state + WAL). The caller is responsible for calling LoadChunk
-// for any chunks players are about to look at.
+// NewMapInstance constructs an empty instance, registers the canonical
+// system pipeline, and runs recovery from (map_state + WAL). The caller
+// is responsible for calling LoadChunk for any chunks players are about
+// to look at.
+//
+// `deps` may be a zero value; in that case no systems are registered
+// and the scheduler is a bare no-op. Tests that exercise specific
+// systems pass a focused SystemDeps; production wiring in cmd/boxland
+// passes the full set.
 func NewMapInstance(
 	ctx context.Context,
 	pool *pgxpool.Pool,
@@ -82,6 +100,7 @@ func NewMapInstance(
 	mapsService *maps.Service,
 	mapID uint32,
 	instanceID string,
+	deps SystemDeps,
 ) (*MapInstance, error) {
 	world := ecs.NewWorld()
 	wal := persist.NewWAL(redis, mapID, instanceID)
@@ -97,6 +116,18 @@ func NewMapInstance(
 		Persister:    persister,
 		MapsService:  mapsService,
 		loadedChunks: make(map[spatial.ChunkID]struct{}),
+	}
+
+	// Canonical system pipeline. Order: Movement first, Animation
+	// right after so the picked anim_id reflects the post-move
+	// velocity (matches PLAN.md §4h "input → AI → movement →
+	// collision → triggers → audio → AOI" with animation slotted
+	// inside the movement stage so it sees the resolved velocity).
+	mi.Scheduler.Register(systems.Movement)
+	if deps.Animations != nil {
+		mi.Scheduler.Register(systems.NewAnimationSystem(systems.AnimationSystemOptions{
+			Catalog: deps.Animations,
+		}))
 	}
 
 	// Best-effort recovery: a fresh map has no snapshot, which is fine.

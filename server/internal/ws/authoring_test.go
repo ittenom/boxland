@@ -128,7 +128,7 @@ func authoringFixture(t *testing.T) (
 	})
 	mapID = m.ID
 
-	mgr = runtime.NewInstanceManager(pool, cli, mapsSvc)
+	mgr = runtime.NewInstanceManager(pool, cli, mapsSvc, runtime.SystemDeps{})
 
 	dispatcher := ws.NewDispatcher()
 	ws.RegisterDefaultVerbs(dispatcher)

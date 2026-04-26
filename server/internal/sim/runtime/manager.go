@@ -22,18 +22,27 @@ type InstanceManager struct {
 	pool        *pgxpool.Pool
 	redis       rueidis.Client
 	mapsService *maps.Service
+	deps        SystemDeps
 
 	mu        sync.Mutex
 	instances map[string]*MapInstance // keyed by instance_id
 	building  map[string]chan struct{} // in-flight construction barriers
 }
 
-// NewInstanceManager constructs the registry.
-func NewInstanceManager(pool *pgxpool.Pool, redis rueidis.Client, mapsService *maps.Service) *InstanceManager {
+// NewInstanceManager constructs the registry. `deps` is the system-
+// dependency bundle every new MapInstance receives; pass a zero value
+// in tests that don't need the canonical pipeline.
+func NewInstanceManager(
+	pool *pgxpool.Pool,
+	redis rueidis.Client,
+	mapsService *maps.Service,
+	deps SystemDeps,
+) *InstanceManager {
 	return &InstanceManager{
 		pool:        pool,
 		redis:       redis,
 		mapsService: mapsService,
+		deps:        deps,
 		instances:   make(map[string]*MapInstance),
 		building:    make(map[string]chan struct{}),
 	}
@@ -69,7 +78,7 @@ func (mgr *InstanceManager) GetOrCreate(ctx context.Context, mapID uint32, insta
 	mgr.building[instanceID] = ch
 	mgr.mu.Unlock()
 
-	mi, err := NewMapInstance(ctx, mgr.pool, mgr.redis, mgr.mapsService, mapID, instanceID)
+	mi, err := NewMapInstance(ctx, mgr.pool, mgr.redis, mgr.mapsService, mapID, instanceID, mgr.deps)
 
 	mgr.mu.Lock()
 	defer mgr.mu.Unlock()
