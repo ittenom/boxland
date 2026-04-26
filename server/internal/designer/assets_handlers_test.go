@@ -219,6 +219,45 @@ func TestAssetDetail_ShowsForm(t *testing.T) {
 	}
 }
 
+func TestAssetsGrid_TileSheetShowsCellPreview(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	resetDB(t, pool)
+	deps, designerID := fullDeps(t, pool)
+	srv := buildHandler(deps)
+	ctx := context.Background()
+
+	md, err := assets.MarshalTileSheetMetadata(assets.TileSheetMetadata{
+		TileSize: assets.TileSize, Cols: 2, Rows: 2,
+		NonEmptyCount: 3, NonEmptyIndex: []int{0, 1, 3},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = deps.Assets.Create(ctx, assets.CreateInput{
+		Kind: assets.KindTile, Name: "cavern", ContentAddressedPath: "tiles/cavern.png",
+		OriginalFormat: "png", MetadataJSON: md, CreatedBy: designerID,
+	})
+
+	tok, _ := deps.Auth.OpenSession(ctx, designerID, "ua", nil)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, authedReq(http.MethodGet, "/design/assets/grid?kind=tile", tok, nil))
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		`bx-asset-card__tile-preview`,
+		`http://localhost:9000/boxland-assets/tiles/cavern.png`,
+		`background-position:-32px -32px`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in body", want)
+		}
+	}
+}
+
 func TestAssetDraft_PostStoresInDraftsTable(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()

@@ -1053,6 +1053,19 @@ p, li { font-size: 13px; line-height: 1.55; }
 }
 .bx-asset-card__thumb img,
 .bx-asset-card__thumb canvas { max-width: 100%; max-height: 100%; image-rendering: pixelated; }
+.bx-asset-card__tile-preview {
+    max-width: calc(100% - 16px);
+    max-height: calc(100% - 16px);
+    overflow: hidden;
+    background: rgba(0,0,0,0.25);
+    border: var(--bx-px) solid rgba(255,255,255,0.12);
+    box-shadow: 0 0 0 4px rgba(0,0,0,0.18);
+    image-rendering: pixelated;
+}
+.bx-asset-card__tile-preview .bx-tile-atlas__cell {
+    width: 32px;
+    height: 32px;
+}
 .bx-asset-card__pip {
     position: absolute; top: 4px; right: 4px;
     background: var(--bx-info);

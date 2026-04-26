@@ -141,7 +141,10 @@ templ assetPickerCard(a assets.Asset, p PickerProps) {
 		title={ a.Name }
 	>
 		<div class="bx-asset-card__thumb bx-pixel">
-			if a.Kind != assets.KindAudio && p.PublicURL != nil {
+			if a.Kind == assets.KindTile && p.PublicURL != nil {
+				@AssetTileSheetThumb(a, p.PublicURL)
+				<span class="bx-asset-card__pip bx-asset-card__pip--tile">tile</span>
+			} else if a.Kind != assets.KindAudio && p.PublicURL != nil {
 				<img src={ p.PublicURL(a.ContentAddressedPath) } alt={ a.Name } loading="lazy"/>
 			} else {
 				<span class="bx-asset-card__pip bx-asset-card__pip--audio">{ string(a.Kind) }</span>

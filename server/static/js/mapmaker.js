@@ -80,8 +80,9 @@
 
 		loadTiles(mapId)
 			.then((tiles) => {
-				for (const t of tiles) state.tiles.set(tileKey(t), t);
-				prefetchImages(state, tiles);
+				const normalized = tiles.map(normalizeTile).filter(Boolean);
+				for (const t of normalized) state.tiles.set(tileKey(t), t);
+				prefetchImages(state, normalized);
 				draw(state, ctx, canvas);
 			})
 			.catch((err) => {
@@ -99,8 +100,9 @@
 		canvas.addEventListener("bx:mapmaker-reload", () => {
 			loadTiles(mapId).then((tiles) => {
 				state.tiles.clear();
-				for (const t of tiles) state.tiles.set(tileKey(t), t);
-				prefetchImages(state, tiles);
+				const normalized = tiles.map(normalizeTile).filter(Boolean);
+				for (const t of normalized) state.tiles.set(tileKey(t), t);
+				prefetchImages(state, normalized);
 				draw(state, ctx, canvas);
 			});
 		});
@@ -617,6 +619,15 @@
 	// ---- helpers -------------------------------------------------------
 
 	function tileKey(t) { return `${t.layerId}:${t.x}:${t.y}`; }
+	function normalizeTile(t) {
+		if (!t) return null;
+		const layerId = Number(t.layerId ?? t.layer_id);
+		const entityTypeId = Number(t.entityTypeId ?? t.entity_type_id);
+		const x = Number(t.x);
+		const y = Number(t.y);
+		if (!layerId || !entityTypeId || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+		return { layerId, x, y, entityTypeId };
+	}
 	function toWire(t) {
 		return { layer_id: t.layerId, x: t.x, y: t.y, entity_type_id: t.entityTypeId };
 	}

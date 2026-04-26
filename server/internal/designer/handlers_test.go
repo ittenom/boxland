@@ -11,8 +11,13 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"boxland/server/internal/assets"
 	authdesigner "boxland/server/internal/auth/designer"
 	designerhandlers "boxland/server/internal/designer"
+	"boxland/server/internal/entities"
+	"boxland/server/internal/entities/components"
+	mapsservice "boxland/server/internal/maps"
+	"boxland/server/internal/persistence"
 	"boxland/server/internal/persistence/testdb"
 )
 
@@ -32,6 +37,62 @@ func resetDB(t *testing.T, pool *pgxpool.Pool) {
 // so handler tests exercise auth/session loading exactly as live requests do.
 func buildHandler(deps designerhandlers.Deps) http.Handler {
 	return designerhandlers.LoadSession(deps)(designerhandlers.New(deps))
+}
+
+func TestMapmakerPage_RendersAtlasAwarePalette(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	resetDB(t, pool)
+	ctx := context.Background()
+
+	auth := authdesigner.New(pool)
+	d, _ := auth.CreateDesigner(ctx, "mapmaker-handler@x.com", "password-12", authdesigner.RoleEditor)
+	assetSvc := assets.New(pool)
+	entitySvc := entities.New(pool, components.Default())
+	mapSvc := mapsservice.New(pool)
+	store := persistence.ObjectStoreForTest("https://cdn.example.test")
+
+	md, err := assets.MarshalTileSheetMetadata(assets.TileSheetMetadata{
+		TileSize: assets.TileSize, Cols: 4, Rows: 2,
+		NonEmptyCount: 8, NonEmptyIndex: []int{0, 1, 2, 3, 4, 5, 6, 7},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := assetSvc.Create(ctx, assets.CreateInput{
+		Kind: assets.KindTile, Name: "town", ContentAddressedPath: "assets/town.png",
+		OriginalFormat: "png", MetadataJSON: md, CreatedBy: d.ID,
+	})
+	et, _ := entitySvc.Create(ctx, entities.CreateInput{
+		Name: "town wall", SpriteAssetID: &a.ID, AtlasIndex: 5,
+		Tags: []string{"tile"}, CreatedBy: d.ID,
+	})
+	m, _ := mapSvc.Create(ctx, mapsservice.CreateInput{Name: "demo", Width: 8, Height: 8, CreatedBy: d.ID})
+	layers, _ := mapSvc.Layers(ctx, m.ID)
+	if err := mapSvc.PlaceTiles(ctx, []mapsservice.Tile{{MapID: m.ID, LayerID: layers[0].ID, X: 1, Y: 2, EntityTypeID: et.ID}}); err != nil {
+		t.Fatal(err)
+	}
+
+	tok, _ := auth.OpenSession(ctx, d.ID, "ua", nil)
+	srv := buildHandler(designerhandlers.Deps{
+		Auth: auth, Assets: assetSvc, Entities: entitySvc, Maps: mapSvc, ObjectStore: store,
+	})
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, authedReq(http.MethodGet, "/design/maps/"+itoa(m.ID), tok, nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		`data-bx-sprite-url="https://cdn.example.test/assets/town.png"`,
+		`data-bx-atlas-index="5"`,
+		`data-bx-atlas-cols="4"`,
+		`background-position:-32px -32px`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in body", want)
+		}
+	}
 }
 
 func TestPostWSTicket_HappyPath(t *testing.T) {

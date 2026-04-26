@@ -189,17 +189,20 @@ templ AssetCard(a assets.Asset, publicURL func(string) string, usage map[int64]i
 				></canvas>
 				<span class="bx-asset-card__pip bx-asset-card__pip--audio">audio</span>
 			} else if publicURL != nil {
-				<img
-					src={ assetURL(a, publicURL) }
-					alt={ a.Name }
-					loading="lazy"
-				/>
 				if a.Kind == assets.KindTile {
+					@AssetTileSheetThumb(a, publicURL)
 					<span class="bx-asset-card__pip bx-asset-card__pip--tile">tile</span>
-				} else if a.Kind == assets.KindUIPanel {
-					<span class="bx-asset-card__pip bx-asset-card__pip--ui-panel">ui</span>
 				} else {
-					<span class="bx-asset-card__pip">sprite</span>
+					<img
+						src={ assetURL(a, publicURL) }
+						alt={ a.Name }
+						loading="lazy"
+					/>
+					if a.Kind == assets.KindUIPanel {
+						<span class="bx-asset-card__pip bx-asset-card__pip--ui-panel">ui</span>
+					} else {
+						<span class="bx-asset-card__pip">sprite</span>
+					}
 				}
 			}
 		</div>
@@ -225,6 +228,24 @@ templ usageBadge(id int64, usage map[int64]int) {
 		<span style="color: var(--bx-info);">used by { formatIntPad(n) }</span>
 	} else {
 		<span style="color: var(--bx-danger);">orphan</span>
+	}
+}
+
+templ AssetTileSheetThumb(a assets.Asset, publicURL func(string) string) {
+	if md, ok := decodeTileSheetMD(a); ok && md.Cols > 0 && md.Rows > 0 {
+		<div class="bx-asset-card__tile-preview" style={ assetTileSheetThumbGridStyle(md) } aria-label={ a.Name }>
+			for r := 0; r < md.Rows && r < 3; r++ {
+				for c := 0; c < md.Cols && c < 3; c++ {
+					<span
+						class={ tileAtlasCellClass(md, r*md.Cols+c) }
+						style={ tileAtlasCellStyle(assetURL(a, publicURL), md, r, c) }
+						aria-hidden="true"
+					></span>
+				}
+			}
+		</div>
+	} else {
+		<img src={ assetURL(a, publicURL) } alt={ a.Name } loading="lazy"/>
 	}
 }
 
@@ -282,6 +303,21 @@ func plural(n int, one, many string) string {
 		return one
 	}
 	return many
+}
+
+func assetTileSheetThumbGridStyle(md assets.TileSheetMetadata) string {
+	cols := md.Cols
+	if cols > 3 {
+		cols = 3
+	}
+	rows := md.Rows
+	if rows > 3 {
+		rows = 3
+	}
+	return fmt.Sprintf(
+		"display:grid;grid-template-columns:repeat(%d, 32px);grid-template-rows:repeat(%d, 32px);gap:1px;",
+		cols, rows,
+	)
 }
 
 // (Removed dead helper kindBadgeClass — no callers after the
