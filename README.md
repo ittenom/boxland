@@ -11,9 +11,9 @@ Boxland is a designer-friendly MMORPG engine that makes it easy to turn on your 
 
 ## Quickstart
 
-(1) Install [Go](https://go.dev/doc/install)
+(1) Install [Go](https://go.dev/doc/install) - Boxland can install everything else you need.
 
-(1) Clone the Boxland repo to your home computer or your server.
+(2) Clone the Boxland repo to your home computer or your server.
 
 (3) From the boxland/ directory, run:
 
@@ -21,7 +21,9 @@ Boxland is a designer-friendly MMORPG engine that makes it easy to turn on your 
 go run ./server/cmd/boxland
 ```
 
-Pick **Check Installation** from the menu to add any missing system dependencies (Node.js, Docker Desktop) and refresh generated artifacts. Once that's done, **Design** moves to the top of the menu — pick it to get started on your new world.
+(4) Do **Check Installation** from the menu to add any missing system dependencies (Node.js, Docker Desktop) and install the server code. 
+
+(5) Select **Design** to start building your Boxland :)
 
 ## System requirements
 
