@@ -1,0 +1,179 @@
+package views
+
+import (
+	"fmt"
+
+	"boxland/server/internal/assets"
+	"boxland/server/internal/entities"
+)
+
+// PickerProps drives the shared "choose an asset / entity" modal that
+// the form's KindAssetRef / KindEntityTypeRef fields open. The same
+// template renders both kinds; Kind drives the icon and the empty-state
+// message.
+//
+// The opener (refField in form.templ) sets:
+//   data-bx-target-id    -> id of the hidden input that receives the picked ID
+//   data-bx-target-label -> id of the visible <span> that shows the picked name
+//
+// The picker carries those selectors back to the picked item via data
+// attributes; boot.js writes the values when the user clicks a card.
+type PickerProps struct {
+	Kind       string // "asset" or "entity-type"
+	Title      string // e.g. "Choose a sprite"
+	Search     string
+	TagFilter  []string // restrict the list (sprite/tile/audio for assets)
+	TargetID   string   // selector of the hidden input to populate
+	TargetLbl  string   // selector of the visible label to update
+	Assets     []assets.Asset
+	Entities   []entities.EntityType
+	PublicURL  func(string) string
+}
+
+templ PickerModal(p PickerProps) {
+	<div class="bx-modal-backdrop" data-bx-dismissible role="dialog" aria-modal="true">
+		<div class="bx-modal" style="width: min(720px, 95vw); max-height: 80vh;">
+			<header class="bx-modal__header">
+				<h2 style="margin:0;">{ p.Title }</h2>
+				<button
+					type="button"
+					class="bx-btn bx-btn--ghost bx-btn--small"
+					hx-on:click="this.closest('.bx-modal-backdrop').remove()"
+					aria-label="Close"
+				>Esc</button>
+			</header>
+			<div class="bx-modal__body bx-stack-tight">
+				<form
+					class="bx-row"
+					hx-get={ pickerSearchURL(p) }
+					hx-target="#picker-grid"
+					hx-swap="outerHTML"
+					hx-trigger="input from:input changed delay:200ms"
+				>
+					<input
+						type="search"
+						name="q"
+						value={ p.Search }
+						placeholder="Search by name"
+						class="bx-input"
+						style="flex:1; max-width: 320px;"
+						autofocus
+					/>
+					if p.TargetID != "" {
+						<input type="hidden" name="target_id" value={ p.TargetID }/>
+					}
+					if p.TargetLbl != "" {
+						<input type="hidden" name="target_label" value={ p.TargetLbl }/>
+					}
+					for _, t := range p.TagFilter {
+						<input type="hidden" name="tags" value={ t }/>
+					}
+				</form>
+
+				@PickerGrid(p)
+
+				<p class="bx-tiny bx-muted" style="margin-top: var(--bx-s2);">
+					Click a card to use it. Esc closes.
+				</p>
+			</div>
+		</div>
+	</div>
+}
+
+templ PickerGrid(p PickerProps) {
+	if p.Kind == "asset" {
+		if len(p.Assets) == 0 {
+			<div id="picker-grid" class="bx-panel" style="text-align:center;">
+				<p class="bx-muted bx-small">No matching assets.</p>
+				<p class="bx-tiny bx-muted" style="margin-top: var(--bx-s2);">
+					Upload one in the <a href="/design/assets">Assets</a> view.
+				</p>
+			</div>
+		} else {
+			<div id="picker-grid" class="bx-asset-grid">
+				for _, a := range p.Assets {
+					@assetPickerCard(a, p)
+				}
+			</div>
+		}
+	} else {
+		if len(p.Entities) == 0 {
+			<div id="picker-grid" class="bx-panel" style="text-align:center;">
+				<p class="bx-muted bx-small">No matching entity types.</p>
+				<p class="bx-tiny bx-muted" style="margin-top: var(--bx-s2);">
+					Create one in <a href="/design/entities">Entities</a>.
+				</p>
+			</div>
+		} else {
+			<div id="picker-grid" class="bx-asset-grid">
+				for _, e := range p.Entities {
+					@entityPickerCard(e, p)
+				}
+			</div>
+		}
+	}
+}
+
+templ assetPickerCard(a assets.Asset, p PickerProps) {
+	<button
+		type="button"
+		class="bx-asset-card bx-picker-card"
+		data-bx-pick-id={ fmt.Sprintf("%d", a.ID) }
+		data-bx-pick-label={ a.Name }
+		data-bx-target-id={ p.TargetID }
+		data-bx-target-label={ p.TargetLbl }
+		title={ a.Name }
+	>
+		<div class="bx-asset-card__thumb bx-pixel">
+			if a.Kind != assets.KindAudio && p.PublicURL != nil {
+				<img src={ p.PublicURL(a.ContentAddressedPath) } alt={ a.Name } loading="lazy"/>
+			} else {
+				<span class="bx-asset-card__pip bx-asset-card__pip--audio">{ string(a.Kind) }</span>
+			}
+		</div>
+		<div class="bx-asset-card__body">
+			<div class="bx-asset-card__name">{ a.Name }</div>
+			<div class="bx-asset-card__meta">
+				<span class="bx-mono bx-small">#{ fmt.Sprintf("%d", a.ID) }</span>
+				<span class="bx-muted">·</span>
+				<span class="bx-small bx-muted">{ string(a.Kind) }</span>
+			</div>
+		</div>
+	</button>
+}
+
+templ entityPickerCard(e entities.EntityType, p PickerProps) {
+	<button
+		type="button"
+		class="bx-asset-card bx-picker-card"
+		data-bx-pick-id={ fmt.Sprintf("%d", e.ID) }
+		data-bx-pick-label={ e.Name }
+		data-bx-target-id={ p.TargetID }
+		data-bx-target-label={ p.TargetLbl }
+		title={ e.Name }
+	>
+		<div class="bx-asset-card__thumb">
+			<span class="bx-asset-card__pip">{ entityKindLabel(e) }</span>
+		</div>
+		<div class="bx-asset-card__body">
+			<div class="bx-asset-card__name">{ e.Name }</div>
+			<div class="bx-asset-card__meta">
+				<span class="bx-mono bx-small">#{ fmt.Sprintf("%d", e.ID) }</span>
+				if e.SpriteAssetID == nil {
+					<span class="bx-muted">·</span>
+					<span style="color: var(--bx-danger);" class="bx-small">no sprite</span>
+				}
+			</div>
+		</div>
+	</button>
+}
+
+// pickerSearchURL builds the GET endpoint for HTMX-driven search.
+// The kind drives the route; tag/target params ride along so the
+// server-side handler can rebuild the filtered grid.
+func pickerSearchURL(p PickerProps) string {
+	if p.Kind == "asset" {
+		return "/design/picker/assets"
+	}
+	return "/design/picker/entities"
+}

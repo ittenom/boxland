@@ -132,6 +132,14 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /design/maps/{id}/materialize", auth(postMapMaterialize(d)))
 	mux.Handle("DELETE /design/maps/{id}",           auth(deleteMap(d)))
 
+	// Authored-mode painting endpoints. JSON in / out. The design
+	// console's mapmaker JS pumps brush strokes through these; the
+	// runtime still loads via the same map_tiles rows on next sandbox
+	// or push-to-live (no WS required for the editor view itself).
+	mux.Handle("GET /design/maps/{id}/tiles",       auth(getMapTiles(d)))
+	mux.Handle("POST /design/maps/{id}/tiles",      auth(postMapTiles(d)))
+	mux.Handle("DELETE /design/maps/{id}/tiles",    auth(deleteMapTiles(d)))
+
 	// Push-to-Live (PLAN.md §132 + §134). The preview returns the
 	// diffs that WOULD land if the user confirmed the push; the
 	// post commits the publish + fires the post-commit hooks.
@@ -142,6 +150,13 @@ func New(d Deps) http.Handler {
 	// configured with a sandbox: instance id + designer WS ticket.
 	mux.Handle("GET /design/sandbox",                 auth(getSandboxIndex(d)))
 	mux.Handle("GET /design/sandbox/launch/{id}",     auth(getSandboxLaunch(d)))
+
+	// Shared ref pickers (PLAN.md §5d). One generic "choose an asset /
+	// entity" modal that any form's KindAssetRef / KindEntityTypeRef
+	// field opens via HTMX. Tag filters in the querystring narrow the
+	// list (e.g. tags=sprite for a sprite-only field).
+	mux.Handle("GET /design/picker/assets",   auth(getPickerAssets(d)))
+	mux.Handle("GET /design/picker/entities", auth(getPickerEntities(d)))
 
 	// Settings (PLAN.md §5g + §6h). Page is rendered server-side via
 	// Templ; the client uses the GET/PUT JSON endpoints to sync. The
@@ -1896,19 +1911,20 @@ func postAssetReplace(d Deps) http.HandlerFunc {
 
 // ---- Asset upload ----
 
-// postAssetUpload accepts a multipart form upload, pushes the file into
-// object storage at a content-addressed path, creates the asset row, and
-// (for sprite/tile kinds) returns the auto-detected importer id so the
-// client can offer a one-click "import frames" follow-up.
+// postAssetUpload accepts a multipart form upload (one OR many files),
+// pushes each into object storage at a content-addressed path, creates
+// the asset rows, and returns either a per-file summary (HTMX) or a
+// stable JSON shape (programmatic).
 //
-// Response is JSON for HTMX-easy consumption. Stable shape:
+// JSON shape:
 //
 //	{
-//	  "asset": { "id": ..., "kind": "...", "name": "...",
-//	             "content_addressed_path": "...", ... },
-//	  "reused": bool,
-//	  "warning": { "problem": "...", "severity": "warn|error", "message": "..." } | null,
-//	  "suggested_importer": "raw"|"strip"|"aseprite"|... | ""
+//	  "results": [
+//	    { "asset": {...}, "reused": bool, "original_fn": "tile_a.png" },
+//	    { "error": "upload: unsupported content type", "original_fn": "weird.bmp" }
+//	  ],
+//	  "ok_count": 5,
+//	  "err_count": 1
 //	}
 func postAssetUpload(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -1917,10 +1933,9 @@ func postAssetUpload(d Deps) http.HandlerFunc {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		// Optional kind override from a query string (?kind=tile etc).
 		kindOverride := assets.Kind(r.URL.Query().Get("kind"))
 
-		res, err := d.Assets.Upload(r.Context(), r, d.ObjectStore, dr.ID, kindOverride)
+		results, err := d.Assets.UploadMany(r.Context(), r, d.ObjectStore, dr.ID, kindOverride)
 		if err != nil {
 			status := http.StatusBadRequest
 			switch {
@@ -1936,22 +1951,47 @@ func postAssetUpload(d Deps) http.HandlerFunc {
 			return
 		}
 
-		// HTMX request → render the styled toast partial; non-HTMX (e.g.
-		// curl, future API consumers) → JSON.
+		ok, fail := 0, 0
+		viewItems := make([]views.AssetUploadItem, 0, len(results))
+		for _, r := range results {
+			item := views.AssetUploadItem{OriginalFn: r.OriginalFn}
+			if r.Err != nil {
+				fail++
+				item.Err = r.Err.Error()
+			} else if r.Asset != nil {
+				ok++
+				item.AssetID = r.Asset.ID
+				item.Name = r.Asset.Name
+				item.Kind = string(r.Asset.Kind)
+				item.Reused = r.Reused
+			}
+			viewItems = append(viewItems, item)
+		}
+
 		if r.Header.Get("HX-Request") == "true" {
-			renderHTML(w, r, views.AssetUploadResult(views.AssetUploadResultProps{
-				AssetID: res.Asset.ID,
-				Name:    res.Asset.Name,
-				Kind:    string(res.Asset.Kind),
-				Reused:  res.Reused,
+			renderHTML(w, r, views.AssetUploadResults(views.AssetUploadResultsProps{
+				Items:    viewItems,
+				OKCount:  ok,
+				ErrCount: fail,
 			}))
 			return
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		jsonResults := make([]map[string]any, 0, len(results))
+		for _, r := range results {
+			entry := map[string]any{"original_fn": r.OriginalFn}
+			if r.Err != nil {
+				entry["error"] = r.Err.Error()
+			} else {
+				entry["asset"] = r.Asset
+				entry["reused"] = r.Reused
+			}
+			jsonResults = append(jsonResults, entry)
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"asset":   res.Asset,
-			"reused":  res.Reused,
-			"warning": nil,
+			"results":   jsonResults,
+			"ok_count":  ok,
+			"err_count": fail,
 		})
 	}
 }
@@ -2048,4 +2088,233 @@ func diffChangesToView(d configurable.StructuredDiff) []views.DiffChange {
 		out = append(out, views.DiffChange{Path: c.Path, Op: c.Op})
 	}
 	return out
+}
+
+// ---- Authored-mode mapmaker painting -------------------------------------
+
+// tileWireFmt is the per-tile JSON the mapmaker JS reads/writes. Flat
+// shape, snake_case, all numbers; matches what the canvas needs to
+// render and what PlaceTiles takes server-side.
+type tileWireFmt struct {
+	LayerID      int64 `json:"layer_id"`
+	X            int32 `json:"x"`
+	Y            int32 `json:"y"`
+	EntityTypeID int64 `json:"entity_type_id"`
+}
+
+// getMapTiles returns every tile across every layer of the map. The
+// payload is a single flat array; the client groups by layer for
+// rendering. v1 has no chunking — maps are bounded by Width × Height
+// already and the design canvas is < 256² in practice.
+func getMapTiles(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := pathID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		m, err := d.Maps.FindByID(r.Context(), id)
+		if err != nil {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		tiles, err := d.Maps.ChunkTiles(r.Context(), id, 0, 0, m.Width-1, m.Height-1)
+		if err != nil {
+			slog.Error("read tiles", "err", err, "map_id", id)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		out := make([]tileWireFmt, 0, len(tiles))
+		for _, t := range tiles {
+			out = append(out, tileWireFmt{
+				LayerID: t.LayerID, X: t.X, Y: t.Y, EntityTypeID: t.EntityTypeID,
+			})
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"map_id": id, "width": m.Width, "height": m.Height, "tiles": out,
+		})
+	}
+}
+
+// postMapTiles upserts a batch of placements. Body: { tiles: [tileWireFmt, ...] }.
+// Returns the count of rows written so the client can update its
+// optimistic state with the authoritative number.
+func postMapTiles(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := pathID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		var body struct {
+			Tiles []tileWireFmt `json:"tiles"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if len(body.Tiles) == 0 {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			_, _ = w.Write([]byte(`{"placed":0}`))
+			return
+		}
+		// Bound the batch so a runaway bucket-fill can't OOM the server.
+		const maxBatch = 4096
+		if len(body.Tiles) > maxBatch {
+			http.Error(w, fmt.Sprintf("batch too large: %d tiles (max %d)", len(body.Tiles), maxBatch), http.StatusRequestEntityTooLarge)
+			return
+		}
+		tiles := make([]mapsservice.Tile, 0, len(body.Tiles))
+		for _, t := range body.Tiles {
+			tiles = append(tiles, mapsservice.Tile{
+				MapID: id, LayerID: t.LayerID, X: t.X, Y: t.Y, EntityTypeID: t.EntityTypeID,
+			})
+		}
+		if err := d.Maps.PlaceTiles(r.Context(), tiles); err != nil {
+			slog.Error("place tiles", "err", err, "map_id", id, "n", len(tiles))
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(w).Encode(map[string]any{"placed": len(tiles)})
+	}
+}
+
+// deleteMapTiles erases a batch of cells. Body:
+// { layer_id: N, points: [[x,y], ...] }. Empty points is a no-op.
+func deleteMapTiles(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := pathID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		var body struct {
+			LayerID int64       `json:"layer_id"`
+			Points  [][2]int32  `json:"points"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if len(body.Points) == 0 {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			_, _ = w.Write([]byte(`{"erased":0}`))
+			return
+		}
+		const maxBatch = 4096
+		if len(body.Points) > maxBatch {
+			http.Error(w, fmt.Sprintf("batch too large: %d points (max %d)", len(body.Points), maxBatch), http.StatusRequestEntityTooLarge)
+			return
+		}
+		if err := d.Maps.EraseTiles(r.Context(), id, body.LayerID, body.Points); err != nil {
+			slog.Error("erase tiles", "err", err, "map_id", id, "n", len(body.Points))
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(w).Encode(map[string]any{"erased": len(body.Points)})
+	}
+}
+
+// ---- Ref pickers --------------------------------------------------------
+
+// getPickerAssets serves the asset picker. The form's refField opens it
+// with target_id / target_label query params naming the calling form's
+// hidden input + visible label; tags=... narrow by asset kind. The
+// HTMX search inside the modal hits this same route to swap the grid
+// in place (HX-Request → return only the grid; otherwise the modal
+// shell).
+func getPickerAssets(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		opts := assets.ListOpts{
+			Search: strings.TrimSpace(q.Get("q")),
+			Limit:  100,
+		}
+		// Tag filter doubles as kind filter for assets: ?tags=sprite
+		// means "only sprite-kind". The descriptor's RefTags lists the
+		// acceptable kinds; we OR them together client-side by listing
+		// each as a separate tags param.
+		tags := q["tags"]
+		var picked []assets.Asset
+		if len(tags) == 0 {
+			items, err := d.Assets.List(r.Context(), opts)
+			if err != nil {
+				http.Error(w, "list assets: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			picked = items
+		} else {
+			seen := map[int64]struct{}{}
+			for _, t := range tags {
+				kindOpts := opts
+				kindOpts.Kind = assets.Kind(t)
+				items, err := d.Assets.List(r.Context(), kindOpts)
+				if err != nil {
+					http.Error(w, "list assets: "+err.Error(), http.StatusInternalServerError)
+					return
+				}
+				for _, a := range items {
+					if _, ok := seen[a.ID]; ok {
+						continue
+					}
+					seen[a.ID] = struct{}{}
+					picked = append(picked, a)
+				}
+			}
+		}
+
+		props := views.PickerProps{
+			Kind:      "asset",
+			Title:     "Choose an asset",
+			Search:    opts.Search,
+			TagFilter: tags,
+			TargetID:  q.Get("target_id"),
+			TargetLbl: q.Get("target_label"),
+			Assets:    picked,
+			PublicURL: d.ObjectStore.PublicURL,
+		}
+		if r.Header.Get("HX-Request") == "true" && r.Header.Get("HX-Trigger-Name") == "q" {
+			renderHTML(w, r, views.PickerGrid(props))
+			return
+		}
+		renderHTML(w, r, views.PickerModal(props))
+	}
+}
+
+// getPickerEntities serves the entity-type picker. Same shape as the
+// asset picker; entity-type tags from the descriptor (RefTags) become
+// the actual tag filter (entity_types.tags column).
+func getPickerEntities(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		opts := entities.ListOpts{
+			Search: strings.TrimSpace(q.Get("q")),
+			Limit:  100,
+		}
+		if tags := q["tags"]; len(tags) > 0 {
+			opts.Tags = tags
+		}
+		items, err := d.Entities.List(r.Context(), opts)
+		if err != nil {
+			http.Error(w, "list entities: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		props := views.PickerProps{
+			Kind:      "entity-type",
+			Title:     "Choose an entity type",
+			Search:    opts.Search,
+			TagFilter: opts.Tags,
+			TargetID:  q.Get("target_id"),
+			TargetLbl: q.Get("target_label"),
+			Entities:  items,
+		}
+		if r.Header.Get("HX-Request") == "true" && r.Header.Get("HX-Trigger-Name") == "q" {
+			renderHTML(w, r, views.PickerGrid(props))
+			return
+		}
+		renderHTML(w, r, views.PickerModal(props))
+	}
 }

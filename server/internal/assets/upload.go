@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -61,6 +62,10 @@ var (
 //
 // The caller (HTTP handler in internal/designer) supplies the designer id
 // from the session; this method makes no auth decisions of its own.
+//
+// Single-file path retained for the pixel-editor export (postAssetReplace)
+// which always sends one PNG. Multi-file uploads from the asset modal go
+// through UploadMany.
 func (s *Service) Upload(
 	ctx context.Context,
 	r *http.Request,
@@ -76,17 +81,93 @@ func (s *Service) Upload(
 		}
 		return nil, fmt.Errorf("parse multipart: %w", err)
 	}
-	file, header, err := r.FormFile("file")
+	_, header, err := r.FormFile("file")
 	if err != nil {
 		if errors.Is(err, http.ErrMissingFile) {
 			return nil, ErrNoFile
 		}
 		return nil, fmt.Errorf("read file: %w", err)
 	}
+	return s.uploadFromHeader(ctx, header, store, designerID, kindOverride)
+}
+
+// UploadMany reads every file under the multipart "files" field and runs
+// each through the same content-addressed pipeline. Returns one
+// UploadResult per file in the order the browser sent them. A failed
+// file produces an entry with a non-nil Err and does not stop the rest;
+// callers (HTTP handler) summarize the totals to the user.
+//
+// The total request size is capped at MaxUploadBytes * MaxFilesPerUpload
+// to keep memory predictable. Per-file size still honors MaxUploadBytes
+// individually.
+func (s *Service) UploadMany(
+	ctx context.Context,
+	r *http.Request,
+	store *persistence.ObjectStore,
+	designerID int64,
+	kindOverride Kind,
+) ([]MultiUploadResult, error) {
+	totalCap := int64(MaxUploadBytes) * int64(MaxFilesPerUpload)
+	r.Body = http.MaxBytesReader(nil, r.Body, totalCap+1)
+	if err := r.ParseMultipartForm(totalCap); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			return nil, fmt.Errorf("%w: %d bytes total", ErrTooLarge, maxBytesErr.Limit)
+		}
+		return nil, fmt.Errorf("parse multipart: %w", err)
+	}
+	if r.MultipartForm == nil {
+		return nil, ErrNoFile
+	}
+	headers := r.MultipartForm.File["files"]
+	// Back-compat: a single file under "file" still works through this path.
+	if len(headers) == 0 {
+		headers = r.MultipartForm.File["file"]
+	}
+	if len(headers) == 0 {
+		return nil, ErrNoFile
+	}
+	if len(headers) > MaxFilesPerUpload {
+		return nil, fmt.Errorf("%w: %d files (max %d)", ErrTooLarge, len(headers), MaxFilesPerUpload)
+	}
+
+	out := make([]MultiUploadResult, 0, len(headers))
+	for _, h := range headers {
+		res, err := s.uploadFromHeader(ctx, h, store, designerID, kindOverride)
+		entry := MultiUploadResult{OriginalFn: h.Filename}
+		if err != nil {
+			entry.Err = err
+			out = append(out, entry)
+			continue
+		}
+		entry.Asset = res.Asset
+		entry.Reused = res.Reused
+		out = append(out, entry)
+	}
+	return out, nil
+}
+
+// uploadFromHeader is the shared per-file pipeline used by both Upload
+// and UploadMany. Reads, dedups, stores, inserts.
+func (s *Service) uploadFromHeader(
+	ctx context.Context,
+	header *multipart.FileHeader,
+	store *persistence.ObjectStore,
+	designerID int64,
+	kindOverride Kind,
+) (*UploadResult, error) {
+	if header == nil {
+		return nil, ErrNoFile
+	}
+	if header.Size > MaxUploadBytes {
+		return nil, fmt.Errorf("%w: %d bytes", ErrTooLarge, header.Size)
+	}
+	file, err := header.Open()
+	if err != nil {
+		return nil, fmt.Errorf("open file: %w", err)
+	}
 	defer file.Close()
 
-	// Read into memory once. We need it for both the sha256 (via the
-	// content-addressed key helper) and the upload body.
 	body, err := io.ReadAll(io.LimitReader(file, MaxUploadBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read body: %w", err)
@@ -113,18 +194,12 @@ func (s *Service) Upload(
 
 	key := persistence.ContentAddressedKey("assets", body)
 
-	// Dedup: if an asset of this kind with this exact content already
-	// exists, return it untouched. The caller decides whether to surface
-	// "Reused: true" to the user.
 	if existing, err := s.FindByContentPath(ctx, kind, key); err == nil {
 		return &UploadResult{Asset: existing, Reused: true, OriginalFn: originalName}, nil
 	} else if !errors.Is(err, ErrAssetNotFound) {
 		return nil, fmt.Errorf("dedup lookup: %w", err)
 	}
 
-	// Push to object storage. Content-addressed: PutObject on identical
-	// bytes is idempotent; we re-upload anyway to be safe (no extra
-	// HeadObject round-trip), and the cost is one stream of bytes.
 	if err := store.Put(ctx, key, sniffed, bytes.NewReader(body), int64(len(body))); err != nil {
 		return nil, fmt.Errorf("upload to storage: %w", err)
 	}
@@ -149,8 +224,6 @@ func (s *Service) Upload(
 		CreatedBy:            designerID,
 	})
 	if err != nil {
-		// If the (kind, name) collided we fall back to a uniquified name so
-		// the upload still succeeds. The designer can rename later.
 		if errors.Is(err, ErrNameInUse) {
 			altName := uniquify(displayName, key)
 			asset, err = s.Create(ctx, CreateInput{
@@ -170,6 +243,21 @@ func (s *Service) Upload(
 		}
 	}
 	return &UploadResult{Asset: asset, Reused: false, OriginalFn: originalName}, nil
+}
+
+// MaxFilesPerUpload caps how many files a single multi-file upload
+// request may carry. Sane upper bound for "drag a folder of tiles in";
+// designers with larger sets will run multiple uploads.
+const MaxFilesPerUpload = 64
+
+// MultiUploadResult is the per-file outcome from UploadMany. Either
+// Asset is populated (success) or Err is set (this single file failed
+// — others in the batch may have succeeded).
+type MultiUploadResult struct {
+	Asset      *Asset
+	Reused     bool
+	OriginalFn string
+	Err        error
 }
 
 // normalizeContentType strips charset/parameters off DetectContentType output

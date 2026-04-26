@@ -152,6 +152,12 @@
           }
           const r = await resp.json();
           showStatus(`Committed ${r.tiles_written} tiles to layer ${r.layer_id}.`);
+          // Tell the authored canvas to reload the canonical tiles so
+          // the ghost overlay flips to real placements.
+          if (canvas) {
+            canvas.dispatchEvent(new CustomEvent("bx:mapmaker-reload", { bubbles: true }));
+            canvas.dispatchEvent(new CustomEvent("bx:procedural-preview-clear", { bubbles: true }));
+          }
         } catch (err) {
           showError(String(err && err.message ? err.message : err));
           showStatus("");

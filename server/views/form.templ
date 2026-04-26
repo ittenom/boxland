@@ -189,21 +189,76 @@ templ colorField(f configurable.FieldDescriptor, value any) {
 	/>
 }
 
-// refField renders a placeholder picker for asset/entity references.
-// The real picker UI (modal, search) lands when assets/entities exist
-// (tasks #60, #67). For now it's a typed text input so the form can be
-// exercised end-to-end.
+// refField renders an asset/entity reference picker. The hidden input
+// carries the canonical id (form field name = f.Key); the visible "Choose…"
+// button opens a modal grid driven by /design/picker/{kind}. The picked
+// card writes the id back into the hidden input + updates the visible
+// label, all via boot.js.
+//
+// refKind is the picker family ("asset" or "entity-type"). Tag filters
+// from the descriptor (RefTags) ride along as querystring params so the
+// picker only shows e.g. tile-kind assets.
 templ refField(f configurable.FieldDescriptor, value any, refKind string) {
 	@labelEl(f)
-	<input
-		class="bx-input"
-		type="text"
-		id={ "f-" + f.Key }
-		name={ f.Key }
-		value={ stringValue(value, f.Default) }
-		data-bx-ref={ refKind }
-		placeholder={ "Lorem ipsum " + refKind + " id" }
-	/>
+	<div class="bx-row bx-ref-field" style="gap: var(--bx-s2); align-items: center;">
+		<input
+			class="bx-input bx-mono bx-small"
+			type="text"
+			id={ "f-" + f.Key }
+			name={ f.Key }
+			value={ stringValue(value, f.Default) }
+			data-bx-ref={ refKind }
+			placeholder="—"
+			style="max-width: 96px; text-align: right;"
+		/>
+		<span
+			class="bx-small bx-muted"
+			id={ "f-" + f.Key + "-label" }
+			data-bx-ref-label={ refKind }
+		>{ refLabelHint(value) }</span>
+		<button
+			type="button"
+			class="bx-btn bx-btn--small"
+			hx-get={ refPickerURL(refKind, f) }
+			hx-target="#modal-host"
+			hx-swap="innerHTML"
+			title={ "Pick a " + refKind }
+		>Choose…</button>
+		if !f.Required {
+			<button
+				type="button"
+				class="bx-btn bx-btn--ghost bx-btn--small"
+				data-bx-ref-clear={ "f-" + f.Key }
+				title="Clear selection"
+			>Clear</button>
+		}
+	</div>
+}
+
+// refLabelHint shows a friendly fallback next to the id input. Keeps
+// the empty case quiet ("none chosen") and the populated case useful
+// ("currently #123 — click Choose to change").
+func refLabelHint(value any) string {
+	s := stringValue(value, nil)
+	if s == "" || s == "0" {
+		return "none chosen"
+	}
+	return "currently #" + s
+}
+
+// refPickerURL builds the GET endpoint that renders the picker modal,
+// embedding the field key + tag filters so the picker rehydrates the
+// right form input on click.
+func refPickerURL(refKind string, f configurable.FieldDescriptor) string {
+	base := "/design/picker/assets"
+	if refKind == "entity-type" {
+		base = "/design/picker/entities"
+	}
+	q := "?target_id=f-" + f.Key + "&target_label=f-" + f.Key + "-label"
+	for _, t := range f.RefTags {
+		q += "&tags=" + t
+	}
+	return base + q
 }
 
 templ vec2Field(f configurable.FieldDescriptor, value any) {
@@ -239,8 +294,8 @@ templ nestedField(f configurable.FieldDescriptor, value any) {
 templ listField(f configurable.FieldDescriptor, value any) {
 	<fieldset class="bx-panel">
 		<legend class="bx-panel__title" data-copy-slot={ "label." + f.Key }>{ f.Label }</legend>
-		<p class="bx-help" data-copy-slot={ "help." + f.Key + ".list-stub" }>
-			Lorem ipsum list editor — full UI in PLAN.md task #127.
+		<p class="bx-help bx-muted" data-copy-slot={ "help." + f.Key + ".list-stub" }>
+			One row for now. Multi-row editing arrives in a later release.
 		</p>
 		for _, child := range f.Children {
 			@FormField(prefixed(f.Key+"[0]", child), nil)

@@ -33,12 +33,13 @@ templ AssetUploadModal(p AssetUploadModalProps) {
 						class="bx-asset-drop"
 						data-copy-slot="assets.upload.drop"
 					>
-						<p>Lorem ipsum: drop a PNG / WAV / OGG / MP3 here, or browse.</p>
+						<p>Drop a PNG, WAV, OGG, or MP3 here, or browse. You can pick a whole folder.</p>
 						<input
 							type="file"
-							name="file"
+							name="files"
 							accept=".png,.wav,.ogg,.mp3"
 							required
+							multiple
 							class="bx-input"
 						/>
 					</div>
@@ -51,8 +52,7 @@ templ AssetUploadModal(p AssetUploadModalProps) {
 							<option value="audio">Audio</option>
 						</select>
 						<small class="bx-help" data-copy-slot="assets.upload.kind-help">
-							Lorem ipsum: PNG defaults to Sprite. Override here for tiles
-							so the renderer treats them correctly.
+							PNG defaults to Sprite. Override for tiles so the renderer treats them correctly.
 						</small>
 					</div>
 					<div class="bx-row bx-row--end">
@@ -67,8 +67,8 @@ templ AssetUploadModal(p AssetUploadModalProps) {
 	</div>
 }
 
-// AssetUploadResult is rendered into #asset-upload-result after a
-// successful upload. The detail panel can swap into the modal next.
+// AssetUploadResult is the legacy single-file toast (kept for the
+// pixel-editor postAssetReplace flow which always uploads one PNG).
 type AssetUploadResultProps struct {
 	AssetID int64
 	Name    string
@@ -86,9 +86,126 @@ templ AssetUploadResult(p AssetUploadResultProps) {
 	</div>
 }
 
+// AssetUploadItem is one row in the multi-upload result list.
+type AssetUploadItem struct {
+	AssetID    int64
+	Name       string
+	Kind       string
+	OriginalFn string
+	Reused     bool
+	Err        string
+}
+
+// AssetUploadResultsProps drives the multi-file upload summary that
+// HTMX swaps into #asset-upload-result after the modal posts.
+type AssetUploadResultsProps struct {
+	Items    []AssetUploadItem
+	OKCount  int
+	ErrCount int
+}
+
+templ AssetUploadResults(p AssetUploadResultsProps) {
+	<div class="bx-stack-tight">
+		<div class={ "bx-toast bx-toast--" + multiUploadSeverity(p.OKCount, p.ErrCount) }>
+			{ multiUploadHeadline(p.OKCount, p.ErrCount) }
+		</div>
+		if len(p.Items) > 0 {
+			<ul class="bx-stack-tight bx-small" style="margin-top: var(--bx-s2); max-height: 200px; overflow-y: auto;">
+				for _, it := range p.Items {
+					<li class="bx-row" style="gap: var(--bx-s2);">
+						if it.Err != "" {
+							<span style="color: var(--bx-danger);">✕</span>
+							<span class="bx-mono bx-small">{ it.OriginalFn }</span>
+							<span class="bx-muted">·</span>
+							<span class="bx-small bx-muted">{ it.Err }</span>
+						} else if it.Reused {
+							<span style="color: var(--bx-info);">↻</span>
+							<span class="bx-mono bx-small">{ it.OriginalFn }</span>
+							<span class="bx-muted">·</span>
+							<span class="bx-small bx-muted">already in library</span>
+						} else {
+							<span style="color: var(--bx-success);">✓</span>
+							<span class="bx-mono bx-small">{ it.OriginalFn }</span>
+							<span class="bx-muted">·</span>
+							<span class="bx-small bx-muted">added as { it.Kind }</span>
+						}
+					</li>
+				}
+			</ul>
+		}
+		if p.OKCount > 0 {
+			<div class="bx-row bx-row--end" style="margin-top: var(--bx-s2);">
+				<button
+					type="button"
+					class="bx-btn bx-btn--small"
+					hx-get="/design/assets/grid"
+					hx-target="#assets-grid"
+					hx-swap="outerHTML"
+					hx-on:htmx:after-request="document.querySelector('.bx-modal-backdrop')?.remove()"
+				>Done</button>
+			</div>
+		}
+	</div>
+}
+
 func uploadResultSeverity(reused bool) string {
 	if reused {
 		return "info"
 	}
 	return "success"
+}
+
+func multiUploadSeverity(ok, fail int) string {
+	switch {
+	case ok == 0 && fail > 0:
+		return "error"
+	case fail > 0:
+		return "warn"
+	default:
+		return "success"
+	}
+}
+
+func multiUploadHeadline(ok, fail int) string {
+	switch {
+	case ok == 0 && fail == 0:
+		return "Nothing uploaded."
+	case ok == 0:
+		return pluralFiles(fail) + " failed."
+	case fail == 0 && ok == 1:
+		return "1 file added."
+	case fail == 0:
+		return pluralFiles(ok) + " added."
+	default:
+		return pluralFiles(ok) + " added, " + pluralFiles(fail) + " failed."
+	}
+}
+
+func pluralFiles(n int) string {
+	if n == 1 {
+		return "1 file"
+	}
+	return intToA(n) + " files"
+}
+
+// intToA: tiny templ-safe integer-to-string. Same shape as formatIntPad
+// from layout.templ, kept local so this template doesn't have to import
+// strconv.
+func intToA(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	out := ""
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	for n > 0 {
+		out = string(rune('0'+byte(n%10))) + out
+		n /= 10
+	}
+	if neg {
+		out = "-" + out
+	}
+	return out
 }

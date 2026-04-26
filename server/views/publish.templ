@@ -36,7 +36,7 @@ templ PublishPreviewModal(p PublishPreviewProps) {
 			</header>
 			if len(p.Items) == 0 {
 				<p class="bx-muted" data-copy-slot="publish.preview.empty">
-					Lorem ipsum: nothing to publish — every draft has already been pushed.
+					Nothing to publish. Every draft has already been pushed.
 				</p>
 			} else {
 				<p class="bx-muted bx-small" data-copy-slot="publish.preview.lede">
@@ -78,19 +78,21 @@ templ PublishPreviewModal(p PublishPreviewProps) {
 				}
 			}
 
-			<footer class="bx-row bx-row--apart" style="margin-top: var(--bx-s4);">
-				<span class="bx-small bx-muted" data-bx-publish-status></span>
-				<form
-					hx-post="/design/publish"
-					hx-target="#publish-status"
-					hx-swap="innerHTML"
-				>
-					<button type="submit" class="bx-btn bx-btn--primary"
-						if len(p.Items) == 0 { disabled }
-						data-copy-slot="publish.preview.confirm">
-						{ confirmLabel(p.Items) }
-					</button>
-				</form>
+			<footer class="bx-stack-tight" style="margin-top: var(--bx-s4);">
+				<div id="publish-status" class="bx-small" data-bx-publish-status aria-live="polite"></div>
+				<div class="bx-row bx-row--end">
+					<form
+						hx-post="/design/publish"
+						hx-target="#publish-status"
+						hx-swap="innerHTML"
+					>
+						<button type="submit" class="bx-btn bx-btn--primary"
+							if len(p.Items) == 0 { disabled }
+							data-copy-slot="publish.preview.confirm">
+							{ confirmLabel(p.Items) }
+						</button>
+					</form>
+				</div>
 			</footer>
 		</div>
 	</div>

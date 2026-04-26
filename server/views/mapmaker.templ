@@ -62,13 +62,16 @@ templ MapmakerPage(p MapmakerProps) {
 						data-map-id={ fmt.Sprintf("%d", p.Map.ID) }
 						data-map-w={ fmt.Sprintf("%d", p.Map.Width) }
 						data-map-h={ fmt.Sprintf("%d", p.Map.Height) }
+						data-default-layer-id={ fmt.Sprintf("%d", defaultLayerID(p.Layers)) }
 					></canvas>
 					<div class="bx-mapmaker__statusbar">
 						<span data-bx-mapmaker-status="cursor">(–, –)</span>
 						<span class="bx-muted">·</span>
 						<span data-bx-mapmaker-status="tool">brush</span>
 						<span class="bx-muted">·</span>
-						<span data-bx-mapmaker-status="layer">base</span>
+						<span data-bx-mapmaker-status="layer">{ defaultLayerName(p.Layers) }</span>
+						<span class="bx-muted">·</span>
+						<span data-bx-mapmaker-status="dirty" class="bx-small bx-muted"></span>
 					</div>
 				</main>
 
@@ -82,7 +85,26 @@ templ MapmakerPage(p MapmakerProps) {
 		</section>
 
 		<div id="modal-host"></div>
+		<script src="/static/js/mapmaker.js" defer></script>
 	}
+}
+
+// defaultLayerID returns the first layer's id, or 0 if the map has no
+// layers yet (the JS handles 0 by refusing to paint). Layers ordered by
+// ord asc, so [0] is the base layer for stock maps.
+func defaultLayerID(layers []maps.Layer) int64 {
+	if len(layers) == 0 {
+		return 0
+	}
+	return layers[0].ID
+}
+
+// defaultLayerName mirrors defaultLayerID for the status bar.
+func defaultLayerName(layers []maps.Layer) string {
+	if len(layers) == 0 {
+		return "no layer"
+	}
+	return layers[0].Name
 }
 
 // MapmakerToolbar is the left-hand sidebar: tools, layers, palette.
@@ -104,8 +126,10 @@ templ MapmakerToolbar(p MapmakerProps) {
 			for i, l := range p.Layers {
 				<li
 					data-bx-layer-id={ fmt.Sprintf("%d", l.ID) }
+					data-bx-layer-name={ l.Name }
 					data-bx-layer-kind={ l.Kind }
 					if i == 0 { aria-selected="true" } else { aria-selected="false" }
+					title={ l.Name }
 				>
 					<span>{ l.Name }</span>
 					<span class="bx-badge">{ l.Kind }</span>

@@ -39,7 +39,7 @@ templ PlayMapsPage(p PlayMapsProps) {
 						type="search"
 						name="q"
 						value={ p.Search }
-						placeholder="Lorem ipsum search…"
+						placeholder="Search maps"
 						class="bx-input"
 						style="max-width: 240px;"
 						data-copy-slot="play.maps.search.placeholder"
@@ -55,7 +55,7 @@ templ PlayMapsGrid(p PlayMapsProps) {
 	<ul id="play-maps-grid" class="bx-cards">
 		if len(p.Items) == 0 {
 			<li class="bx-muted bx-card" data-copy-slot="play.maps.empty">
-				Lorem ipsum dolor sit amet. No public maps yet — check back soon.
+				No public maps yet. Check back soon, or ask a designer to publish one.
 			</li>
 		}
 		for _, m := range p.Items {

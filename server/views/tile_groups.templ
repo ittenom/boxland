@@ -113,12 +113,35 @@ templ TileGroupDetail(p TileGroupDetailProps) {
 					hx-target="#tile-group-paint-status" hx-swap="innerHTML"
 					class="bx-stack"
 				>
-					<div class="bx-row">
-						<label class="bx-label" for="active-entity-id" data-copy-slot="tilegroups.detail.active">
-							Active entity-type id
+					<div class="bx-row" style="gap: var(--bx-s2); align-items: center;">
+						<label class="bx-label" for="active-entity-id" data-copy-slot="tilegroups.detail.active" style="margin: 0;">
+							Active entity
 						</label>
-						<input id="active-entity-id" type="number" min="0" value="0" class="bx-input" style="max-width:120px"
-						       data-bx-active-entity placeholder="0 = clear"/>
+						<input
+							id="active-entity-id"
+							type="number"
+							min="0"
+							value="0"
+							class="bx-input bx-mono bx-small"
+							style="max-width: 96px; text-align: right;"
+							data-bx-active-entity
+							placeholder="0"
+						/>
+						<span class="bx-small bx-muted" id="active-entity-id-label">0 = clear</span>
+						<button
+							type="button"
+							class="bx-btn bx-btn--small"
+							hx-get="/design/picker/entities?target_id=active-entity-id&target_label=active-entity-id-label"
+							hx-target="#modal-host"
+							hx-swap="innerHTML"
+							title="Pick an entity type"
+						>Choose…</button>
+						<button
+							type="button"
+							class="bx-btn bx-btn--ghost bx-btn--small"
+							data-bx-ref-clear="active-entity-id"
+							title="Clear (cells become empty)"
+						>Clear</button>
 					</div>
 
 					<div

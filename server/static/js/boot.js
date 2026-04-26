@@ -68,7 +68,54 @@
     }
   });
 
-  // 5. Tile-group editor: click to assign the active entity-type id to a
+  // 5. Ref picker: when a card inside the picker modal is clicked,
+  //    write its id into the calling form's hidden input + label, then
+  //    close the modal. The picker modal carries the selectors
+  //    (data-bx-target-id, data-bx-target-label) on every card so this
+  //    handler stays a one-liner regardless of which form opened it.
+  document.body.addEventListener("click", (e) => {
+    const card = e.target instanceof HTMLElement
+      ? e.target.closest(".bx-picker-card")
+      : null;
+    if (!card) return;
+    e.preventDefault();
+    const id    = card.getAttribute("data-bx-pick-id") || "";
+    const label = card.getAttribute("data-bx-pick-label") || "";
+    const tid   = card.getAttribute("data-bx-target-id");
+    const tlbl  = card.getAttribute("data-bx-target-label");
+    if (tid) {
+      const input = document.getElementById(tid);
+      if (input instanceof HTMLInputElement) {
+        input.value = id;
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    }
+    if (tlbl) {
+      const lbl = document.getElementById(tlbl);
+      if (lbl) lbl.textContent = label ? `picked “${label}”` : "none chosen";
+    }
+    card.closest(".bx-modal-backdrop")?.remove();
+  });
+
+  // 5b. Ref picker "Clear" buttons reset the hidden input + label.
+  document.body.addEventListener("click", (e) => {
+    const btn = e.target instanceof HTMLElement
+      ? e.target.closest("[data-bx-ref-clear]")
+      : null;
+    if (!btn) return;
+    e.preventDefault();
+    const inputId = btn.getAttribute("data-bx-ref-clear");
+    if (!inputId) return;
+    const input = document.getElementById(inputId);
+    if (input instanceof HTMLInputElement) {
+      input.value = "";
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    const lbl = document.getElementById(inputId + "-label");
+    if (lbl) lbl.textContent = "none chosen";
+  });
+
+  // 6. Tile-group editor: click to assign the active entity-type id to a
   //    cell. Each .bx-tilegroup-grid is paired with a hidden input
   //    [data-bx-layout-input] that the form serializes.
   document.body.addEventListener("click", (e) => {
@@ -105,7 +152,7 @@
     layoutInput.value = JSON.stringify(out);
   });
 
-  // 6. Telemetry breadcrumb.
+  // 7. Telemetry breadcrumb.
   console.info(
     "[boxland] boot.js loaded; surface=%s",
     document.body.dataset.surface || "unknown"

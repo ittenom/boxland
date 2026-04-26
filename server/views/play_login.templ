@@ -18,7 +18,7 @@ templ PlayLoginPage(p PlayLoginProps) {
 		<section class="bx-panel" style="max-width: 400px; margin: var(--bx-s7) auto;">
 			<h1 data-copy-slot={ "play.auth." + p.Mode + ".title" }>{ playLoginTitle(p.Mode) }</h1>
 			<p class="bx-muted" data-copy-slot={ "play.auth." + p.Mode + ".lede" }>
-				Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+				{ playLoginLede(p.Mode) }
 			</p>
 			if p.FormError != "" {
 				<div class="bx-toast bx-toast--error" role="alert">{ p.FormError }</div>
@@ -86,4 +86,11 @@ func playLoginSubmit(mode string) string {
 		return "Sign up"
 	}
 	return "Sign in"
+}
+
+func playLoginLede(mode string) string {
+	if mode == "signup" {
+		return "Pick a name and password. You'll land on the maps list."
+	}
+	return "Welcome back. Sign in to drop into a map."
 }

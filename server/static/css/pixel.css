@@ -1235,6 +1235,32 @@ p, li { font-size: 13px; line-height: 1.55; }
 .bx-mapmaker__layers li {
     display: flex; justify-content: space-between; align-items: center;
     cursor: pointer;
+    padding: 4px var(--bx-s2);
+    border: var(--bx-px) solid transparent;
+}
+.bx-mapmaker__layers li[aria-selected="true"] {
+    background: var(--bx-bg-3);
+    border-color: var(--bx-accent);
+}
+.bx-mapmaker__layers li:hover {
+    background: var(--bx-bg-2);
+}
+
+/* -- Ref-field picker (form.templ refField + picker.templ) ----------- */
+.bx-ref-field input[type="text"] {
+    font-variant-numeric: tabular-nums;
+}
+.bx-picker-card {
+    cursor: pointer;
+    appearance: none;
+    text-align: left;
+    font: inherit;
+    color: inherit;
+}
+.bx-picker-card:hover,
+.bx-picker-card:focus-visible {
+    border-color: var(--bx-accent);
+    outline: none;
 }
 .bx-mapmaker__palette {
     list-style: none;
