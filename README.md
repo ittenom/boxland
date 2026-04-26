@@ -51,4 +51,4 @@ just migrate           # Run SQL migrations
 
 ## License
 
-TBD.
+MIT
