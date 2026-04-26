@@ -52,6 +52,52 @@ func TestEnsureBrewOnMacIsNoOpElsewhere(t *testing.T) {
 	}
 }
 
+// TestRefuseIfRootOnMac — when the user has run `boxland install`
+// under sudo on macOS, refuseIfRootOnMac must abort with a message
+// that points them at the right next step (drop the sudo). Homebrew
+// hard-aborts on root invocations, so letting this through would
+// just produce a stream of confusing "Don't run this as root!"
+// errors.
+//
+// We swap currentUID rather than actually running as root so the
+// test is portable to dev laptops and CI without privileged setup.
+func TestRefuseIfRootOnMac(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("guard only fires on macOS; on other OSes it's a no-op")
+	}
+	orig := currentUID
+	t.Cleanup(func() { currentUID = orig })
+
+	currentUID = func() int { return 0 }
+	err := refuseIfRootOnMac()
+	if err == nil {
+		t.Fatal("expected refuseIfRootOnMac to error when EUID is 0 on darwin")
+	}
+	if !strings.Contains(err.Error(), "sudo") {
+		t.Errorf("error should mention sudo so the user knows what to drop; got %v", err)
+	}
+
+	currentUID = func() int { return 501 }
+	if err := refuseIfRootOnMac(); err != nil {
+		t.Fatalf("non-root user should pass through; got %v", err)
+	}
+}
+
+// TestRefuseIfRootOnMacIsNoOpElsewhere — Linux package managers
+// (apt/dnf) actually want sudo, so the guard must not fire on
+// non-darwin even when EUID is 0.
+func TestRefuseIfRootOnMacIsNoOpElsewhere(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		t.Skip("test asserts non-darwin behaviour")
+	}
+	orig := currentUID
+	t.Cleanup(func() { currentUID = orig })
+	currentUID = func() int { return 0 }
+	if err := refuseIfRootOnMac(); err != nil {
+		t.Fatalf("refuseIfRootOnMac on %s should be a no-op even as root; got %v", runtime.GOOS, err)
+	}
+}
+
 // TestPrependPathIdempotent — calling prependPath twice with the
 // same dir should leave PATH with one entry (not two), so repeated
 // Install runs don't bloat the environment.

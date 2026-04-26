@@ -162,6 +162,16 @@ func installRequirements() []installRequirement {
 func runInstall() error {
 	fmt.Println("Boxland install checks")
 	fmt.Println()
+	// Refuse early when the user ran us with `sudo` on macOS.
+	// Homebrew refuses to install or run as root, and so do every
+	// `brew install <pkg>` call below — without this guard the user
+	// hits a stream of opaque "Don't run this as root!" errors, with
+	// no obvious way out. The TLI's interactive job slot pipes the
+	// child's TTY through, so brew's *own* sudo prompt reaches the
+	// user; they never need to wrap us in sudo themselves.
+	if err := refuseIfRootOnMac(); err != nil {
+		return err
+	}
 	// On macOS, Homebrew is the *only* package manager we know about.
 	// If it's missing, every brew-using requirement below would fail
 	// instantly. Bootstrap brew first so the rest of Install can use
@@ -320,6 +330,38 @@ func installCommand(pm, pkg string) []string {
 	}
 }
 
+// currentUID is a swappable seam so refuseIfRootOnMac can be tested
+// without actually running as root. Production callers go through
+// os.Geteuid; tests override it via the package-level var.
+var currentUID = func() int { return os.Geteuid() }
+
+// refuseIfRootOnMac aborts the install with a friendly explanation
+// when the user ran `boxland install` (or `boxland` -> Check
+// Installation) under sudo on macOS.
+//
+// Why: the official Homebrew installer hard-aborts with
+// "Don't run this as root!" when invoked as root, and every later
+// `brew install <pkg>` does the same. There is no path forward from
+// a root-owned invocation, so failing fast with the right next step
+// is much kinder than letting the user watch each step explode.
+//
+// On non-darwin platforms this is a no-op: Linux package managers
+// (apt/dnf) actually *do* want sudo, and on Windows there is no
+// concept of EUID 0 here.
+func refuseIfRootOnMac() error {
+	if goruntime.GOOS != "darwin" {
+		return nil
+	}
+	if currentUID() != 0 {
+		return nil
+	}
+	return fmt.Errorf(
+		"please re-run `boxland install` without `sudo`. " +
+			"Homebrew refuses to install or operate as root, and will " +
+			"prompt you for your admin password itself when it needs to " +
+			"create its install prefix.")
+}
+
 // ensureBrewOnMac installs Homebrew on macOS when it's missing. On any
 // other OS it's a no-op (Linux has apt/dnf/pacman; Windows has
 // winget/choco). Returns a non-nil error if brew is required but the
@@ -328,12 +370,15 @@ func installCommand(pm, pkg string) []string {
 //
 // Implementation notes:
 //
-//   - We invoke the official non-interactive installer
-//     (NONINTERACTIVE=1 ... install.sh) per Homebrew's documented
-//     unattended path. The user will still be prompted for their
-//     macOS admin password by sudo when brew sets up its prefix; we
-//     run inside the TLI's interactive job slot, so the prompt
-//     reaches the user's terminal.
+//   - We download the official installer to a temp file and execute
+//     it directly (instead of `curl ... | bash`). Piping into bash
+//     redirects bash's stdin to the pipe, which the installer reads
+//     as `! [ -t 0 ]` and silently flips itself to NONINTERACTIVE
+//     mode. In that mode it calls `sudo -n`, which fails immediately
+//     on a fresh shell with no cached credentials and aborts with
+//     "Need sudo access on macOS..." — never prompting the user for
+//     their password. Running the script directly with our TTY
+//     attached lets sudo prompt normally.
 //
 //   - Newly-installed brew is at /opt/homebrew/bin (Apple Silicon)
 //     or /usr/local/bin (Intel). Neither lives in the parent
@@ -348,16 +393,25 @@ func ensureBrewOnMac() error {
 	}
 	fmt.Println("Homebrew is the macOS package manager Boxland uses to install")
 	fmt.Println("the rest of its dependencies. Installing it now from brew.sh.")
-	fmt.Println("(You may be prompted for your admin password.)")
+	fmt.Println("(Homebrew will ask you for your admin password.)")
 	fmt.Println()
 
-	cmd := exec.Command("/bin/bash", "-c",
-		`curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | NONINTERACTIVE=1 /bin/bash`)
+	// Download the installer to a temp file. We *don't* pipe
+	// curl→bash: see the comment on this function for why.
+	scriptPath, cleanup, err := downloadBrewInstaller()
+	if err != nil {
+		return fmt.Errorf("could not download Homebrew installer: %w. "+
+			"Install manually from https://brew.sh and re-run Install", err)
+	}
+	defer cleanup()
+
+	cmd := exec.Command("/bin/bash", scriptPath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("Homebrew install failed: %w. Install manually from https://brew.sh and re-run Install.", err)
+		return fmt.Errorf("Homebrew install failed: %w. "+
+			"Install manually from https://brew.sh and re-run Install", err)
 	}
 
 	// Add the canonical brew bin to the in-process PATH so subsequent
@@ -371,12 +425,37 @@ func ensureBrewOnMac() error {
 	}
 
 	if _, err := exec.LookPath("brew"); err != nil {
-		return fmt.Errorf("Homebrew installed but `brew` is not on PATH. Restart your shell and re-run Install.")
+		return fmt.Errorf("Homebrew installed but `brew` is not on PATH. Restart your shell and re-run Install")
 	}
 	fmt.Println()
 	fmt.Println("✓ Homebrew installed.")
 	fmt.Println()
 	return nil
+}
+
+// downloadBrewInstaller fetches the official Homebrew install script
+// to a temporary file and returns its path plus a cleanup func. We
+// shell out to curl rather than using net/http so the standard "no
+// network" failure mode (proxy, captive portal, DNS) shows the user a
+// curl error message they can search for, instead of a Go-shaped one.
+func downloadBrewInstaller() (string, func(), error) {
+	const url = "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh"
+	f, err := os.CreateTemp("", "boxland-brew-install-*.sh")
+	if err != nil {
+		return "", func() {}, err
+	}
+	path := f.Name()
+	_ = f.Close()
+	cleanup := func() { _ = os.Remove(path) }
+
+	cmd := exec.Command("curl", "-fsSL", "-o", path, url)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	return path, cleanup, nil
 }
 
 // prependPath puts dir at the front of the in-process PATH env var so
