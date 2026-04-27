@@ -37,6 +37,7 @@ import (
 	"boxland/server/internal/entities"
 	"boxland/server/internal/entities/components"
 	"boxland/server/internal/flags"
+	"boxland/server/internal/folders"
 	"boxland/server/internal/httpserver"
 	"boxland/server/internal/hud"
 	"boxland/server/internal/logging"
@@ -694,6 +695,7 @@ func runServe() error {
 	componentRegistry := components.Default()
 	entitySvc := entities.New(pgPool, componentRegistry)
 	mapsSvc := mapsservice.New(pgPool)
+	foldersSvc := folders.New(pgPool)
 	settingsSvc := settings.New(pgPool)
 	charactersSvc := characters.New(pgPool)
 	// Bake-on-publish needs the object store + asset service. Two-step
@@ -798,6 +800,7 @@ func runServe() error {
 		Assets:             assetSvc,
 		Entities:           entitySvc,
 		Components:         componentRegistry,
+		Folders:            foldersSvc,
 		Maps:               mapsSvc,
 		Importers:          importerRegistry,
 		BakeJob:            bakeJob,

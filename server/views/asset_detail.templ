@@ -95,6 +95,18 @@ templ AssetDetail(p AssetDetailProps) {
 				>
 					Delete asset
 				</button>
+				<a
+					href={ templ.URL(fmt.Sprintf("/design/assets/export/%d", p.Asset.ID)) }
+					class="bx-btn bx-btn--ghost bx-btn--small bx-row"
+					style="gap: 6px;"
+					download
+					title="Save this asset (with animations and bytes) as a re-importable .boxasset.zip"
+					data-bx-export-asset
+					data-copy-slot="assets.detail.export"
+				>
+					@Icon("save")
+					<span>Export</span>
+				</a>
 				<span style="flex:1;"></span>
 				if p.Asset.Kind != assets.KindAudio {
 					<button

@@ -1,0 +1,145 @@
+package views
+
+import (
+	"fmt"
+
+	"boxland/server/internal/folders"
+)
+
+// palettePaneFolderChildren walks the flat folder list and emits one
+// expandable <li> per child of `parent`. Recursive descent + indent
+// via the depth arg matches the Asset Manager rail visually so the
+// designer's mental model is identical between the two surfaces.
+//
+// The mapmaker JS still finds entries via
+// `.bx-mapmaker__palette li[data-bx-entity-type-id]` so existing
+// selection / filter logic keeps working unchanged at any nesting
+// depth.
+templ palettePaneFolderChildren(p MapmakerProps, all []folders.Folder, parent *int64, depth int) {
+	for _, f := range all {
+		if folderParentMatches(f.ParentID, parent) {
+			@palettePaneFolderRow(p, all, f, depth)
+		}
+	}
+}
+
+templ palettePaneFolderRow(p MapmakerProps, all []folders.Folder, f folders.Folder, depth int) {
+	<li
+		class="bx-mapmaker__palette__group"
+		data-bx-palette-group
+		data-bx-folder-id={ fmt.Sprintf("%d", f.ID) }
+		data-bx-folder-name={ f.Name }
+		role="group"
+		style={ folderIndentStyle(depth) }
+	>
+		<button
+			type="button"
+			class="bx-mapmaker__palette__group-head"
+			data-bx-palette-group-toggle
+			aria-expanded={ paletteGroupExpandedAttr(p, f) }
+		>
+			<span class="bx-folder-rail__disclose" aria-hidden="true">
+				if paletteGroupExpanded(p, f) {
+					▼
+				} else {
+					▶
+				}
+			</span>
+			<span class="bx-folder-rail__icon" aria-hidden="true">▦</span>
+			<span class="bx-mapmaker__palette__group-name">{ f.Name }</span>
+			<span class="bx-tiny bx-muted">{ fmt.Sprintf("%d", paletteEntriesInFolderCount(p, &f.ID)) }</span>
+		</button>
+		<ol
+			class="bx-mapmaker__palette__group-list"
+			role="listbox"
+			aria-label={ f.Name }
+			if !paletteGroupExpanded(p, f) { hidden }
+		>
+			// Sub-folders first (so they read top-to-bottom before
+			// the leaf items) followed by tiles in this folder.
+			@palettePaneFolderChildren(p, all, &f.ID, depth+1)
+			@palettePaneEntries(p, paletteEntriesInFolder(p, &f.ID), depth+1)
+		</ol>
+	</li>
+}
+
+// palettePaneEntries renders one or more <li data-bx-entity-type-id>
+// rows. This is the leaf shape that mapmaker.js already understands;
+// the only difference from the legacy palette is that the entries
+// live inside per-folder <ol> wrappers.
+templ palettePaneEntries(p MapmakerProps, entries []PaletteEntry, depth int) {
+	for i, e := range entries {
+		<li
+			data-bx-entity-type-id={ fmt.Sprintf("%d", e.ID) }
+			data-bx-palette-name={ e.Name }
+			data-bx-sprite-url={ e.SpriteURL }
+			data-bx-atlas-index={ fmt.Sprintf("%d", e.AtlasIndex) }
+			data-bx-atlas-cols={ fmt.Sprintf("%d", paletteCols(e)) }
+			data-bx-tile-size={ fmt.Sprintf("%d", paletteTileSize(e)) }
+			data-bx-proc-include={ procIncludeAttr(e) }
+			class={ paletteEntryClass(e) }
+			if i == 0 && depth == 0 { aria-selected="true" } else { aria-selected="false" }
+			title={ e.Name }
+		>
+			<canvas
+				class="bx-mapmaker__palette__thumb bx-pixel"
+				width="32"
+				height="32"
+				aria-hidden="true"
+			></canvas>
+			<span class="bx-mapmaker__palette__name">{ e.Name }</span>
+			if p.Map.Mode == "procedural" {
+				<button
+					type="button"
+					class="bx-mapmaker__palette__include"
+					data-bx-palette-include
+					title={ procIncludeTitle(e) }
+					aria-pressed={ procIncludeAttr(e) }
+				>
+					if e.ProceduralInclude {
+						👁
+					} else {
+						🚫
+					}
+				</button>
+			}
+		</li>
+	}
+}
+
+// paletteEntriesInFolder returns the entries whose FolderID matches
+// `parent` (nil = the Tiles root). Cheap; called on the order of
+// |folders| × |entries|. In practice both are small (< 200 typical).
+func paletteEntriesInFolder(p MapmakerProps, parent *int64) []PaletteEntry {
+	out := make([]PaletteEntry, 0, len(p.PaletteEntityTypes))
+	for _, e := range p.PaletteEntityTypes {
+		if folderParentMatches(e.FolderID, parent) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func paletteEntriesInFolderCount(p MapmakerProps, parent *int64) int {
+	n := 0
+	for _, e := range p.PaletteEntityTypes {
+		if folderParentMatches(e.FolderID, parent) {
+			n++
+		}
+	}
+	return n
+}
+
+// paletteGroupExpanded controls whether a palette folder opens by
+// default. v1 rule: top-level folders open, deeper folders closed.
+// (Designers can toggle freely; this just affects first paint.)
+func paletteGroupExpanded(_ MapmakerProps, f folders.Folder) bool {
+	return f.ParentID == nil
+}
+
+func paletteGroupExpandedAttr(p MapmakerProps, f folders.Folder) string {
+	if paletteGroupExpanded(p, f) {
+		return "true"
+	}
+	return "false"
+}

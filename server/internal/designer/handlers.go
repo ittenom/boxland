@@ -26,6 +26,7 @@ import (
 	"boxland/server/internal/entities"
 	"boxland/server/internal/entities/components"
 	"boxland/server/internal/flags"
+	"boxland/server/internal/folders"
 	"boxland/server/internal/hud"
 	mapsservice "boxland/server/internal/maps"
 	"boxland/server/internal/maps/wfc"
@@ -48,6 +49,7 @@ type Deps struct {
 	Assets          *assets.Service
 	Entities        *entities.Service
 	Components      *components.Registry
+	Folders         *folders.Service
 	Maps            *mapsservice.Service
 	Importers       *assets.Registry
 	BakeJob         *assets.BakeJob
@@ -125,6 +127,28 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /design/assets/{id}/promote-to-entity", auth(postAssetPromoteToEntity(d)))
 	mux.Handle("POST /design/assets/promote-bulk", auth(postAssetPromoteBulk(d)))
 	mux.Handle("POST /design/assets/delete-bulk", auth(postAssetDeleteBulk(d)))
+
+	// Asset export / import (PLAN.md backbone for save/restore + asset
+	// sharing). Each export round-trips into the matching import. See
+	// internal/exporter + internal/importer.
+	mux.Handle("GET /design/assets/export", auth(getAllAssetsExport(d)))
+	mux.Handle("GET /design/assets/export/{id}", auth(getAssetExport(d)))
+	mux.Handle("GET /design/assets/import", auth(getAssetsImportModal(d)))
+	mux.Handle("POST /design/assets/import", auth(postAssetsImport(d)))
+
+	// Folder filesystem (PLAN: asset folder system). Tree CRUD plus
+	// the per-folder contents listing that powers both the Asset
+	// Manager grid and the Mapmaker palette.
+	mux.Handle("GET /design/folders", auth(getFolderTree(d)))
+	mux.Handle("GET /design/folders/contents", auth(getFolderContents(d)))
+	mux.Handle("GET /design/folders/new", auth(getFolderNewModal(d)))
+	mux.Handle("POST /design/folders", auth(postFolderCreate(d)))
+	mux.Handle("POST /design/folders/{id}/rename", auth(postFolderRename(d)))
+	mux.Handle("POST /design/folders/{id}/move", auth(postFolderMove(d)))
+	mux.Handle("POST /design/folders/{id}/sort-mode", auth(postFolderSortMode(d)))
+	mux.Handle("DELETE /design/folders/{id}", auth(deleteFolder(d)))
+	mux.Handle("POST /design/assets/move", auth(postAssetsMove(d)))
+	mux.Handle("POST /design/assets/{id}/rename", auth(postAssetRename(d)))
 
 	// Entity Manager surface (PLAN.md §5d).
 	mux.Handle("GET /design/entities", auth(getEntitiesList(d)))
@@ -210,6 +234,11 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /design/maps/{id}/draft", auth(postMapDraft(d)))
 	mux.Handle("POST /design/maps/{id}/public-toggle", auth(postMapPublicToggle(d)))
 	mux.Handle("POST /design/maps/{mapID}/layers/{layerID}/y-sort", auth(postMapLayerYSortToggle(d)))
+
+	// Map export / import (mirrors the asset surface — see PLAN.md
+	// backbone notes in internal/exporter).
+	mux.Handle("GET /design/maps/{id}/export", auth(getMapExport(d)))
+	mux.Handle("POST /design/maps/import", auth(postMapImport(d)))
 
 	// Per-realm HUD editor (PLAN.md research §P1 #7 + Todo 5).
 	// Edits land on maps.hud_layout_json directly (no draft staging
@@ -606,10 +635,32 @@ func renderHTML(w http.ResponseWriter, r *http.Request, c templ.Component) {
 // ---- Asset Manager ----
 
 // getAssetsList renders the full Asset Manager page.
+//
+// The page is a two-pane IDE: folder rail on the left, contents grid
+// on the right. Query parameters drive the right-pane content:
+//
+//   ?folder_id=<id>  → that folder's contents (uses folder.sort_mode)
+//   ?kind=<kind>     → kind-root view (every asset of `kind` whose
+//                      folder_id IS NULL)
+//   neither set      → legacy flat grid (kept for filter=orphan deep
+//                      links and other non-folder views)
+//
+// In every case the rail (Tree) is populated for all four kind_roots.
 func getAssetsList(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		opts := assetListOptsFromQuery(r)
 		filter := strings.TrimSpace(r.URL.Query().Get("filter"))
+		// Folder / kind-root view selectors.
+		var folderID *int64
+		if s := strings.TrimSpace(r.URL.Query().Get("folder_id")); s != "" {
+			id, err := strconv.ParseInt(s, 10, 64)
+			if err == nil && id > 0 {
+				folderID = &id
+			}
+		}
+		kindRoot := strings.TrimSpace(r.URL.Query().Get("kind"))
+		sort := strings.TrimSpace(r.URL.Query().Get("sort"))
+
 		items, err := d.Assets.List(r.Context(), opts)
 		if err != nil {
 			slog.Error("assets list", "err", err)
@@ -623,12 +674,46 @@ func getAssetsList(d Deps) http.HandlerFunc {
 		layout.Variant = "no-rail"
 		layout.Crumbs = []views.Crumb{{Label: "Assets"}}
 
+		// Folder rail props (always populated, all four kind_roots).
+		treeProps, err := buildFolderTreeProps(r.Context(), d, "", nil)
+		if err != nil {
+			slog.Warn("folder tree props", "err", err)
+		}
+		treeProps.SelectedFolderID = folderID
+
+		// Right-pane: folder contents view if folder_id or kind set.
+		var contents *views.FolderContentsProps
+		if folderID != nil || kindRoot != "" {
+			if sort == "" && folderID != nil {
+				if f, err := d.Folders.FindByID(r.Context(), *folderID); err == nil {
+					sort = string(f.SortMode)
+				}
+			}
+			if sort == "" {
+				sort = "alpha"
+			}
+			folderItems, err := d.Assets.ListByFolder(r.Context(), folderID, kindRoot, sort)
+			if err != nil {
+				slog.Warn("list by folder", "err", err)
+			}
+			contents = &views.FolderContentsProps{
+				Items:     folderItems,
+				Sort:      sort,
+				FolderID:  folderID,
+				Kind:      kindRoot,
+				PublicURL: assetPublicURLFunc(folderItems),
+			}
+		}
+
 		// Compute the asset → entity-count map so orphan/used-by badges
 		// render with real numbers. Failure degrades gracefully (badges
 		// fall back to "—").
 		usage, err := AssetUsageMap(r.Context(), d, assetIDs(items))
 		if err != nil {
 			slog.Warn("asset usage map", "err", err)
+		}
+		if contents != nil {
+			contents.UsageByID = usage
 		}
 
 		items = applyAssetFilter(items, filter, usage)
@@ -639,6 +724,8 @@ func getAssetsList(d Deps) http.HandlerFunc {
 			ActiveKind:   string(opts.Kind),
 			Search:       opts.Search,
 			PublicURL:    assetPublicURLFunc(items),
+			Tree:         treeProps,
+			Contents:     contents,
 			UsageByID:    usage,
 			ActiveFilter: filter,
 		}))
@@ -2624,9 +2711,30 @@ func getMapmakerPage(d Deps) http.HandlerFunc {
 							entry.AtlasCols = int32(md.Cols)
 							entry.TileSize = int32(md.TileSize)
 						}
+						// Folder grouping: the palette tree shows
+						// each entity_type under the folder of its
+						// sprite asset. Tile assets in the kind
+						// root keep FolderID nil → render at the
+						// top of the palette.
+						if a.FolderID != nil {
+							fid := *a.FolderID
+							entry.FolderID = &fid
+						}
 					}
 				}
 				palette = append(palette, entry)
+			}
+		}
+		// Pull the tile-folder tree once so the view can group entries
+		// without a round-trip per folder. Sprite/audio/UI roots are
+		// out of scope for the Mapmaker palette by design.
+		var paletteFolders []folders.Folder
+		if d.Folders != nil {
+			fs, ferr := d.Folders.ListByKindRoot(r.Context(), folders.KindTile)
+			if ferr != nil {
+				slog.Warn("palette folder tree", "err", ferr)
+			} else {
+				paletteFolders = fs
 			}
 		}
 		// Count entity_type drafts so the palette can warn the designer
@@ -2661,6 +2769,7 @@ func getMapmakerPage(d Deps) http.HandlerFunc {
 			Map:                *m,
 			Layers:             layers,
 			PaletteEntityTypes: palette,
+			PaletteFolders:     paletteFolders,
 			EntityDraftCount:   entityDrafts,
 			LockedCellCount:    lockedCount,
 		}))

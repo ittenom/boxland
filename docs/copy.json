@@ -53,7 +53,20 @@
 	"assets.upload.submit":      "Upload",
 	"assets.detail.title":       "Asset",
 	"assets.detail.delete":      "Delete asset",
+	"assets.detail.export":      "Export",
 	"assets.draft.saved":        "Draft saved.",
+	"assets.export.all":         "Export all",
+	"assets.import":             "Import",
+	"assets.import.title":       "Import assets",
+	"assets.import.lede":        "Drop a .boxasset, .boxassets, or .boxmap file here. Existing assets with matching content are skipped automatically.",
+	"assets.import.submit":      "Import",
+	"assets.import.done":        "Import complete",
+	"assets.import.reload":      "Reload to see them",
+
+	"folders.crumb-prefix":      "in",
+	"folders.empty":             "This folder is empty.",
+	"folders.new.title":         "New folder",
+	"folders.new.submit":        "Create",
 
 	"entities.title":            "Entities",
 	"entities.lede":              "Compose components and behavior. Tiles, NPCs, items, triggers.",
@@ -99,6 +112,7 @@
 
 	"mapmaker.back":             "Maps",
 	"mapmaker.test":             "Test in Sandbox",
+	"mapmaker.export":           "Export",
 	"mapmaker.zoomout":          "−",
 	"mapmaker.zoomin":           "+",
 	"mapmaker.tools.title":      "Tools",

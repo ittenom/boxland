@@ -14,6 +14,7 @@
 | `Ctrl/Cmd + K` | Open the command palette (Sandbox; later, every surface). |
 | `?` | Open the hotkey-cheatsheet modal. |
 | `Ctrl/Cmd + S` | "Save current draft" on the active surface. Network errors surface as toasts; never silent. |
+| `Ctrl/Cmd + Shift + S` | "Save As…" — Export. Triggers the floppy-disk Export button on the active surface (Mapmaker map, Asset Manager grid, or open asset detail). Result is a `.boxmap.zip`, `.boxassets.zip`, or `.boxasset.zip` saved through the browser's file dialog. |
 | `Ctrl/Cmd + Z` | Undo via the surface's command bus. |
 | `Ctrl/Cmd + Shift + Z` *or* `Ctrl/Cmd + Y` | Redo. |
 
@@ -22,7 +23,7 @@
 | Key | Action |
 |---|---|
 | `[` / `]` | Cycle to the previous / next layer. |
-| `1`–`9` | Select tile palette swatch by slot. |
+| `1`–`9` | Select tile palette swatch by slot. The palette is now an IDE-style folder tree (matching Asset Manager) — slots count visible tiles in DOM order. |
 | `B` | Brush tool. |
 | `R` | Rect tool. |
 | `F` | Fill tool. |
@@ -43,12 +44,30 @@ review point before that point of no return.
 
 ## Asset Manager
 
+The Asset Manager is an IDE-style two-pane view: folder rail on the left, asset
+contents on the right. The hotkeys below work whether focus is in the rail or
+the contents pane.
+
 | Key | Action |
 |---|---|
 | `/` | Focus the search input. |
 | `U` | Open upload modal. |
 | `Enter` | Open the selected asset. |
-| `Delete` | Move selection to trash (with confirm). |
+| `Delete` | Delete selected folder (confirm) or move asset selection to trash (confirm). |
+| `F2` | Inline-rename the selected folder or asset (Enter commits, Esc cancels). |
+| `Cmd/Ctrl + N` | New folder under the selected parent (or kind root if no folder selected). |
+| `Cmd/Ctrl + C` | Copy asset selection to the folder clipboard. |
+| `Cmd/Ctrl + X` | Cut asset selection (paste to move into the destination folder). |
+| `Cmd/Ctrl + V` | Paste from the folder clipboard into the currently-displayed folder. |
+| `Up` / `Down` | Move selection within the contents pane. |
+| `Left` / `Right` | Collapse / expand the focused folder in the rail. |
+
+**Drag-and-drop** is also wired:
+
+- Drag an asset card onto a folder row → bulk move into that folder.
+- Drag a folder onto another folder → nest it (cycles + cross-kind moves rejected).
+- Drop external files on a folder → upload directly into that folder.
+- Drag an asset card out of the browser window → `.boxasset.zip` download.
 
 ## Entity Manager
 

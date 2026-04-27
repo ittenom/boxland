@@ -25,6 +25,27 @@
     if (dismissible.parentElement) dismissible.remove();
   });
 
+  // 1b. Ctrl/Cmd + Shift + S = Export on the active surface. Looks for
+  //     a single [data-bx-export-*] anchor in the DOM and synthesizes a
+  //     click — the anchor's `download` attribute drives the OS save
+  //     dialog. Suppressed while focus is in a text input so the
+  //     browser's native "Save Page" / form-save behavior isn't hijacked
+  //     mid-typing. Per docs/hotkeys.md ("Save As…" intuition).
+  document.addEventListener("keydown", (e) => {
+    if (!(e.key === "s" || e.key === "S")) return;
+    if (!(e.ctrlKey || e.metaKey)) return;
+    if (!e.shiftKey) return;
+    if (isTextEditingTarget(e.target)) return;
+    const exporters = document.querySelectorAll(
+      "[data-bx-export-map], [data-bx-export-asset], [data-bx-export-all-assets]"
+    );
+    if (exporters.length === 0) return;
+    e.preventDefault();
+    // Prefer the most-specific surface: per-asset > per-map > all-assets.
+    // The DOM only ever shows one of these at a time on a real page.
+    exporters[0].click();
+  });
+
   // 2. Mark the active nav link with aria-current="page". Re-runs on HTMX
   //    swaps so client-side nav stays in sync.
   const markActive = () => {

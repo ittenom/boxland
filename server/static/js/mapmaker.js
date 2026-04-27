@@ -769,6 +769,33 @@
 		}
 
 		function bindPalette(state) {
+			// Folder-tree disclosure: clicking the group head toggles
+			// the child <ol> in place. The default open/closed state
+			// is set by the templ via the `hidden` attribute. We
+			// preserve the expanded state across re-paints in memory
+			// only — refresh resets it to the templ's default.
+			$$("[data-bx-palette-group-toggle]").forEach((btn) => {
+				btn.addEventListener("click", (e) => {
+					e.stopPropagation();
+					const li = btn.closest("[data-bx-palette-group]");
+					if (!li) return;
+					const sub = li.querySelector(":scope > ol");
+					if (!sub) return;
+					const open = !sub.hasAttribute("hidden");
+					if (open) {
+						sub.setAttribute("hidden", "");
+						btn.setAttribute("aria-expanded", "false");
+						const tri = btn.querySelector(".bx-folder-rail__disclose");
+						if (tri) tri.textContent = "▶";
+					} else {
+						sub.removeAttribute("hidden");
+						btn.setAttribute("aria-expanded", "true");
+						const tri = btn.querySelector(".bx-folder-rail__disclose");
+						if (tri) tri.textContent = "▼";
+					}
+				});
+			});
+
 			$$(".bx-mapmaker__palette li[data-bx-entity-type-id]").forEach((li) => {
 				li.addEventListener("click", () => {
 					const id = Number(li.getAttribute("data-bx-entity-type-id"));
@@ -792,10 +819,40 @@
 			if (filter) {
 				filter.addEventListener("input", () => {
 					const q = filter.value.trim().toLowerCase();
+					// Show/hide leaves first.
 					$$(".bx-mapmaker__palette li[data-bx-entity-type-id]").forEach((li) => {
 						const name = (li.getAttribute("data-bx-palette-name") || "").toLowerCase();
 						li.style.display = !q || name.includes(q) ? "" : "none";
 					});
+					// When searching, auto-expand any folder that
+					// contains a visible match so the user sees their
+					// hits without manual disclosure clicks. When the
+					// search clears, leave folder open/closed state
+					// alone — designer's choices stick.
+					if (q) {
+						$$("[data-bx-palette-group]").forEach((grp) => {
+							const sub = grp.querySelector(":scope > ol");
+							if (!sub) return;
+							const hasVisibleHit = !!sub.querySelector(
+								'li[data-bx-entity-type-id]:not([style*="display: none"])'
+							);
+							if (hasVisibleHit) {
+								sub.removeAttribute("hidden");
+								const tri = grp.querySelector(".bx-folder-rail__disclose");
+								if (tri) tri.textContent = "▼";
+								const btn = grp.querySelector("[data-bx-palette-group-toggle]");
+								if (btn) btn.setAttribute("aria-expanded", "true");
+								grp.style.display = "";
+							} else {
+								grp.style.display = "none";
+							}
+						});
+					} else {
+						// Restore folder visibility when search clears.
+						$$("[data-bx-palette-group]").forEach((grp) => {
+							grp.style.display = "";
+						});
+					}
 				});
 			}
 

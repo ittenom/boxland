@@ -1,0 +1,154 @@
+package views
+
+import "fmt"
+
+// AssetsImportModal is the small file-picker that the Asset Manager's
+// "Import" button opens. POSTs the chosen .boxasset / .boxassets /
+// .boxmap zip to /design/assets/import; the response is an
+// ImportSummary fragment that replaces the modal body.
+//
+// The form is plain multipart so it works without JavaScript; HTMX is
+// only used to swap the response into #modal-host.
+templ AssetsImportModal() {
+	<div class="bx-modal-backdrop" data-bx-dismissible role="dialog" aria-modal="true">
+		<div class="bx-modal" style="width: min(520px, 95vw);">
+			<header class="bx-modal__header">
+				<div class="bx-row" style="gap: var(--bx-s2);">
+					@Icon("save")
+					<h2 style="margin:0;" data-copy-slot="assets.import.title">Import assets</h2>
+				</div>
+				<button
+					type="button"
+					class="bx-btn bx-btn--ghost bx-btn--small"
+					hx-on:click="this.closest('.bx-modal-backdrop').remove()"
+					aria-label="Close"
+				>Esc</button>
+			</header>
+			<form
+				class="bx-modal__body bx-stack"
+				hx-post="/design/assets/import"
+				hx-encoding="multipart/form-data"
+				hx-target="#modal-host"
+				hx-swap="innerHTML"
+			>
+				<p class="bx-muted bx-small" data-copy-slot="assets.import.lede">
+					Drop a .boxasset, .boxassets, or .boxmap file here. Existing assets with matching content are skipped automatically.
+				</p>
+				<label class="bx-stack-tight">
+					<span class="bx-small bx-muted">File</span>
+					<input
+						type="file"
+						name="file"
+						accept=".zip,.boxasset,.boxassets,.boxmap,application/zip"
+						required
+						class="bx-input"
+					/>
+				</label>
+				<label class="bx-stack-tight">
+					<span class="bx-small bx-muted">If a name already exists</span>
+					<select name="policy" class="bx-select">
+						<option value="skip" selected>Skip — keep the existing one</option>
+						<option value="replace">Replace — update animations to match</option>
+						<option value="fail">Fail — stop and show the conflict</option>
+					</select>
+				</label>
+			</form>
+			<footer class="bx-modal__footer">
+				<span style="flex:1;"></span>
+				<button
+					type="button"
+					class="bx-btn bx-btn--ghost bx-btn--small"
+					hx-on:click="this.closest('.bx-modal-backdrop').remove()"
+				>Cancel</button>
+				<button
+					type="submit"
+					class="bx-btn bx-btn--primary"
+					hx-post="/design/assets/import"
+					hx-encoding="multipart/form-data"
+					hx-include="closest .bx-modal form"
+					hx-target="#modal-host"
+					hx-swap="innerHTML"
+					data-copy-slot="assets.import.submit"
+				>Import</button>
+			</footer>
+		</div>
+	</div>
+}
+
+// ImportSummaryProps is the post-import toast: counts + warnings.
+type ImportSummaryProps struct {
+	AssetsCreated      int
+	AssetsSkipped      int
+	BlobsUploaded      int
+	EntityTypesCreated int
+	EntityTypesSkipped int
+	MapsCreated        int
+	Warnings           []string
+}
+
+// ImportSummary renders inside #modal-host after a successful import.
+// The "Reload page" affordance is the simplest way to reflect new
+// assets in the grid + new maps in the list without spelunking through
+// HTMX out-of-band swaps.
+templ ImportSummary(p ImportSummaryProps) {
+	<div class="bx-modal-backdrop" data-bx-dismissible role="dialog" aria-modal="true">
+		<div class="bx-modal" style="width: min(520px, 95vw);">
+			<header class="bx-modal__header">
+				<div class="bx-row" style="gap: var(--bx-s2);">
+					@Icon("save")
+					<h2 style="margin:0;" data-copy-slot="assets.import.done">Import complete</h2>
+				</div>
+				<button
+					type="button"
+					class="bx-btn bx-btn--ghost bx-btn--small"
+					hx-on:click="this.closest('.bx-modal-backdrop').remove()"
+					aria-label="Close"
+				>Esc</button>
+			</header>
+			<div class="bx-modal__body bx-stack">
+				<ul class="bx-list" style="margin: 0;">
+					<li><strong>{ fmt.Sprintf("%d", p.AssetsCreated) }</strong> assets created</li>
+					if p.AssetsSkipped > 0 {
+						<li class="bx-muted"><strong>{ fmt.Sprintf("%d", p.AssetsSkipped) }</strong> assets skipped (already present)</li>
+					}
+					if p.BlobsUploaded > 0 {
+						<li class="bx-muted"><strong>{ fmt.Sprintf("%d", p.BlobsUploaded) }</strong> blobs uploaded</li>
+					}
+					if p.EntityTypesCreated > 0 {
+						<li><strong>{ fmt.Sprintf("%d", p.EntityTypesCreated) }</strong> entity types created</li>
+					}
+					if p.EntityTypesSkipped > 0 {
+						<li class="bx-muted"><strong>{ fmt.Sprintf("%d", p.EntityTypesSkipped) }</strong> entity types skipped</li>
+					}
+					if p.MapsCreated > 0 {
+						<li><strong>{ fmt.Sprintf("%d", p.MapsCreated) }</strong> maps created</li>
+					}
+				</ul>
+				if len(p.Warnings) > 0 {
+					<details class="bx-panel bx-stack-tight" style="padding: var(--bx-s2);">
+						<summary class="bx-small">{ fmt.Sprintf("%d warnings", len(p.Warnings)) }</summary>
+						<ul class="bx-list bx-tiny" style="margin: var(--bx-s1) 0 0;">
+							for _, w := range p.Warnings {
+								<li class="bx-muted">{ w }</li>
+							}
+						</ul>
+					</details>
+				}
+			</div>
+			<footer class="bx-modal__footer">
+				<span style="flex:1;"></span>
+				<button
+					type="button"
+					class="bx-btn bx-btn--primary"
+					hx-on:click="window.location.reload()"
+					data-copy-slot="assets.import.reload"
+				>Reload to see them</button>
+				<button
+					type="button"
+					class="bx-btn bx-btn--ghost bx-btn--small"
+					hx-on:click="this.closest('.bx-modal-backdrop').remove()"
+				>Done</button>
+			</footer>
+		</div>
+	</div>
+}

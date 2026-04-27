@@ -1779,6 +1779,252 @@ p, li { font-size: 13px; line-height: 1.55; }
 .bx-scroll::-webkit-scrollbar-corner       { background: var(--bx-bg-0); }
 
 
+/* ----- 8b. Mapmaker palette folder groups ---------------------------- */
+
+/* Group head: triangle + folder icon + name + count chip. Visually
+   matches the Asset Manager rail (same disclose / icon classes) so
+   designers see the same metaphor in both places. */
+.bx-mapmaker__palette__group {
+    list-style: none;
+    margin: 0; padding: 0 0 4px;
+    border-bottom: var(--bx-px) dashed var(--bx-line);
+}
+.bx-mapmaker__palette__group:last-child { border-bottom: 0; }
+.bx-mapmaker__palette__group-head {
+    display: flex; align-items: center; gap: 4px;
+    width: 100%;
+    background: transparent;
+    border: 0;
+    color: var(--bx-fg-1);
+    font: inherit; font-size: 11px;
+    padding: 4px 6px;
+    cursor: pointer;
+    text-align: left;
+}
+.bx-mapmaker__palette__group-head:hover {
+    background: var(--bx-bg-2);
+    color: var(--bx-fg-0);
+}
+.bx-mapmaker__palette__group-name {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-weight: 500;
+}
+.bx-mapmaker__palette__group-list {
+    list-style: none;
+    margin: 0; padding: 0 0 0 14px;
+    display: flex; flex-wrap: wrap; gap: 2px;
+}
+
+
+/* ----- 8c. Asset Manager folder rail (IDE-style filesystem) ---------- */
+
+/* Two-pane layout under the toolbar: left rail + right contents. The
+   parent .bx-work__body must allow flex children; we set min-height: 0
+   on the parent in the templ so the inner panes can scroll independently. */
+.bx-asset-mgr {
+    display: grid;
+    grid-template-columns: 240px 1fr;
+    gap: var(--bx-s2);
+    flex: 1;
+    min-height: 0;
+}
+.bx-asset-mgr__pane {
+    overflow: auto;
+    background: var(--bx-bg-1);
+    border: var(--bx-px) solid var(--bx-line);
+    min-height: 0;
+}
+
+/* Rail itself is a stack of four kind-root sections. Single-column,
+   tight spacing — IDE-style density. */
+.bx-folder-rail {
+    overflow: auto;
+    background: var(--bx-bg-1);
+    border: var(--bx-px) solid var(--bx-line);
+    padding: var(--bx-s1) 0;
+    font-family: var(--bx-font-ui);
+    font-size: 12px;
+    line-height: 1.4;
+    min-width: 200px;
+    user-select: none;
+}
+.bx-folder-rail__root {
+    border-bottom: var(--bx-px) solid var(--bx-line);
+    padding-bottom: var(--bx-s1);
+    margin-bottom: var(--bx-s1);
+}
+.bx-folder-rail__root:last-child { border-bottom: 0; margin-bottom: 0; }
+
+.bx-folder-rail__root-head {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 6px;
+    background: var(--bx-bg-2);
+    border-bottom: var(--bx-px) solid var(--bx-line);
+}
+.bx-folder-rail__root-link {
+    display: flex; align-items: center; gap: 6px; flex: 1;
+    color: var(--bx-fg-0);
+    text-decoration: none;
+    min-width: 0;
+}
+.bx-folder-rail__root-link:hover { color: var(--bx-accent); }
+.bx-folder-rail__root-link strong { font-weight: 600; }
+.bx-folder-rail__count {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--bx-fg-3);
+    font-variant-numeric: tabular-nums;
+}
+.bx-folder-rail__new {
+    background: transparent;
+    border: var(--bx-px) solid var(--bx-line);
+    color: var(--bx-fg-2);
+    padding: 0 6px;
+    font-size: 14px;
+    line-height: 18px;
+    cursor: pointer;
+}
+.bx-folder-rail__new:hover {
+    color: var(--bx-accent);
+    border-color: var(--bx-accent);
+}
+
+/* The list itself: tree of folders. */
+.bx-folder-rail__list {
+    list-style: none;
+    margin: 0; padding: 0;
+}
+.bx-folder-rail__item { margin: 0; }
+.bx-folder-rail__row {
+    display: flex; align-items: center; gap: 4px;
+    padding: 2px 6px;
+    cursor: default;
+    color: var(--bx-fg-1);
+}
+.bx-folder-rail__row:hover { background: var(--bx-bg-2); }
+.bx-folder-rail__item--selected > .bx-folder-rail__row {
+    background: var(--bx-accent-soft, var(--bx-bg-2));
+    color: var(--bx-fg-0);
+}
+.bx-folder-rail__item--focus > .bx-folder-rail__row {
+    outline: var(--bx-px) solid var(--bx-accent);
+    outline-offset: -1px;
+}
+.bx-folder-rail__disclose {
+    background: transparent;
+    border: 0;
+    color: var(--bx-fg-3);
+    width: 14px; height: 14px;
+    padding: 0;
+    font-size: 9px;
+    line-height: 14px;
+    text-align: center;
+    cursor: pointer;
+    flex: 0 0 14px;
+}
+.bx-folder-rail__disclose:hover { color: var(--bx-accent); }
+.bx-folder-rail__disclose--leaf { cursor: default; opacity: 0.4; }
+.bx-folder-rail__icon {
+    color: var(--bx-fg-3);
+    font-size: 11px;
+    flex: 0 0 14px;
+}
+.bx-folder-rail__name {
+    flex: 1;
+    color: inherit;
+    text-decoration: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+.bx-folder-rail__name:hover { color: var(--bx-accent); }
+.bx-folder-rail__name:focus-visible {
+    outline: var(--bx-px) solid var(--bx-accent);
+    outline-offset: 2px;
+}
+
+/* Drag-over highlight for drop targets (rail + content pane). */
+.bx-folder-rail__row.bx-drag-over,
+.bx-asset-mgr__pane.bx-drag-over,
+.bx-folder-rail__root.bx-drag-over > .bx-folder-rail__root-head {
+    background: var(--bx-accent);
+    color: var(--bx-bg-0);
+}
+
+/* In-place rename (F2). The template renders a normal anchor; the
+   JS clones it into an <input> for editing and writes back on Enter. */
+.bx-folder-rail__rename-input {
+    flex: 1;
+    background: var(--bx-bg-0);
+    color: var(--bx-fg-0);
+    border: var(--bx-px) solid var(--bx-accent);
+    padding: 0 4px;
+    font: inherit;
+    min-width: 0;
+}
+
+/* Right pane contents */
+.bx-folder-contents {
+    display: flex; flex-direction: column;
+    height: 100%;
+    min-height: 0;
+}
+.bx-folder-contents__head {
+    padding: var(--bx-s2);
+    border-bottom: var(--bx-px) solid var(--bx-line);
+    background: var(--bx-bg-2);
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: var(--bx-s2);
+}
+.bx-folder-contents__empty {
+    margin: var(--bx-s3);
+    padding: var(--bx-s5);
+}
+.bx-folder-contents__card {
+    position: relative;
+    /* Ensures the AssetCard inside still gets the asset-grid layout. */
+}
+.bx-folder-contents__color-strip {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 6px;
+    z-index: 2;
+    pointer-events: none;
+}
+.bx-folder-contents__card.bx-drag-source {
+    opacity: 0.5;
+}
+
+/* Context menu (right-click on rail / cards). Plain rectangle; no
+   shadow — the colored border + bg-2 fill is enough separation. */
+.bx-folder-ctx {
+    position: fixed;
+    z-index: 1000;
+    background: var(--bx-bg-1);
+    border: var(--bx-px) solid var(--bx-accent);
+    padding: 2px 0;
+    font-size: 12px;
+    min-width: 160px;
+}
+.bx-folder-ctx button {
+    display: block; width: 100%;
+    background: transparent;
+    border: 0;
+    color: var(--bx-fg-1);
+    padding: 4px 10px;
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+}
+.bx-folder-ctx button:hover { background: var(--bx-bg-2); color: var(--bx-fg-0); }
+.bx-folder-ctx button:disabled { opacity: 0.4; cursor: default; }
+.bx-folder-ctx hr { border: 0; border-top: var(--bx-px) solid var(--bx-line); margin: 2px 0; }
+
+
 /* ----- 9. Utility ------------------------------------------------------- */
 
 .bx-hide { display: none !important; }

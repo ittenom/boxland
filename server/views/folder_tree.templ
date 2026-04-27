@@ -1,0 +1,382 @@
+package views
+
+import (
+	"fmt"
+
+	"boxland/server/internal/assets"
+	"boxland/server/internal/folders"
+)
+
+// ---- Tree rail -------------------------------------------------------
+
+// FolderTreeProps drives the IDE-style sidebar shown in Asset Manager
+// and (for Tiles only) the Mapmaker palette panel.
+type FolderTreeProps struct {
+	Roots     []FolderRoot
+	// FocusedID is optionally the folder whose row should render in
+	// the visually-active state (e.g. just-renamed, just-moved).
+	FocusedID int64
+	// SelectedFolderID is the folder whose contents the right pane
+	// currently shows. Used to render the [aria-selected="true"] row
+	// so the rail reflects the active selection.
+	SelectedFolderID *int64
+}
+
+// FolderRoot is one of the four virtual roots and the folders under it.
+type FolderRoot struct {
+	KindRoot   string
+	Label      string
+	Folders    []folders.Folder
+	AssetCount int
+}
+
+// FolderTree renders all four kind roots inside one wrapper so the
+// rail can be swapped wholesale on tree-changing mutations.
+templ FolderTree(p FolderTreeProps) {
+	<nav id="folder-rail" class="bx-folder-rail" aria-label="Asset folders" data-bx-folder-rail>
+		for _, root := range p.Roots {
+			@FolderTreeRoot(p, folders.KindRoot(root.KindRoot))
+		}
+	</nav>
+}
+
+// FolderTreeRoot renders one of the four kind-root sections. Hands the
+// children to a small recursive renderer.
+templ FolderTreeRoot(p FolderTreeProps, kr folders.KindRoot) {
+	if root, ok := pickRoot(p, kr); ok {
+		<section
+			class="bx-folder-rail__root"
+			data-bx-folder-root={ root.KindRoot }
+			id={ "folder-root-" + root.KindRoot }
+		>
+			<header class="bx-folder-rail__root-head">
+				<button
+					type="button"
+					class="bx-folder-rail__disclose"
+					data-bx-folder-toggle
+					aria-expanded="true"
+					aria-label={ "Collapse " + root.Label }
+				>▼</button>
+				<a
+					class="bx-folder-rail__root-link"
+					href={ kindRootHref(root.KindRoot) }
+					data-bx-folder-jump={ root.KindRoot }
+					data-bx-folder-id=""
+					data-bx-folder-kind={ root.KindRoot }
+					title={ "Show every " + root.Label + " asset" }
+				>
+					<span class={ "bx-dot bx-dot--" + dotForKind(root.KindRoot) }></span>
+					<strong>{ root.Label }</strong>
+					<span class="bx-folder-rail__count">{ fmt.Sprintf("%d", root.AssetCount) }</span>
+				</a>
+				<button
+					type="button"
+					class="bx-folder-rail__new"
+					title={ "New folder under " + root.Label }
+					hx-get={ "/design/folders/new?kind_root=" + root.KindRoot }
+					hx-target="#modal-host"
+					hx-swap="innerHTML"
+					data-bx-folder-new={ root.KindRoot }
+					data-bx-folder-new-parent=""
+					aria-label={ "New folder under " + root.Label }
+				>+</button>
+			</header>
+			<ul class="bx-folder-rail__list" role="tree">
+				@folderChildren(p, root.Folders, nil, 0)
+			</ul>
+		</section>
+	}
+}
+
+// folderChildren walks a flat folder list and emits one <li> per child
+// of `parent` (parent == nil → top-level). Recursive descent indents
+// via the `depth` arg so the rail always reflects the real hierarchy
+// without a separate tree-build pass on the Go side.
+templ folderChildren(p FolderTreeProps, all []folders.Folder, parent *int64, depth int) {
+	for _, f := range all {
+		if folderParentMatches(f.ParentID, parent) {
+			@folderRow(p, all, f, depth)
+		}
+	}
+}
+
+templ folderRow(p FolderTreeProps, all []folders.Folder, f folders.Folder, depth int) {
+	<li
+		class={ folderRowClass(p, f) }
+		data-bx-folder-id={ fmt.Sprintf("%d", f.ID) }
+		data-bx-folder-kind={ string(f.KindRoot) }
+		data-bx-folder-name={ f.Name }
+		data-bx-folder-parent={ folderParentAttr(f.ParentID) }
+		data-bx-folder-sort={ string(f.SortMode) }
+		role="treeitem"
+		aria-selected={ folderSelectedAttr(p, f) }
+		aria-level={ fmt.Sprintf("%d", depth+1) }
+		title={ f.Name }
+	>
+		<div class="bx-folder-rail__row" style={ folderIndentStyle(depth) }>
+			if hasChildren(all, f.ID) {
+				<button
+					type="button"
+					class="bx-folder-rail__disclose"
+					data-bx-folder-toggle
+					aria-expanded="false"
+					aria-label="Expand"
+				>▶</button>
+			} else {
+				<span class="bx-folder-rail__disclose bx-folder-rail__disclose--leaf" aria-hidden="true">·</span>
+			}
+			<span class="bx-folder-rail__icon" aria-hidden="true">▦</span>
+			<a
+				class="bx-folder-rail__name"
+				href={ folderHref(f) }
+				data-bx-folder-jump={ fmt.Sprintf("%d", f.ID) }
+				draggable="true"
+				data-bx-folder-drag-source
+			>{ f.Name }</a>
+		</div>
+		if hasChildren(all, f.ID) {
+			<ul class="bx-folder-rail__list" role="group" hidden>
+				@folderChildren(p, all, &f.ID, depth+1)
+			</ul>
+		}
+	</li>
+}
+
+// ---- Folder-contents grid (right pane) -------------------------------
+
+// FolderContentsProps drives the right-hand grid for one folder.
+type FolderContentsProps struct {
+	Items     []assets.Asset
+	Sort      string
+	FolderID  *int64
+	Kind      string // when FolderID is nil, this is the kind root being shown
+	PublicURL func(string) string
+	UsageByID map[int64]int
+}
+
+// FolderContents renders the grid + a slim header (breadcrumb + sort
+// picker). Wrapped in its own id so HTMX can swap on every navigation.
+templ FolderContents(p FolderContentsProps) {
+	<section
+		id="folder-contents"
+		class="bx-folder-contents"
+		data-bx-folder-contents
+		data-bx-folder-id={ folderContentsIDAttr(p.FolderID) }
+		data-bx-folder-kind={ p.Kind }
+		data-bx-sort={ p.Sort }
+	>
+		<header class="bx-folder-contents__head">
+			<div class="bx-row" style="gap: var(--bx-s2);">
+				<span class="bx-mono bx-small bx-muted" data-copy-slot="folders.crumb-prefix">in</span>
+				<strong class="bx-mono">{ folderHeaderLabel(p) }</strong>
+				<span class="bx-mono bx-small bx-muted">{ fmt.Sprintf("· %d items", len(p.Items)) }</span>
+			</div>
+			<div class="bx-row" style="gap: var(--bx-s2);">
+				<label class="bx-row" style="gap: 6px;">
+					<span class="bx-small bx-muted">Sort</span>
+					<select
+						class="bx-select bx-small"
+						hx-get="/design/folders/contents"
+						hx-target="#folder-contents"
+						hx-swap="outerHTML"
+						hx-include={ folderContentsIncludes(p) }
+						hx-trigger="change"
+						name="sort"
+						data-bx-folder-sort-picker
+					>
+						for _, mode := range availableSortModesForContents(p) {
+							<option value={ string(mode) } if string(mode) == p.Sort { selected }>{ humanSortLabel(mode) }</option>
+						}
+					</select>
+				</label>
+			</div>
+		</header>
+		if len(p.Items) == 0 {
+			<div class="bx-folder-contents__empty bx-panel" style="text-align:center;">
+				<p class="bx-muted" data-copy-slot="folders.empty">This folder is empty.</p>
+				<p class="bx-tiny bx-muted" style="margin-top: var(--bx-s2);">
+					Drop files here, or upload via the toolbar.
+				</p>
+			</div>
+		} else {
+			<div
+				id="folder-contents-grid"
+				class="bx-asset-grid"
+				data-bx-multi-select-grid
+				data-bx-multi-select-kind="asset"
+			>
+				for _, a := range p.Items {
+					@FolderContentCard(a, p)
+				}
+			</div>
+		}
+		// Hidden inputs so the sort-picker form posts the right
+		// folder/kind context. HTMX uses hx-include="closest" to pick
+		// these up.
+		<input type="hidden" name="folder_id" value={ folderContentsIDAttr(p.FolderID) }/>
+		<input type="hidden" name="kind" value={ p.Kind }/>
+	</section>
+}
+
+// FolderContentCard is one card inside the right-pane grid. Reuses the
+// existing AssetCard rendering but adds the dominant-color stripe at
+// top when the active sort is "color" so the order is visually obvious.
+templ FolderContentCard(a assets.Asset, p FolderContentsProps) {
+	<div
+		class="bx-folder-contents__card"
+		draggable="true"
+		data-bx-folder-card
+		data-bx-asset-id={ fmt.Sprintf("%d", a.ID) }
+		data-bx-asset-name={ a.Name }
+	>
+		if p.Sort == "color" && a.DominantColor != nil {
+			<div
+				class="bx-folder-contents__color-strip"
+				style={ "background:" + assets.FormatHex(uint32(*a.DominantColor)) }
+				aria-hidden="true"
+			></div>
+		}
+		@AssetCard(a, p.PublicURL, p.UsageByID)
+	</div>
+}
+
+// ---- helpers (unexported) --------------------------------------------
+
+func pickRoot(p FolderTreeProps, kr folders.KindRoot) (FolderRoot, bool) {
+	for _, r := range p.Roots {
+		if r.KindRoot == string(kr) {
+			return r, true
+		}
+	}
+	return FolderRoot{}, false
+}
+
+func folderParentMatches(have *int64, want *int64) bool {
+	if have == nil && want == nil {
+		return true
+	}
+	if have == nil || want == nil {
+		return false
+	}
+	return *have == *want
+}
+
+func folderParentAttr(p *int64) string {
+	if p == nil {
+		return ""
+	}
+	return fmt.Sprintf("%d", *p)
+}
+
+func hasChildren(all []folders.Folder, id int64) bool {
+	for _, f := range all {
+		if f.ParentID != nil && *f.ParentID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func folderIndentStyle(depth int) string {
+	if depth == 0 {
+		return ""
+	}
+	return fmt.Sprintf("padding-left: %dpx;", depth*12)
+}
+
+func folderRowClass(p FolderTreeProps, f folders.Folder) string {
+	cls := "bx-folder-rail__item"
+	if p.FocusedID == f.ID {
+		cls += " bx-folder-rail__item--focus"
+	}
+	if p.SelectedFolderID != nil && *p.SelectedFolderID == f.ID {
+		cls += " bx-folder-rail__item--selected"
+	}
+	return cls
+}
+
+func folderSelectedAttr(p FolderTreeProps, f folders.Folder) string {
+	if p.SelectedFolderID != nil && *p.SelectedFolderID == f.ID {
+		return "true"
+	}
+	return "false"
+}
+
+func folderHref(f folders.Folder) templ.SafeURL {
+	return templ.URL(fmt.Sprintf("/design/assets?folder_id=%d", f.ID))
+}
+
+func kindRootHref(kr string) templ.SafeURL {
+	return templ.URL("/design/assets?kind=" + kr)
+}
+
+func dotForKind(kr string) string {
+	switch kr {
+	case "sprite":
+		return "asset"
+	case "tile":
+		return "map"
+	case "audio":
+		return "audio"
+	case "ui_panel":
+		return "ui"
+	}
+	return "asset"
+}
+
+func folderContentsIDAttr(id *int64) string {
+	if id == nil {
+		return ""
+	}
+	return fmt.Sprintf("%d", *id)
+}
+
+func folderHeaderLabel(p FolderContentsProps) string {
+	if p.FolderID != nil {
+		return fmt.Sprintf("folder #%d", *p.FolderID)
+	}
+	switch p.Kind {
+	case "sprite":
+		return "Sprites (root)"
+	case "tile":
+		return "Tiles (root)"
+	case "audio":
+		return "Audio (root)"
+	case "ui_panel":
+		return "UI (root)"
+	}
+	return p.Kind
+}
+
+func folderContentsIncludes(p FolderContentsProps) string {
+	// Closest section is the wrapper; HTMX will pick up the hidden
+	// inputs + the changed select itself.
+	return "closest section"
+}
+
+func availableSortModesForContents(p FolderContentsProps) []folders.SortMode {
+	// Use the kind-aware sort list. Default to all if we can't resolve
+	// the kind (shouldn't happen in practice — handler always sets it).
+	kr := folders.KindRoot(p.Kind)
+	if !kr.Valid() {
+		// Fallback: image-style, no length.
+		return []folders.SortMode{folders.SortAlpha, folders.SortDate, folders.SortType, folders.SortColor}
+	}
+	return folders.AvailableSortModes(kr)
+}
+
+func humanSortLabel(m folders.SortMode) string {
+	switch m {
+	case folders.SortAlpha:
+		return "A → Z"
+	case folders.SortDate:
+		return "Newest first"
+	case folders.SortType:
+		return "By type"
+	case folders.SortColor:
+		return "By color"
+	case folders.SortLength:
+		return "By length"
+	}
+	return string(m)
+}

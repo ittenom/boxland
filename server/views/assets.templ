@@ -9,12 +9,28 @@ import (
 // AssetsListProps drives the Asset Manager list page. The page lives
 // inside the design console shell (via Layout); all surfaces below are
 // content for the work area.
+//
+// The page is a two-pane IDE: the FolderRail on the left, the
+// FolderContents grid on the right. The legacy flat-grid Items field
+// is still here so deep-link "?kind=sprite" pages render directly
+// (the handler populates Tree + Contents when those query params are
+// set, otherwise falls back to the flat grid).
 type AssetsListProps struct {
 	Layout     LayoutProps
 	Items      []assets.Asset
-	ActiveKind string                 // "" / "sprite" / "tile" / "audio"
+	ActiveKind string              // "" / "sprite" / "tile" / "audio"
 	Search     string
-	PublicURL  func(string) string    // assets.Service.ObjectStore.PublicURL or test fixture
+	PublicURL  func(string) string // assets.Service.ObjectStore.PublicURL or test fixture
+
+	// Tree is the folder-tree props for the left rail. Always
+	// populated by the handler; empty Roots renders an empty rail.
+	Tree FolderTreeProps
+
+	// Contents is what the right pane shows. When p.Contents is non-
+	// nil, the right pane is rendered from FolderContentsProps; when
+	// nil, the legacy flat grid (Items) is rendered for backwards
+	// compatibility with deep-linked "?filter=orphan" type queries.
+	Contents *FolderContentsProps
 
 	// UsageByID is an optional map of asset id → number of entities
 	// referencing this asset. Empty map = "not loaded yet" and the
@@ -57,12 +73,12 @@ templ AssetsList(p AssetsListProps) {
 			</span>
 		</div>
 
-		<div class="bx-work__body bx-stack">
+		<div class="bx-work__body bx-stack" style="min-height: 0; flex: 1;">
 			<header class="bx-row bx-row--apart">
 				<div>
 					<h1 data-copy-slot="assets.title">Assets</h1>
 					<p class="bx-muted bx-small" data-copy-slot="assets.lede">
-						Sprites, tiles, and audio. Each one becomes a building block for an entity.
+						Sprites, tiles, and audio. Drag to organize. Right-click for more.
 					</p>
 				</div>
 				<div class="bx-row">
@@ -70,9 +86,30 @@ templ AssetsList(p AssetsListProps) {
 						type="button"
 						class="bx-btn bx-btn--ghost bx-btn--small"
 						data-bx-multi-select-toggle
-						data-bx-multi-select-target="#assets-grid"
-						title="Select multiple assets to delete or promote in one go"
+						data-bx-multi-select-target="#folder-contents-grid"
+						title="Select multiple assets to delete or move in one go"
 					>Select</button>
+					<button
+						type="button"
+						class="bx-btn bx-btn--ghost bx-btn--small"
+						hx-get="/design/assets/import"
+						hx-target="#modal-host"
+						hx-swap="innerHTML"
+						title="Import a .boxasset, .boxassets, or .boxmap file"
+						data-copy-slot="assets.import"
+					>↓ Import</button>
+					<a
+						href="/design/assets/export"
+						class="bx-btn bx-btn--ghost bx-btn--small bx-row"
+						style="gap: 6px;"
+						download
+						title="Save every asset as a re-importable .boxassets.zip (Ctrl/Cmd+Shift+S)"
+						data-bx-export-all-assets
+						data-copy-slot="assets.export.all"
+					>
+						@Icon("save")
+						<span>Export all</span>
+					</a>
 					<button
 						type="button"
 						class="bx-btn bx-btn--primary"
@@ -87,7 +124,16 @@ templ AssetsList(p AssetsListProps) {
 
 			@AssetsToolbar(p)
 
-			@AssetsGrid(p)
+			<div class="bx-asset-mgr" data-bx-asset-mgr>
+				@FolderTree(p.Tree)
+				<div class="bx-asset-mgr__pane" data-bx-folder-pane>
+					if p.Contents != nil {
+						@FolderContents(*p.Contents)
+					} else {
+						@AssetsGrid(p)
+					}
+				</div>
+			</div>
 		</div>
 
 		<div id="modal-host">
@@ -95,6 +141,7 @@ templ AssetsList(p AssetsListProps) {
 				@p.ModalSlot
 			}
 		</div>
+		<script src="/static/js/folder-tree.js" defer></script>
 	}
 }
 

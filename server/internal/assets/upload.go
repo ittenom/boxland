@@ -324,6 +324,18 @@ func (s *Service) uploadFromHeader(
 		}
 	}
 
+	// Compute dominant color for image kinds so the "sort by color"
+	// view in Asset Manager doesn't need a backfill pass for fresh
+	// uploads. Failure is non-fatal; the lazy backfill in
+	// Service.EnsureDominantColors picks up any holes later.
+	var dominantColor *int64
+	if kind == KindSprite || kind == KindTile || kind == KindUIPanel {
+		if packed, ok := ComputeDominantColor(body); ok {
+			v := int64(packed)
+			dominantColor = &v
+		}
+	}
+
 	asset, err := s.Create(ctx, CreateInput{
 		Kind:                 kind,
 		Name:                 displayName,
@@ -331,6 +343,7 @@ func (s *Service) uploadFromHeader(
 		OriginalFormat:       supported.Format,
 		MetadataJSON:         metadata,
 		Tags:                 []string{},
+		DominantColor:        dominantColor,
 		CreatedBy:            designerID,
 	})
 	if err != nil {
@@ -343,6 +356,7 @@ func (s *Service) uploadFromHeader(
 				OriginalFormat:       supported.Format,
 				MetadataJSON:         metadata,
 				Tags:                 []string{},
+				DominantColor:        dominantColor,
 				CreatedBy:            designerID,
 			})
 			if err != nil {

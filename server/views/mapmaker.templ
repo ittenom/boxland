@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"boxland/server/internal/configurable"
+	"boxland/server/internal/folders"
 	"boxland/server/internal/maps"
 )
 
@@ -12,10 +13,14 @@ type MapmakerProps struct {
 	Layout LayoutProps
 	Map    maps.Map
 	Layers []maps.Layer
-	// PaletteEntityTypes is the palette shown in the toolbar. v1 lists
-	// every tile-kind entity-type the project has so designers can paint
-	// with anything; later iterations filter / favorite.
+	// PaletteEntityTypes is the flat palette list. The view groups it
+	// by folder via PaletteFolders + an entity → folder map below.
 	PaletteEntityTypes []PaletteEntry
+
+	// PaletteFolders is the flat list of `tile` kind_root folders.
+	// The view assembles them into a tree via parent_id and nests
+	// the matching PaletteEntries under each folder.
+	PaletteFolders []folders.Folder
 
 	// EntityDraftCount surfaces how many entity_type drafts exist in
 	// the project. The palette reads the LIVE entity_types table, so
@@ -43,6 +48,11 @@ type PaletteEntry struct {
 	AtlasCols         int32  // sheet width in cells; defaults to 1 for plain sprites
 	TileSize          int32  // canonical 32; carried explicitly for forward compat
 	ProceduralInclude bool   // when false the tile is excluded from procedural fill
+	// FolderID is the asset_folders.id the entry's sprite asset
+	// belongs to. nil = "lives in the Tiles root." Used by the view
+	// to nest entries under the IDE-style folder tree in the palette
+	// panel.
+	FolderID *int64
 }
 
 templ MapmakerPage(p MapmakerProps) {
@@ -75,6 +85,18 @@ templ MapmakerPage(p MapmakerProps) {
 						title="Edit map settings (visibility, instancing, persistence)"
 						data-copy-slot="mapmaker.settings"
 					>⚙ Settings</button>
+					<a
+						href={ templ.URL(fmt.Sprintf("/design/maps/%d/export", p.Map.ID)) }
+						class="bx-btn bx-btn--ghost bx-btn--small bx-row"
+						style="gap: 6px;"
+						download
+						title="Save this map as a re-importable .boxmap.zip (Ctrl/Cmd+Shift+S)"
+						data-bx-export-map
+						data-copy-slot="mapmaker.export"
+					>
+						@Icon("save")
+						<span>Export</span>
+					</a>
 					<a
 						href={ templ.URL(fmt.Sprintf("/design/sandbox/launch/%d", p.Map.ID)) }
 						class="bx-btn bx-btn--primary bx-btn--small"
@@ -299,44 +321,12 @@ templ MapmakerToolbar(p MapmakerProps) {
 				No tiles yet. <strong>↑ Upload sheet</strong> to drop in a 32×32 tile atlas — Boxland slices each cell into a paintable tile automatically.
 			</p>
 		}
-		<ol class="bx-mapmaker__palette" role="listbox" aria-label="Tile palette">
-			for i, e := range p.PaletteEntityTypes {
-				<li
-					data-bx-entity-type-id={ fmt.Sprintf("%d", e.ID) }
-					data-bx-palette-name={ e.Name }
-					data-bx-sprite-url={ e.SpriteURL }
-					data-bx-atlas-index={ fmt.Sprintf("%d", e.AtlasIndex) }
-					data-bx-atlas-cols={ fmt.Sprintf("%d", paletteCols(e)) }
-					data-bx-tile-size={ fmt.Sprintf("%d", paletteTileSize(e)) }
-					data-bx-proc-include={ procIncludeAttr(e) }
-					class={ paletteEntryClass(e) }
-					if i == 0 { aria-selected="true" } else { aria-selected="false" }
-					title={ e.Name }
-				>
-					<canvas
-						class="bx-mapmaker__palette__thumb bx-pixel"
-						width="32"
-						height="32"
-						aria-hidden="true"
-					></canvas>
-					<span class="bx-mapmaker__palette__name">{ e.Name }</span>
-					if p.Map.Mode == "procedural" {
-						<button
-							type="button"
-							class="bx-mapmaker__palette__include"
-							data-bx-palette-include
-							title={ procIncludeTitle(e) }
-							aria-pressed={ procIncludeAttr(e) }
-						>
-							if e.ProceduralInclude {
-								👁
-							} else {
-								🚫
-							}
-						</button>
-					}
-				</li>
-			}
+		// Folder-grouped palette. The shared mapmaker.js query
+		// selector targets `.bx-mapmaker__palette li[data-bx-entity-
+		// type-id]` so it picks up entries at any nesting depth.
+		<ol class="bx-mapmaker__palette" role="listbox" aria-label="Tile palette" data-bx-palette-tree>
+			@palettePaneFolderChildren(p, p.PaletteFolders, nil, 0)
+			@palettePaneEntries(p, paletteEntriesInFolder(p, nil), 0)
 		</ol>
 	</section>
 

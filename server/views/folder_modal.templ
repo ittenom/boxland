@@ -1,0 +1,94 @@
+package views
+
+import "fmt"
+
+// NewFolderModalProps drives the inline "+ New folder" picker that
+// opens from the rail. Plain HTML form so it works without JS; HTMX is
+// only used to swap the response into the rail.
+type NewFolderModalProps struct {
+	KindRoot string
+	// ParentID is the optional parent under which the new folder
+	// should sit. Empty string = top-level under the kind root.
+	ParentID string
+	// Suggestion is a pre-filled name the user can accept by hitting
+	// Enter; populated by the rail JS when it opens the modal from a
+	// "right-click → New folder" gesture.
+	Suggestion string
+}
+
+templ NewFolderModal(p NewFolderModalProps) {
+	<div class="bx-modal-backdrop" data-bx-dismissible role="dialog" aria-modal="true">
+		<div class="bx-modal" style="width: min(420px, 95vw);">
+			<header class="bx-modal__header">
+				<h2 style="margin:0;" data-copy-slot="folders.new.title">New folder</h2>
+				<button
+					type="button"
+					class="bx-btn bx-btn--ghost bx-btn--small"
+					hx-on:click="this.closest('.bx-modal-backdrop').remove()"
+					aria-label="Close"
+				>Esc</button>
+			</header>
+			<form
+				class="bx-modal__body bx-stack"
+				hx-post="/design/folders"
+				hx-target={ "#folder-root-" + p.KindRoot }
+				hx-swap="outerHTML"
+				hx-on::after-request="if(event.detail.successful) this.closest('.bx-modal-backdrop').remove()"
+			>
+				<input type="hidden" name="kind_root" value={ p.KindRoot }/>
+				<input type="hidden" name="parent_id" value={ p.ParentID }/>
+				<label class="bx-stack-tight">
+					<span class="bx-small bx-muted">
+						{ fmt.Sprintf("Under %s", folderModalContext(p)) }
+					</span>
+					<input
+						type="text"
+						name="name"
+						value={ p.Suggestion }
+						required
+						maxlength="60"
+						autocomplete="off"
+						autofocus
+						class="bx-input"
+						placeholder="Folder name"
+					/>
+				</label>
+			</form>
+			<footer class="bx-modal__footer">
+				<span style="flex: 1;"></span>
+				<button
+					type="button"
+					class="bx-btn bx-btn--ghost bx-btn--small"
+					hx-on:click="this.closest('.bx-modal-backdrop').remove()"
+				>Cancel</button>
+				<button
+					type="submit"
+					class="bx-btn bx-btn--primary"
+					hx-post="/design/folders"
+					hx-include="closest .bx-modal form"
+					hx-target={ "#folder-root-" + p.KindRoot }
+					hx-swap="outerHTML"
+					hx-on::after-request="if(event.detail.successful) this.closest('.bx-modal-backdrop').remove()"
+					data-copy-slot="folders.new.submit"
+				>Create</button>
+			</footer>
+		</div>
+	</div>
+}
+
+func folderModalContext(p NewFolderModalProps) string {
+	if p.ParentID == "" {
+		switch p.KindRoot {
+		case "sprite":
+			return "Sprites"
+		case "tile":
+			return "Tiles"
+		case "audio":
+			return "Audio"
+		case "ui_panel":
+			return "UI"
+		}
+		return p.KindRoot
+	}
+	return "the selected folder"
+}

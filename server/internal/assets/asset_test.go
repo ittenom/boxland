@@ -195,3 +195,68 @@ func TestDelete(t *testing.T) {
 		t.Errorf("expected ErrAssetNotFound, got %v", err)
 	}
 }
+
+func TestRename_Happy(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	designerID := resetDB(t, pool)
+	svc := assets.New(pool)
+	ctx := context.Background()
+
+	a, _ := svc.Create(ctx, assets.CreateInput{
+		Kind: assets.KindSprite, Name: "old", ContentAddressedPath: "p",
+		OriginalFormat: "png", CreatedBy: designerID,
+	})
+	if err := svc.Rename(ctx, a.ID, "new"); err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	got, _ := svc.FindByID(ctx, a.ID)
+	if got.Name != "new" {
+		t.Errorf("got %q", got.Name)
+	}
+}
+
+func TestRename_DuplicateRejected(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	designerID := resetDB(t, pool)
+	svc := assets.New(pool)
+	ctx := context.Background()
+
+	_, _ = svc.Create(ctx, assets.CreateInput{
+		Kind: assets.KindSprite, Name: "alpha", ContentAddressedPath: "p1",
+		OriginalFormat: "png", CreatedBy: designerID,
+	})
+	b, _ := svc.Create(ctx, assets.CreateInput{
+		Kind: assets.KindSprite, Name: "beta", ContentAddressedPath: "p2",
+		OriginalFormat: "png", CreatedBy: designerID,
+	})
+	if err := svc.Rename(ctx, b.ID, "alpha"); !errors.Is(err, assets.ErrNameInUse) {
+		t.Fatalf("want ErrNameInUse, got %v", err)
+	}
+}
+
+func TestListByFolder_KindRootHonored(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	designerID := resetDB(t, pool)
+	svc := assets.New(pool)
+	ctx := context.Background()
+
+	_, _ = svc.Create(ctx, assets.CreateInput{
+		Kind: assets.KindSprite, Name: "s1", ContentAddressedPath: "p1",
+		OriginalFormat: "png", CreatedBy: designerID,
+	})
+	_, _ = svc.Create(ctx, assets.CreateInput{
+		Kind: assets.KindTile, Name: "t1", ContentAddressedPath: "p2",
+		OriginalFormat: "png", CreatedBy: designerID,
+	})
+
+	got, err := svc.ListByFolder(ctx, nil, "sprite", "alpha")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(got) != 1 || got[0].Kind != assets.KindSprite {
+		t.Errorf("got %+v", got)
+	}
+}
