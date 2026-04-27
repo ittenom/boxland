@@ -199,6 +199,22 @@ templ MapmakerToolbar(p MapmakerProps) {
 				@toolButton("sample", "S", "Sample")
 			}
 			<button type="button" class="bx-btn bx-btn--ghost bx-btn--small" data-bx-rotate-tile title="Rotate tile (T)">⟳ 0°</button>
+			<button
+				type="button"
+				class="bx-btn bx-btn--ghost bx-btn--small"
+				data-bx-history-undo
+				disabled
+				title="Nothing to undo (Ctrl+Z)"
+				aria-label="Undo"
+			>↶ Undo</button>
+			<button
+				type="button"
+				class="bx-btn bx-btn--ghost bx-btn--small"
+				data-bx-history-redo
+				disabled
+				title="Nothing to redo (Ctrl+Shift+Z)"
+				aria-label="Redo"
+			>↷ Redo</button>
 		</div>
 	</section>
 

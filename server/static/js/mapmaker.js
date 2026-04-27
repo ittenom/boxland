@@ -77,7 +77,18 @@
 			// + ships diffs back to the server.
 			lockedCells: new Map(),
 			pending: 0,          // outstanding network requests
+			// Undo/redo. Each entry captures the inverse + forward diff
+			// for one stroke (brush drag, rect, fill, eraser drag, lock
+			// gesture). Applying restores both state.tiles and
+			// state.lockedCells, then ships the diff to the existing
+			// /tiles + /locks endpoints — the server's POST upserts so
+			// no new endpoints are needed.
+			// Cap at HISTORY_LIMIT so a marathon session can't blow
+			// memory; oldest entries fall off the bottom.
+			undoStack: [],
+			redoStack: [],
 		};
+		const HISTORY_LIMIT = 100;
 
 		readPalette(state);
 		renderPaletteThumbs(state);
@@ -86,6 +97,7 @@
 		bindLayers(state, canvas);
 		bindPalette(state);
 		bindCanvas(state, canvas, ctx);
+		bindHistory(state);
 		bindProceduralOverlay(state, canvas);
 		updateStatus(state);
 
@@ -131,6 +143,10 @@
 				const normalized = tiles.map(normalizeTile).filter(Boolean);
 				for (const t of normalized) state.tiles.set(tileKey(t), t);
 				prefetchImages(state, normalized);
+				// Procedural commits replace the map wholesale — old
+				// history entries point at cells that no longer exist
+				// in their pre-image form.
+				clearHistory(state);
 				draw(state, ctx, canvas);
 			});
 		});
@@ -214,7 +230,14 @@
 		// Stamp = the meaning of "click here" for the current tool.
 		// Returns { placed: [...], erased: [...], locked: [...], unlocked: [...] }
 		// Mutations are optimistic; the network roundtrip happens in finishStroke.
-		function stamp(cellX, cellY, modifiers) {
+		//
+		// `strokeCtx` (optional) is a per-stroke object the caller uses to
+		// remember the pre-image of every cell this stroke touches, so
+		// finishStroke can build a single inverse-op history entry. The
+		// "first touch wins" semantics in capturePreImages() ensure that
+		// dragging back over a cell within the same stroke doesn't
+		// overwrite the genuine pre-stroke snapshot.
+		function stamp(cellX, cellY, modifiers, strokeCtx) {
 			const layerId = state.activeLayer;
 			if (!layerId) {
 				flash("Pick a layer first.");
@@ -226,6 +249,7 @@
 			if (state.tool === "eraser") {
 				const k = tileKey({ layerId, x: cellX, y: cellY });
 				if (!state.tiles.has(k)) return emptyStamp();
+				capturePreImages(strokeCtx, state, layerId, cellX, cellY);
 				state.tiles.delete(k);
 				return { placed: [], erased: [{ layerId, x: cellX, y: cellY }], locked: [], unlocked: [] };
 			}
@@ -245,6 +269,7 @@
 				if (modifiers.shift || modifiers.alt) {
 					const had = state.lockedCells.has(key);
 					if (!had && !modifiers.alt) return emptyStamp();
+					capturePreImages(strokeCtx, state, layerId, cellX, cellY);
 					state.lockedCells.delete(key);
 					const out = { placed: [], erased: [], locked: [], unlocked: [] };
 					if (had) out.unlocked.push({ layerId, x: cellX, y: cellY });
@@ -260,6 +285,7 @@
 				}
 				// Lock = place the tile AND mark it locked. Re-locking the
 				// same cell with a new entity replaces both.
+				capturePreImages(strokeCtx, state, layerId, cellX, cellY);
 				const t = { layerId, x: cellX, y: cellY, entityTypeId: state.activeEntity, rotationDegrees: state.activeRotation };
 				state.tiles.set(key, t);
 				state.lockedCells.set(key, t);
@@ -269,6 +295,7 @@
 				flash("Pick an entity from the palette.");
 				return emptyStamp();
 			}
+			capturePreImages(strokeCtx, state, layerId, cellX, cellY);
 			const t = { layerId, x: cellX, y: cellY, entityTypeId: state.activeEntity, rotationDegrees: state.activeRotation };
 			state.tiles.set(tileKey(t), t);
 			return { placed: [t], erased: [], locked: [], unlocked: [] };
@@ -276,6 +303,29 @@
 
 		function emptyStamp() {
 			return { placed: [], erased: [], locked: [], unlocked: [] };
+		}
+
+		// capturePreImages records the BEFORE state of (layerId, x, y) on
+		// first touch within a stroke. ctx may be null (e.g. for redoApply
+		// flows that already know the inverse) — in that case we skip the
+		// capture entirely.
+		function capturePreImages(ctx, state, layerId, x, y) {
+			if (!ctx) return;
+			const k = `${layerId}:${x}:${y}`;
+			if (ctx.seen.has(k)) return;
+			ctx.seen.add(k);
+			const prevTile = state.tiles.get(k);
+			const prevLock = state.lockedCells.get(k);
+			ctx.prevTiles.set(k, prevTile ? { ...prevTile } : null);
+			ctx.prevLocks.set(k, prevLock ? { ...prevLock } : null);
+		}
+
+		function newStrokeCtx() {
+			return {
+				seen: new Set(),
+				prevTiles: new Map(), // key -> tile snapshot or null
+				prevLocks: new Map(), // key -> lock snapshot or null
+			};
 		}
 
 		// ---------- Tool dispatch ----------------------------------------
@@ -287,6 +337,8 @@
 			let strokeErased = [];
 			let strokeLocked = [];
 			let strokeUnlocked = [];
+			let strokeCtx = null;     // pre-image snapshots for undo
+			let strokeLabel = null;   // human label for the history entry
 
 			canvas.addEventListener("pointermove", (e) => {
 				const cell = pointerToCell(e, canvas);
@@ -311,7 +363,9 @@
 					draw(state, ctx, canvas, { rectFrom: dragStart, rectTo: cell });
 					return;
 				}
-				const out = stamp(cell.x, cell.y, mods);
+				strokeCtx = newStrokeCtx();
+				strokeLabel = state.tool;
+				const out = stamp(cell.x, cell.y, mods, strokeCtx);
 				strokePlaced.push(...out.placed);
 				strokeErased.push(...out.erased);
 				strokeLocked.push(...out.locked);
@@ -328,7 +382,7 @@
 				}
 				if (state.tool === "brush" || state.tool === "eraser" || state.tool === "lock") {
 					const mods = { shift: e.shiftKey, alt: e.altKey };
-					const out = stamp(cell.x, cell.y, mods);
+					const out = stamp(cell.x, cell.y, mods, strokeCtx);
 					strokePlaced.push(...out.placed);
 					strokeErased.push(...out.erased);
 					strokeLocked.push(...out.locked);
@@ -343,11 +397,13 @@
 				try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
 
 				if (state.tool === "rect" && dragStart) {
+					strokeCtx = newStrokeCtx();
+					strokeLabel = "rect";
 					const cell = pointerToCell(e, canvas);
 					const r = normalizeRect(dragStart, cell);
 					for (let y = r.y0; y <= r.y1; y++) {
 						for (let x = r.x0; x <= r.x1; x++) {
-							const out = stamp(x, y);
+							const out = stamp(x, y, null, strokeCtx);
 							strokePlaced.push(...out.placed);
 							strokeErased.push(...out.erased);
 							strokeLocked.push(...out.locked);
@@ -380,11 +436,22 @@
 				const lockedWire = strokeLocked.slice();
 				const unlockedPoints = strokeUnlocked.map((t) => [t.x, t.y]);
 				const layerId = state.activeLayer;
+				const finishedCtx = strokeCtx;
+				const finishedLabel = strokeLabel;
 				strokePlaced = [];
 				strokeErased = [];
 				strokeLocked = [];
 				strokeUnlocked = [];
+				strokeCtx = null;
+				strokeLabel = null;
 				draw(state, ctx, canvas);
+
+				// Record the inverse op for undo. Skip empty strokes
+				// (e.g. eyedrop, no-op clicks) so an idle click on the
+				// canvas doesn't push a "do nothing" history entry.
+				if (finishedCtx && finishedCtx.seen.size > 0) {
+					pushHistory(state, buildHistoryEntry(finishedLabel || "stroke", finishedCtx, state));
+				}
 
 				const tasks = [];
 				if (placedWire.length > 0) tasks.push(postTiles(placedWire));
@@ -413,11 +480,20 @@
 		// H opens the per-realm HUD editor.
 		document.addEventListener("keydown", (e) => {
 			if (isTextEditingTarget(e.target)) return;
-			const map = { b: "brush", r: "rect", f: "fill", i: "eyedrop", e: "eraser", l: "lock", s: "sample" };
 			const k = e.key.toLowerCase();
-			if (map[k]) { setTool(state, map[k]); e.preventDefault(); return; }
-			if (k === "t" && !e.ctrlKey && !e.metaKey && !e.altKey) { cycleRotation(state); e.preventDefault(); return; }
-			if (k === "h" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+			const mod = e.ctrlKey || e.metaKey;
+
+			// Undo / Redo. Take precedence over the tool-letter map so
+			// Ctrl+Z never selects a tool and Ctrl+Y never fires past
+			// the redo. docs/hotkeys.md is the canonical reference.
+			if (mod && k === "z" && !e.shiftKey && !e.altKey) { undo(state); e.preventDefault(); return; }
+			if (mod && k === "z" &&  e.shiftKey && !e.altKey) { redo(state); e.preventDefault(); return; }
+			if (mod && k === "y" && !e.shiftKey && !e.altKey) { redo(state); e.preventDefault(); return; }
+
+			const map = { b: "brush", r: "rect", f: "fill", i: "eyedrop", e: "eraser", l: "lock", s: "sample" };
+			if (map[k] && !mod && !e.altKey) { setTool(state, map[k]); e.preventDefault(); return; }
+			if (k === "t" && !mod && !e.altKey) { cycleRotation(state); e.preventDefault(); return; }
+			if (k === "h" && !mod && !e.altKey) {
 				const host = document.querySelector("[data-bx-mapmaker-canvas]");
 				const mapId = host && host.getAttribute("data-map-id");
 				if (mapId) { window.location.href = "/design/maps/" + mapId + "/hud"; e.preventDefault(); }
@@ -439,6 +515,7 @@
 
 			const placed = [];
 			const erased = [];
+			const fillCtx = newStrokeCtx();
 			const visited = new Set();
 			const queue = [[sx, sy]];
 			let safety = 0;
@@ -453,8 +530,13 @@
 				const curEntity = cur ? cur.entityTypeId : 0;
 				if (curEntity !== startEntity) continue;
 				if (target === 0) {
-					if (cur) { state.tiles.delete(k); erased.push({ layerId, x, y }); }
+					if (cur) {
+						capturePreImages(fillCtx, state, layerId, x, y);
+						state.tiles.delete(k);
+						erased.push({ layerId, x, y });
+					}
 				} else {
+					capturePreImages(fillCtx, state, layerId, x, y);
 					const t = { layerId, x, y, entityTypeId: target, rotationDegrees: state.activeRotation };
 					state.tiles.set(k, t);
 					placed.push(t);
@@ -463,11 +545,176 @@
 			}
 			if (safety >= 4096) flash("Fill stopped at 4096 cells (safety cap).");
 
+			if (fillCtx.seen.size > 0) {
+				pushHistory(state, buildHistoryEntry("fill", fillCtx, state));
+			}
+
 			const tasks = [];
 			if (placed.length > 0) tasks.push(postTiles(placed.map(toWire)));
 			if (erased.length > 0) tasks.push(deleteTiles(layerId, erased.map((t) => [t.x, t.y])));
 			return Promise.all(tasks).catch((err) => flash(`Save failed: ${err.message || err}`));
 		}
+
+		// ---------- Undo / Redo -----------------------------------------
+		//
+		// History entries store the BEFORE and AFTER state of every cell
+		// the stroke touched, on both the tile map and the lock map.
+		// Apply() rewrites state.tiles + state.lockedCells from the
+		// snapshot side, then ships the diff to the existing endpoints.
+		// The /tiles POST handler upserts, so re-placing a previously
+		// modified tile just rewrites the row — no add-only/delete-only
+		// special casing.
+
+		function buildHistoryEntry(label, ctx, state) {
+			// "after" = whatever's in state right now (post-stroke).
+			const beforeTiles = new Map();
+			const beforeLocks = new Map();
+			const afterTiles  = new Map();
+			const afterLocks  = new Map();
+			for (const k of ctx.seen) {
+				beforeTiles.set(k, ctx.prevTiles.get(k) || null);
+				beforeLocks.set(k, ctx.prevLocks.get(k) || null);
+				const curTile = state.tiles.get(k);
+				const curLock = state.lockedCells.get(k);
+				afterTiles.set(k, curTile ? { ...curTile } : null);
+				afterLocks.set(k, curLock ? { ...curLock } : null);
+			}
+			return { label, beforeTiles, beforeLocks, afterTiles, afterLocks };
+		}
+
+		function pushHistory(state, entry) {
+			state.undoStack.push(entry);
+			while (state.undoStack.length > HISTORY_LIMIT) state.undoStack.shift();
+			state.redoStack.length = 0;
+			updateHistoryButtons(state);
+		}
+
+		function clearHistory(state) {
+			state.undoStack.length = 0;
+			state.redoStack.length = 0;
+			updateHistoryButtons(state);
+		}
+
+		// applyHistorySide rewrites local state to the "before" or
+		// "after" snapshot of an entry, returns the diff to ship to
+		// the server. side === "before" is undo, "after" is redo.
+		function applyHistorySide(state, entry, side) {
+			const tilesSnap = side === "before" ? entry.beforeTiles : entry.afterTiles;
+			const locksSnap = side === "before" ? entry.beforeLocks : entry.afterLocks;
+			const placed = [];
+			const erased = [];   // {layerId, x, y}
+			const locked = [];
+			const unlocked = []; // {layerId, x, y}
+			for (const [k, tile] of tilesSnap) {
+				const cur = state.tiles.get(k);
+				if (tile) {
+					state.tiles.set(k, { ...tile });
+					// Always re-POST: upsert handles same-payload safely
+					// AND covers the "rotation/entity changed" case.
+					if (!cur || cur.entityTypeId !== tile.entityTypeId || (cur.rotationDegrees||0) !== (tile.rotationDegrees||0)) {
+						placed.push({ ...tile });
+					}
+				} else if (cur) {
+					state.tiles.delete(k);
+					erased.push({ layerId: cur.layerId, x: cur.x, y: cur.y });
+				}
+			}
+			for (const [k, lock] of locksSnap) {
+				const cur = state.lockedCells.get(k);
+				if (lock) {
+					state.lockedCells.set(k, { ...lock });
+					if (!cur || cur.entityTypeId !== lock.entityTypeId || (cur.rotationDegrees||0) !== (lock.rotationDegrees||0)) {
+						locked.push({ ...lock });
+					}
+				} else if (cur) {
+					state.lockedCells.delete(k);
+					unlocked.push({ layerId: cur.layerId, x: cur.x, y: cur.y });
+				}
+			}
+			return { placed, erased, locked, unlocked };
+		}
+
+		function shipHistoryDiff(diff) {
+			// Group erases/unlocks by layerId for the bulk DELETE shape.
+			const tasks = [];
+			if (diff.placed.length > 0) tasks.push(postTiles(diff.placed.map(toWire)));
+			if (diff.locked.length > 0) tasks.push(postLocks(diff.locked));
+			const erasedByLayer = groupByLayer(diff.erased);
+			for (const [layerId, points] of erasedByLayer) {
+				tasks.push(deleteTiles(layerId, points));
+			}
+			const unlockedByLayer = groupByLayer(diff.unlocked);
+			for (const [layerId, points] of unlockedByLayer) {
+				tasks.push(deleteLocks(layerId, points));
+			}
+			if (tasks.length === 0) return Promise.resolve();
+			return Promise.all(tasks).catch((err) => {
+				flash(`Save failed: ${err.message || err}`);
+			});
+		}
+
+		function groupByLayer(items) {
+			const out = new Map();
+			for (const it of items) {
+				if (!out.has(it.layerId)) out.set(it.layerId, []);
+				out.get(it.layerId).push([it.x, it.y]);
+			}
+			return out;
+		}
+
+		function undo(state) {
+			const entry = state.undoStack.pop();
+			if (!entry) return;
+			const diff = applyHistorySide(state, entry, "before");
+			state.redoStack.push(entry);
+			updateHistoryButtons(state);
+			draw(state, ctx, canvas);
+			flash(`Undo: ${entry.label} (${entry.beforeTiles.size} cells)`);
+			shipHistoryDiff(diff);
+			broadcastLockCount();
+		}
+
+		function redo(state) {
+			const entry = state.redoStack.pop();
+			if (!entry) return;
+			const diff = applyHistorySide(state, entry, "after");
+			state.undoStack.push(entry);
+			updateHistoryButtons(state);
+			draw(state, ctx, canvas);
+			flash(`Redo: ${entry.label} (${entry.afterTiles.size} cells)`);
+			shipHistoryDiff(diff);
+			broadcastLockCount();
+		}
+
+		function updateHistoryButtons(state) {
+			const ub = $("[data-bx-history-undo]");
+			const rb = $("[data-bx-history-redo]");
+			if (ub) {
+				ub.disabled = state.undoStack.length === 0;
+				ub.title = state.undoStack.length > 0
+					? `Undo ${state.undoStack[state.undoStack.length-1].label} (Ctrl+Z)`
+					: "Nothing to undo (Ctrl+Z)";
+			}
+			if (rb) {
+				rb.disabled = state.redoStack.length === 0;
+				rb.title = state.redoStack.length > 0
+					? `Redo ${state.redoStack[state.redoStack.length-1].label} (Ctrl+Shift+Z)`
+					: "Nothing to redo (Ctrl+Shift+Z)";
+			}
+		}
+
+		function bindHistory(state) {
+			const ub = $("[data-bx-history-undo]");
+			const rb = $("[data-bx-history-redo]");
+			if (ub) ub.addEventListener("click", () => undo(state));
+			if (rb) rb.addEventListener("click", () => redo(state));
+			updateHistoryButtons(state);
+		}
+
+		// Expose for procedural commit / reload paths: those replace
+		// the canonical map wholesale, so any locally-staged history
+		// entries no longer make sense as inverses.
+		canvas.addEventListener("bx:mapmaker-history-clear", () => clearHistory(state));
 
 		// ---------- Inputs (toolbar / layers / palette) ------------------
 

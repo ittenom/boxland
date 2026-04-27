@@ -28,9 +28,18 @@
 | `F` | Fill tool. |
 | `I` | Eyedrop / inspector. |
 | `E` | Eraser. |
+| `T` | Rotate the active tile stamp 90° clockwise. |
+| `L` | Lock tool (procedural maps only). |
+| `S` | Sample tool (procedural maps only). |
+| `Ctrl/Cmd + Z` | Undo the last paint / rect / fill / erase / lock stroke. |
+| `Ctrl/Cmd + Shift + Z` *or* `Ctrl/Cmd + Y` | Redo. |
 | `H` | Open the per-realm HUD editor (`/design/maps/{id}/hud`). |
 | `Space` (hold) | Pan camera. |
 | `+` / `-` | Zoom (always integer-scale). |
+
+History holds the last 100 strokes per session. A procedural Commit replaces
+the canonical map and clears the stack — the engine's preview is the explicit
+review point before that point of no return.
 
 ## Asset Manager
 

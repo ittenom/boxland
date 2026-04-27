@@ -448,7 +448,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "<button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" data-bx-rotate-tile title=\"Rotate tile (T)\">⟳ 0°</button></div></section><section class=\"bx-panel\" data-bx-layers style=\"padding: var(--bx-s2);\"><h3 class=\"bx-panel__title\" data-copy-slot=\"mapmaker.layers.title\">Layers</h3><ul class=\"bx-list bx-mapmaker__layers\" role=\"listbox\" aria-label=\"Layers\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "<button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" data-bx-rotate-tile title=\"Rotate tile (T)\">⟳ 0°</button> <button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" data-bx-history-undo disabled title=\"Nothing to undo (Ctrl+Z)\" aria-label=\"Undo\">↶ Undo</button> <button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" data-bx-history-redo disabled title=\"Nothing to redo (Ctrl+Shift+Z)\" aria-label=\"Redo\">↷ Redo</button></div></section><section class=\"bx-panel\" data-bx-layers style=\"padding: var(--bx-s2);\"><h3 class=\"bx-panel__title\" data-copy-slot=\"mapmaker.layers.title\">Layers</h3><ul class=\"bx-list bx-mapmaker__layers\" role=\"listbox\" aria-label=\"Layers\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -460,7 +460,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var21 string
 			templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", l.ID))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 210, Col: 47}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 226, Col: 47}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 			if templ_7745c5c3_Err != nil {
@@ -473,7 +473,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var22 string
 			templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(l.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 211, Col: 32}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 227, Col: 32}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 			if templ_7745c5c3_Err != nil {
@@ -486,7 +486,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var23 string
 			templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(l.Kind)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 212, Col: 32}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 228, Col: 32}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 			if templ_7745c5c3_Err != nil {
@@ -499,7 +499,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var24 string
 			templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(ysortAttr(l.YSortEntities))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 213, Col: 54}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 229, Col: 54}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
 			if templ_7745c5c3_Err != nil {
@@ -527,7 +527,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var25 string
 			templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(l.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 215, Col: 19}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 231, Col: 19}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 			if templ_7745c5c3_Err != nil {
@@ -540,7 +540,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var26 string
 			templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(l.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 217, Col: 19}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 233, Col: 19}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
 			if templ_7745c5c3_Err != nil {
@@ -553,7 +553,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var27 string
 			templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(l.Kind)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 218, Col: 36}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 234, Col: 36}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 			if templ_7745c5c3_Err != nil {
@@ -586,7 +586,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var28 string
 			templ_7745c5c3_Var28, templ_7745c5c3_Err = templ.JoinStringErrs(stagedChipLabel(p.EntityDraftCount))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 240, Col: 41}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 256, Col: 41}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var28))
 			if templ_7745c5c3_Err != nil {
@@ -624,7 +624,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var30 string
 			templ_7745c5c3_Var30, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", e.ID))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 289, Col: 53}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 305, Col: 53}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var30))
 			if templ_7745c5c3_Err != nil {
@@ -637,7 +637,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var31 string
 			templ_7745c5c3_Var31, templ_7745c5c3_Err = templ.JoinStringErrs(e.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 290, Col: 34}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 306, Col: 34}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var31))
 			if templ_7745c5c3_Err != nil {
@@ -650,7 +650,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var32 string
 			templ_7745c5c3_Var32, templ_7745c5c3_Err = templ.JoinStringErrs(e.SpriteURL)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 291, Col: 37}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 307, Col: 37}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var32))
 			if templ_7745c5c3_Err != nil {
@@ -663,7 +663,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var33 string
 			templ_7745c5c3_Var33, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", e.AtlasIndex))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 292, Col: 58}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 308, Col: 58}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var33))
 			if templ_7745c5c3_Err != nil {
@@ -676,7 +676,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var34 string
 			templ_7745c5c3_Var34, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", paletteCols(e)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 293, Col: 59}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 309, Col: 59}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var34))
 			if templ_7745c5c3_Err != nil {
@@ -689,7 +689,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var35 string
 			templ_7745c5c3_Var35, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", paletteTileSize(e)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 294, Col: 62}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 310, Col: 62}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var35))
 			if templ_7745c5c3_Err != nil {
@@ -702,7 +702,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var36 string
 			templ_7745c5c3_Var36, templ_7745c5c3_Err = templ.JoinStringErrs(procIncludeAttr(e))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 295, Col: 46}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 311, Col: 46}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var36))
 			if templ_7745c5c3_Err != nil {
@@ -743,7 +743,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var38 string
 			templ_7745c5c3_Var38, templ_7745c5c3_Err = templ.JoinStringErrs(e.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 298, Col: 19}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 314, Col: 19}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var38))
 			if templ_7745c5c3_Err != nil {
@@ -756,7 +756,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var39 string
 			templ_7745c5c3_Var39, templ_7745c5c3_Err = templ.JoinStringErrs(e.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 306, Col: 54}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 322, Col: 54}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var39))
 			if templ_7745c5c3_Err != nil {
@@ -774,7 +774,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 				var templ_7745c5c3_Var40 string
 				templ_7745c5c3_Var40, templ_7745c5c3_Err = templ.JoinStringErrs(procIncludeTitle(e))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 312, Col: 34}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 328, Col: 34}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var40))
 				if templ_7745c5c3_Err != nil {
@@ -787,7 +787,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 				var templ_7745c5c3_Var41 string
 				templ_7745c5c3_Var41, templ_7745c5c3_Err = templ.JoinStringErrs(procIncludeAttr(e))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 313, Col: 40}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 329, Col: 40}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var41))
 				if templ_7745c5c3_Err != nil {
@@ -873,7 +873,7 @@ func MapmakerProceduralPanel(p MapmakerProps) templ.Component {
 		var templ_7745c5c3_Var43 string
 		templ_7745c5c3_Var43, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", p.Map.ID))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 350, Col: 43}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 366, Col: 43}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var43))
 		if templ_7745c5c3_Err != nil {
@@ -886,7 +886,7 @@ func MapmakerProceduralPanel(p MapmakerProps) templ.Component {
 		var templ_7745c5c3_Var44 string
 		templ_7745c5c3_Var44, templ_7745c5c3_Err = templ.JoinStringErrs(defaultTileLayerIDAttr(p))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 351, Col: 54}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 367, Col: 54}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var44))
 		if templ_7745c5c3_Err != nil {
@@ -899,7 +899,7 @@ func MapmakerProceduralPanel(p MapmakerProps) templ.Component {
 		var templ_7745c5c3_Var45 string
 		templ_7745c5c3_Var45, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", proceduralInitialSeed(p.Map)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 366, Col: 60}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 382, Col: 60}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var45))
 		if templ_7745c5c3_Err != nil {
@@ -927,7 +927,7 @@ func MapmakerProceduralPanel(p MapmakerProps) templ.Component {
 		var templ_7745c5c3_Var46 string
 		templ_7745c5c3_Var46, templ_7745c5c3_Err = templ.JoinStringErrs(lockedCountLabel(p.LockedCellCount))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 434, Col: 42}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 450, Col: 42}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var46))
 		if templ_7745c5c3_Err != nil {
@@ -1016,7 +1016,7 @@ func MapPublicBadge(p MapPublicBadgeProps) templ.Component {
 		var templ_7745c5c3_Var49 string
 		templ_7745c5c3_Var49, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("map-public-badge-%d", p.MapID))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 488, Col: 50}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 504, Col: 50}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var49))
 		if templ_7745c5c3_Err != nil {
@@ -1042,7 +1042,7 @@ func MapPublicBadge(p MapPublicBadgeProps) templ.Component {
 		var templ_7745c5c3_Var51 string
 		templ_7745c5c3_Var51, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("/design/maps/%d/public-toggle", p.MapID))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 490, Col: 65}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 506, Col: 65}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var51))
 		if templ_7745c5c3_Err != nil {
@@ -1055,7 +1055,7 @@ func MapPublicBadge(p MapPublicBadgeProps) templ.Component {
 		var templ_7745c5c3_Var52 string
 		templ_7745c5c3_Var52, templ_7745c5c3_Err = templ.JoinStringErrs(mapPublicConfirm(p.Public))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 493, Col: 41}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 509, Col: 41}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var52))
 		if templ_7745c5c3_Err != nil {
@@ -1068,7 +1068,7 @@ func MapPublicBadge(p MapPublicBadgeProps) templ.Component {
 		var templ_7745c5c3_Var53 string
 		templ_7745c5c3_Var53, templ_7745c5c3_Err = templ.JoinStringErrs(mapPublicTitle(p.Public))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 494, Col: 34}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 510, Col: 34}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var53))
 		if templ_7745c5c3_Err != nil {
@@ -1081,7 +1081,7 @@ func MapPublicBadge(p MapPublicBadgeProps) templ.Component {
 		var templ_7745c5c3_Var54 string
 		templ_7745c5c3_Var54, templ_7745c5c3_Err = templ.JoinStringErrs(mapPublicAttr(p.Public))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 496, Col: 39}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 512, Col: 39}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var54))
 		if templ_7745c5c3_Err != nil {
@@ -1260,7 +1260,7 @@ func toolButton(id, hotkey, label string) templ.Component {
 		var templ_7745c5c3_Var56 string
 		templ_7745c5c3_Var56, templ_7745c5c3_Err = templ.JoinStringErrs(id)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 632, Col: 19}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 648, Col: 19}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var56))
 		if templ_7745c5c3_Err != nil {
@@ -1273,7 +1273,7 @@ func toolButton(id, hotkey, label string) templ.Component {
 		var templ_7745c5c3_Var57 string
 		templ_7745c5c3_Var57, templ_7745c5c3_Err = templ.JoinStringErrs(label + " (" + hotkey + ")")
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 633, Col: 37}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 649, Col: 37}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var57))
 		if templ_7745c5c3_Err != nil {
@@ -1286,7 +1286,7 @@ func toolButton(id, hotkey, label string) templ.Component {
 		var templ_7745c5c3_Var58 string
 		templ_7745c5c3_Var58, templ_7745c5c3_Err = templ.JoinStringErrs(label)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 635, Col: 9}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 651, Col: 9}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var58))
 		if templ_7745c5c3_Err != nil {
@@ -1299,7 +1299,7 @@ func toolButton(id, hotkey, label string) templ.Component {
 		var templ_7745c5c3_Var59 string
 		templ_7745c5c3_Var59, templ_7745c5c3_Err = templ.JoinStringErrs(hotkey)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 636, Col: 67}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 652, Col: 67}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var59))
 		if templ_7745c5c3_Err != nil {
