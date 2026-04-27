@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -122,6 +123,137 @@ func TestPrependPathHandlesEmpty(t *testing.T) {
 	prependPath("/opt/homebrew/bin")
 	if got := os.Getenv("PATH"); got != "/opt/homebrew/bin" {
 		t.Errorf("empty-PATH prepend; got %q", got)
+	}
+}
+
+// TestInstallCommandWingetUsesUserScope pins `--scope user` on
+// Windows winget installs. Without it, packages whose installer can
+// reach for a machine-scope path (like Chocolatey was doing for
+// flatc) hit a UAC prompt — which boxland install, deliberately
+// running unelevated, has no way to satisfy. Regression guard for
+// the bug where `boxland install` couldn't install flatc on
+// unelevated Windows.
+func TestInstallCommandWingetUsesUserScope(t *testing.T) {
+	got := installCommand("winget", "Foo.Bar")
+	joined := strings.Join(got, " ")
+	if !strings.Contains(joined, "--scope user") {
+		t.Errorf("winget install command must pass --scope user so unelevated installs land in the per-user prefix; got %q", joined)
+	}
+	if !strings.Contains(joined, "--exact") {
+		t.Errorf("winget install command must keep --exact so we don't accept a fuzzy id match; got %q", joined)
+	}
+}
+
+// TestFlatcWingetIdIsLowercase pins the corrected `Google.flatbuffers`
+// id. The published winget package id is lowercase; with our --exact
+// flag, the previous `Google.FlatBuffers` value silently failed to
+// match, falling through to chocolatey which needed admin we don't
+// have. This test catches a future case-typo regression at test
+// time, not on a customer's Windows box.
+func TestFlatcWingetIdIsLowercase(t *testing.T) {
+	for _, r := range installRequirements() {
+		if r.Cmd != "flatc" {
+			continue
+		}
+		got := r.Packages["winget"]
+		if got != "Google.flatbuffers" {
+			t.Errorf("flatc winget id must be %q (lowercase, matches the published winget-pkgs entry); got %q", "Google.flatbuffers", got)
+		}
+		return
+	}
+	t.Fatal("no flatc entry in installRequirements()")
+}
+
+// TestSqlcWindowsHasGoInstallFallback — sqlc has no current winget
+// package (sqlc-dev.sqlc was withdrawn) and chocolatey would need
+// admin we don't have. The only path that works on an unelevated
+// Windows shell is `go install`, which is fine because Go is a
+// required earlier-in-list dependency. Pin the fallback so a future
+// edit doesn't accidentally drop it and re-break Windows installs.
+func TestSqlcWindowsHasGoInstallFallback(t *testing.T) {
+	for _, r := range installRequirements() {
+		if r.Cmd != "sqlc" {
+			continue
+		}
+		got := r.Packages["goinstall"]
+		if !strings.HasPrefix(got, "github.com/sqlc-dev/sqlc/cmd/sqlc@") {
+			t.Errorf("sqlc must have a goinstall fallback rooted at github.com/sqlc-dev/sqlc/cmd/sqlc@<ver>; got %q", got)
+		}
+		return
+	}
+	t.Fatal("no sqlc entry in installRequirements()")
+}
+
+// TestInstallCommandGoInstall — the goinstall pseudo-PM must shell
+// out to `go install <module>`. Cheap shape check so a future
+// installCommand refactor doesn't silently swap the verb.
+func TestInstallCommandGoInstall(t *testing.T) {
+	got := installCommand("goinstall", "github.com/sqlc-dev/sqlc/cmd/sqlc@latest")
+	want := []string{"go", "install", "github.com/sqlc-dev/sqlc/cmd/sqlc@latest"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("goinstall command shape changed; got %v, want %v", got, want)
+	}
+}
+
+// TestPackageManagersForPlatformIncludesGoInstall — every platform
+// must list `goinstall` so requirements that opt into it (sqlc
+// today) actually get the fallback considered. Without this the
+// installAttempts loop would skip past go install entirely.
+func TestPackageManagersForPlatformIncludesGoInstall(t *testing.T) {
+	pms := packageManagersForPlatform()
+	for _, pm := range pms {
+		if pm == "goinstall" {
+			return
+		}
+	}
+	t.Errorf("packageManagersForPlatform() must include \"goinstall\" on %s; got %v", runtime.GOOS, pms)
+}
+
+// TestFreshInstallPathDirsIncludesWingetLinksOnWindows — after a
+// winget portable install (flatc), the binary lands in
+// %LOCALAPPDATA%\Microsoft\WinGet\Links. That dir is not on the
+// running process's PATH on a fresh first-time winget install, so
+// refreshInstallPath must explicitly add it; otherwise the
+// post-install LookPath retry fails and we report flatc as
+// unresolved even though winget just succeeded.
+func TestFreshInstallPathDirsIncludesWingetLinksOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("winget Links dir is Windows-only")
+	}
+	t.Setenv("LOCALAPPDATA", `C:\Users\test\AppData\Local`)
+	dirs := freshInstallPathDirs()
+	want := `C:\Users\test\AppData\Local\Microsoft\WinGet\Links`
+	for _, d := range dirs {
+		if d == want {
+			return
+		}
+	}
+	t.Errorf("freshInstallPathDirs() must include %q so winget portable shims become discoverable mid-run; got %v", want, dirs)
+}
+
+// TestGoBinDirHonorsGOBIN — `go install` writes into $GOBIN when it
+// is set, so refreshInstallPath must look there first. If we ignored
+// GOBIN, a user with a custom layout would see boxland install
+// "succeed" running `go install` and then fail to find the binary.
+func TestGoBinDirHonorsGOBIN(t *testing.T) {
+	t.Setenv("GOBIN", filepath.Join(t.TempDir(), "custom-gobin"))
+	t.Setenv("GOPATH", "")
+	got := goBinDir()
+	if got != os.Getenv("GOBIN") {
+		t.Errorf("goBinDir should return $GOBIN when set; got %q, want %q", got, os.Getenv("GOBIN"))
+	}
+}
+
+// TestGoBinDirFallsBackToGOPATHBin — second-precedence fallback,
+// matching `go help gopath`: the bin dir lives at $GOPATH/bin (and
+// the first entry of GOPATH wins on multi-entry layouts).
+func TestGoBinDirFallsBackToGOPATHBin(t *testing.T) {
+	gopath := filepath.Join(t.TempDir(), "gp")
+	t.Setenv("GOBIN", "")
+	t.Setenv("GOPATH", gopath)
+	want := filepath.Join(gopath, "bin")
+	if got := goBinDir(); got != want {
+		t.Errorf("goBinDir should return $GOPATH/bin when GOBIN is empty; got %q, want %q", got, want)
 	}
 }
 

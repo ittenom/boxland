@@ -166,8 +166,21 @@ func installRequirements() []installRequirement {
 		// fresh clone. setup itself only warns when these are missing
 		// (so a partial boot still works), but Install gives users
 		// the one-shot path to a fully functional tree.
-		{Name: "sqlc", Cmd: "sqlc", VersionArgs: []string{"version"}, URL: "https://docs.sqlc.dev/en/stable/overview/install.html", Packages: map[string]string{"winget": "sqlc-dev.sqlc", "brew": "sqlc", "pacman": "sqlc"}},
-		{Name: "flatc", Cmd: "flatc", VersionArgs: []string{"--version"}, URL: "https://flatbuffers.dev/flatbuffers_guide_building.html", Packages: map[string]string{"winget": "Google.FlatBuffers", "choco": "flatc", "brew": "flatbuffers", "apt": "flatbuffers-compiler", "dnf": "flatbuffers-compiler", "pacman": "flatbuffers"}},
+		// sqlc has no winget package right now (the sqlc-dev.sqlc
+		// entry was withdrawn, see microsoft/winget-pkgs#208223), and
+		// chocolatey requires elevation we don't have. Fall back to
+		// `go install` on Windows — Go is a required dependency
+		// listed above, so by the time we get here it is guaranteed
+		// installed (or the loop has already failed loudly on Go).
+		{Name: "sqlc", Cmd: "sqlc", VersionArgs: []string{"version"}, URL: "https://docs.sqlc.dev/en/stable/overview/install.html", Packages: map[string]string{"goinstall": "github.com/sqlc-dev/sqlc/cmd/sqlc@latest", "brew": "sqlc", "pacman": "sqlc"}},
+		// flatc winget id is `Google.flatbuffers` (lowercase) — with
+		// `--exact` the previous `Google.FlatBuffers` silently failed
+		// to match, falling through to `choco install flatc` which
+		// requires admin we don't have. The winget package is a
+		// portable zip that installs to the per-user
+		// %LOCALAPPDATA%\Microsoft\WinGet\Links shim dir, no
+		// elevation needed.
+		{Name: "flatc", Cmd: "flatc", VersionArgs: []string{"--version"}, URL: "https://flatbuffers.dev/flatbuffers_guide_building.html", Packages: map[string]string{"winget": "Google.flatbuffers", "choco": "flatc", "brew": "flatbuffers", "apt": "flatbuffers-compiler", "dnf": "flatbuffers-compiler", "pacman": "flatbuffers"}},
 	}
 }
 
@@ -286,6 +299,13 @@ func ensureRequirement(r installRequirement) error {
 			fmt.Printf("  Installer failed: %v\n", err)
 			continue
 		}
+		// Newly-installed binaries land in dirs that may not be on
+		// the running process's PATH yet (winget user Links,
+		// %ProgramFiles%\Go\bin from the Go MSI, $GOBIN/$GOPATH/bin
+		// from `go install`, /opt/homebrew/bin from a fresh brew).
+		// Refresh in-process PATH so the LookPath retry below can
+		// see what we just wrote, without forcing a shell restart.
+		refreshInstallPath()
 		if path, err := exec.LookPath(r.Cmd); err == nil {
 			fmt.Printf("✓ %-15s %s\n", r.Name, path)
 			return nil
@@ -314,11 +334,15 @@ func installAttempts(r installRequirement) [][]string {
 func packageManagersForPlatform() []string {
 	switch goruntime.GOOS {
 	case "windows":
-		return []string{"winget", "choco"}
+		// `goinstall` is a synthetic last-resort entry — used by
+		// tools like sqlc that have no current winget package and
+		// where chocolatey would need admin. It only fires for
+		// requirements that explicitly opt in via Packages["goinstall"].
+		return []string{"winget", "choco", "goinstall"}
 	case "darwin":
-		return []string{"brew"}
+		return []string{"brew", "goinstall"}
 	default:
-		return []string{"brew", "apt", "dnf", "pacman"}
+		return []string{"brew", "apt", "dnf", "pacman", "goinstall"}
 	}
 }
 
@@ -326,7 +350,12 @@ func installCommand(pm, pkg string) []string {
 	parts := strings.Fields(pkg)
 	switch pm {
 	case "winget":
-		return []string{"winget", "install", "--id", pkg, "--exact", "--source", "winget", "--accept-package-agreements", "--accept-source-agreements"}
+		// --scope user keeps installs in the per-user prefix so
+		// boxland install (which deliberately runs unelevated) does
+		// not trip over machine-scope writes. For installer types
+		// that only support machine scope, winget falls back
+		// gracefully.
+		return []string{"winget", "install", "--id", pkg, "--exact", "--source", "winget", "--scope", "user", "--accept-package-agreements", "--accept-source-agreements"}
 	case "choco":
 		return []string{"choco", "install", pkg, "-y"}
 	case "brew":
@@ -337,6 +366,12 @@ func installCommand(pm, pkg string) []string {
 		return append([]string{"sudo", "dnf", "install", "-y"}, parts...)
 	case "pacman":
 		return append([]string{"sudo", "pacman", "-S", "--needed", "--noconfirm"}, parts...)
+	case "goinstall":
+		// `go install <module>@<ver>` drops the binary in
+		// $GOBIN (or $GOPATH/bin). No elevation required, works on
+		// every platform Go runs on, and Go is already a required
+		// earlier-in-list dependency so it's guaranteed present.
+		return []string{"go", "install", pkg}
 	default:
 		return []string{pm, "install", pkg}
 	}
@@ -468,6 +503,79 @@ func downloadBrewInstaller() (string, func(), error) {
 		return "", func() {}, err
 	}
 	return path, cleanup, nil
+}
+
+// refreshInstallPath prepends the well-known directories where
+// fresh installers drop binaries to the in-process PATH, so the
+// LookPath retry inside ensureRequirement can find what we just
+// installed without the user having to restart their shell.
+//
+// We pick the dirs by GOOS:
+//
+//   - Windows: %LOCALAPPDATA%\Microsoft\WinGet\Links (winget portable
+//     shims), %ProgramFiles%\Go\bin (Go MSI), and the per-user Go
+//     bin dir (GOBIN, then $GOPATH/bin, falling back to
+//     %USERPROFILE%\go\bin) so a fresh `go install <pkg>` is
+//     discoverable on the next attempt.
+//   - macOS: /opt/homebrew/bin and /usr/local/bin (Apple Silicon vs
+//     Intel brew prefixes), plus Go bin like above.
+//   - Linux: just the Go bin dirs — distro package managers already
+//     drop into /usr/bin which is universally on PATH.
+//
+// All entries that don't exist on disk are skipped. prependPath is
+// idempotent so calling refreshInstallPath after every install
+// attempt is safe and cheap.
+func refreshInstallPath() {
+	for _, dir := range freshInstallPathDirs() {
+		if dir == "" {
+			continue
+		}
+		if _, err := os.Stat(dir); err != nil {
+			continue
+		}
+		prependPath(dir)
+	}
+}
+
+// freshInstallPathDirs returns the candidate dirs refreshInstallPath
+// considers. Pulled out so tests can assert the platform-specific
+// list without touching the filesystem.
+func freshInstallPathDirs() []string {
+	var dirs []string
+	switch goruntime.GOOS {
+	case "windows":
+		if local := os.Getenv("LOCALAPPDATA"); local != "" {
+			dirs = append(dirs, filepath.Join(local, "Microsoft", "WinGet", "Links"))
+		}
+		if pf := os.Getenv("ProgramFiles"); pf != "" {
+			dirs = append(dirs, filepath.Join(pf, "Go", "bin"))
+		}
+	case "darwin":
+		dirs = append(dirs, "/opt/homebrew/bin", "/usr/local/bin")
+	}
+	dirs = append(dirs, goBinDir())
+	return dirs
+}
+
+// goBinDir is the directory `go install` writes into. We try GOBIN
+// first (explicit override), then $GOPATH/bin, then the documented
+// default of $HOME/go/bin (or %USERPROFILE%\go\bin on Windows).
+func goBinDir() string {
+	if gobin := os.Getenv("GOBIN"); gobin != "" {
+		return gobin
+	}
+	if gopath := os.Getenv("GOPATH"); gopath != "" {
+		// GOPATH may be a list; first entry wins per `go help gopath`.
+		first := strings.Split(gopath, string(os.PathListSeparator))[0]
+		if first != "" {
+			return filepath.Join(first, "bin")
+		}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, "go", "bin")
 }
 
 // prependPath puts dir at the front of the in-process PATH env var so
