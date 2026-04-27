@@ -46,6 +46,12 @@ type EntityType struct {
 	// regardless of y-sort. Wins over YSortAnchor when both are true.
 	DrawAbovePlayer       bool      `db:"draw_above_player"                  json:"draw_above_player"`
 	Tags                  []string  `db:"tags"                               json:"tags"`
+	// ProceduralInclude controls whether this entity type appears in
+	// procedural-WFC random fill. Default true (the DB column has the
+	// same default — see migration 0042). Designers flip the eye-icon
+	// in the procedural-mode palette to mute tiles they don't want
+	// auto-spawned. Hand-painting an excluded tile still works.
+	ProceduralInclude     bool      `db:"procedural_include"                 json:"procedural_include"`
 	CreatedBy             int64     `db:"created_by"                         json:"created_by"`
 	CreatedAt             time.Time `db:"created_at" repo:"readonly"         json:"created_at"`
 	UpdatedAt             time.Time `db:"updated_at" repo:"readonly"         json:"updated_at"`
@@ -113,6 +119,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*EntityType, erro
 		ColliderAnchorY:      valOrDefault(in.ColliderAnchorY, 16),
 		DefaultCollisionMask: valOrDefault(in.DefaultCollisionMask, 1),
 		Tags:                 valOrEmpty(in.Tags),
+		ProceduralInclude:    true,
 		CreatedBy:            in.CreatedBy,
 	}
 	if err := s.Repo.Insert(ctx, row); err != nil {
@@ -122,6 +129,22 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*EntityType, erro
 		return nil, fmt.Errorf("create entity type: %w", err)
 	}
 	return row, nil
+}
+
+// SetProceduralInclude flips the procedural_include flag on one entity
+// type. Single indexed UPDATE; n+1 safe by construction.
+func (s *Service) SetProceduralInclude(ctx context.Context, id int64, include bool) error {
+	tag, err := s.Pool.Exec(ctx,
+		`UPDATE entity_types SET procedural_include = $2, updated_at = now() WHERE id = $1`,
+		id, include,
+	)
+	if err != nil {
+		return fmt.Errorf("set procedural_include: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrEntityTypeNotFound
+	}
+	return nil
 }
 
 // FindByID returns the entity type with the given id.

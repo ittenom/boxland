@@ -18,7 +18,7 @@ func TestMapConstraints_AddListAndDelete(t *testing.T) {
 	designerID, baseEtID := resetDB(t, pool)
 	ents := entities.New(pool, components.Default())
 	svc := maps.New(pool)
-	mapID, _, _, _ := procFixture(t, ctx, designerID, baseEtID, ents, svc, maps.GenAlgorithmSocket)
+	mapID, _, _, _ := procFixture(t, ctx, designerID, baseEtID, ents, svc)
 
 	idA, err := svc.AddMapConstraint(ctx, maps.AddMapConstraintInput{
 		MapID:  mapID,
@@ -65,7 +65,7 @@ func TestMapConstraints_RejectsInvalidKind(t *testing.T) {
 	designerID, baseEtID := resetDB(t, pool)
 	ents := entities.New(pool, components.Default())
 	svc := maps.New(pool)
-	mapID, _, _, _ := procFixture(t, ctx, designerID, baseEtID, ents, svc, maps.GenAlgorithmSocket)
+	mapID, _, _, _ := procFixture(t, ctx, designerID, baseEtID, ents, svc)
 	_, err := svc.AddMapConstraint(ctx, maps.AddMapConstraintInput{
 		MapID: mapID, Kind: "bogus", Params: json.RawMessage(`{}`),
 	})
@@ -81,7 +81,7 @@ func TestMapConstraints_RejectsBadBorderParams(t *testing.T) {
 	designerID, baseEtID := resetDB(t, pool)
 	ents := entities.New(pool, components.Default())
 	svc := maps.New(pool)
-	mapID, _, _, _ := procFixture(t, ctx, designerID, baseEtID, ents, svc, maps.GenAlgorithmSocket)
+	mapID, _, _, _ := procFixture(t, ctx, designerID, baseEtID, ents, svc)
 
 	cases := []struct{ name, params string }{
 		{"missing-entity", `{"edges":["top"]}`},
@@ -107,7 +107,7 @@ func TestMapConstraints_TenantIsolated(t *testing.T) {
 	designerID, baseEtID := resetDB(t, pool)
 	ents := entities.New(pool, components.Default())
 	svc := maps.New(pool)
-	mapA, _, _, _ := procFixture(t, ctx, designerID, baseEtID, ents, svc, maps.GenAlgorithmSocket)
+	mapA, _, _, _ := procFixture(t, ctx, designerID, baseEtID, ents, svc)
 	mB, err := svc.Create(ctx, maps.CreateInput{
 		Name: "proc-b", Width: 4, Height: 4, Mode: "procedural",
 		PersistenceMode: "persistent", CreatedBy: designerID,
@@ -134,7 +134,7 @@ func TestPreview_BorderConstraintIsHonored(t *testing.T) {
 	designerID, baseEtID := resetDB(t, pool)
 	ents := entities.New(pool, components.Default())
 	svc := maps.New(pool)
-	mapID, et1, _, _ := procFixture(t, ctx, designerID, baseEtID, ents, svc, maps.GenAlgorithmSocket)
+	mapID, et1, _, _ := procFixture(t, ctx, designerID, baseEtID, ents, svc)
 
 	if _, err := svc.AddMapConstraint(ctx, maps.AddMapConstraintInput{
 		MapID: mapID, Kind: maps.ConstraintKindBorder,

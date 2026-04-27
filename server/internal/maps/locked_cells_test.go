@@ -14,7 +14,7 @@ import (
 // procFixture creates a procedural+persistent map with two tile-kind
 // entity types (already socketed so generation always succeeds) and
 // returns the map id, both entity-type ids, and the base tile layer id.
-func procFixture(t *testing.T, ctx context.Context, designerID, baseEtID int64, ents *entities.Service, svc *maps.Service, algo string) (mapID int64, et1, et2, layerID int64) {
+func procFixture(t *testing.T, ctx context.Context, designerID, baseEtID int64, ents *entities.Service, svc *maps.Service) (mapID int64, et1, et2, layerID int64) {
 	t.Helper()
 	if _, err := svc.Pool.Exec(ctx, `UPDATE entity_types SET tags = ARRAY['tile'] WHERE id = $1`, baseEtID); err != nil {
 		t.Fatalf("tag base entity: %v", err)
@@ -36,8 +36,7 @@ func procFixture(t *testing.T, ctx context.Context, designerID, baseEtID int64, 
 	m, err := svc.Create(ctx, maps.CreateInput{
 		Name: "proc-map", Width: 4, Height: 4,
 		Mode: "procedural", PersistenceMode: "persistent",
-		GenAlgorithm: algo,
-		CreatedBy:    designerID,
+		CreatedBy: designerID,
 	})
 	if err != nil {
 		t.Fatalf("create map: %v", err)
@@ -62,7 +61,7 @@ func TestLockCells_PersistsAndRoundTrips(t *testing.T) {
 	designerID, baseEtID := resetDB(t, pool)
 	ents := entities.New(pool, components.Default())
 	svc := maps.New(pool)
-	mapID, et1, et2, layerID := procFixture(t, ctx, designerID, baseEtID, ents, svc, maps.GenAlgorithmSocket)
+	mapID, et1, et2, layerID := procFixture(t, ctx, designerID, baseEtID, ents, svc)
 
 	// Small batch path (< 32 cells).
 	if err := svc.LockCells(ctx, []maps.LockedCell{
@@ -138,7 +137,7 @@ func TestLockCells_RejectsInvalidRotation(t *testing.T) {
 	designerID, baseEtID := resetDB(t, pool)
 	ents := entities.New(pool, components.Default())
 	svc := maps.New(pool)
-	mapID, et1, _, layerID := procFixture(t, ctx, designerID, baseEtID, ents, svc, maps.GenAlgorithmSocket)
+	mapID, et1, _, layerID := procFixture(t, ctx, designerID, baseEtID, ents, svc)
 
 	err := svc.LockCells(ctx, []maps.LockedCell{
 		{MapID: mapID, LayerID: layerID, X: 0, Y: 0, EntityTypeID: et1, RotationDegrees: 45},
@@ -155,7 +154,7 @@ func TestLockCells_TenantIsolated(t *testing.T) {
 	designerID, baseEtID := resetDB(t, pool)
 	ents := entities.New(pool, components.Default())
 	svc := maps.New(pool)
-	mapA, et1, _, layerA := procFixture(t, ctx, designerID, baseEtID, ents, svc, maps.GenAlgorithmSocket)
+	mapA, et1, _, layerA := procFixture(t, ctx, designerID, baseEtID, ents, svc)
 	// Second map. Reuse the same designer + tiles; we just need a fresh maps.id.
 	mB, err := svc.Create(ctx, maps.CreateInput{
 		Name: "proc-map-2", Width: 4, Height: 4, Mode: "procedural",
@@ -185,7 +184,7 @@ func TestMaterialize_LockedCellsSurviveAndAnchor(t *testing.T) {
 	designerID, baseEtID := resetDB(t, pool)
 	ents := entities.New(pool, components.Default())
 	svc := maps.New(pool)
-	mapID, et1, et2, layerID := procFixture(t, ctx, designerID, baseEtID, ents, svc, maps.GenAlgorithmSocket)
+	mapID, et1, et2, layerID := procFixture(t, ctx, designerID, baseEtID, ents, svc)
 
 	// Lock a couple of specific cells.
 	if err := svc.LockCells(ctx, []maps.LockedCell{
@@ -241,7 +240,7 @@ func TestPreview_MergesLockAnchors(t *testing.T) {
 	designerID, baseEtID := resetDB(t, pool)
 	ents := entities.New(pool, components.Default())
 	svc := maps.New(pool)
-	mapID, et1, _, layerID := procFixture(t, ctx, designerID, baseEtID, ents, svc, maps.GenAlgorithmSocket)
+	mapID, et1, _, layerID := procFixture(t, ctx, designerID, baseEtID, ents, svc)
 
 	if err := svc.LockCells(ctx, []maps.LockedCell{
 		{MapID: mapID, LayerID: layerID, X: 0, Y: 0, EntityTypeID: et1},
@@ -257,8 +256,8 @@ func TestPreview_MergesLockAnchors(t *testing.T) {
 	if res.Region.Cells[0].EntityType != wfc.EntityTypeID(et1) {
 		t.Errorf("lock not honored at (0,0): %+v", res.Region.Cells[0])
 	}
-	if res.Algorithm != maps.GenAlgorithmSocket {
-		t.Errorf("algorithm = %q, want %q", res.Algorithm, maps.GenAlgorithmSocket)
+	if res.Algorithm != "chunked-socket" {
+		t.Errorf("algorithm = %q, want chunked-socket", res.Algorithm)
 	}
 }
 
@@ -269,7 +268,7 @@ func TestPreview_OverlappingFallsBackWithoutSamplePatch(t *testing.T) {
 	designerID, baseEtID := resetDB(t, pool)
 	ents := entities.New(pool, components.Default())
 	svc := maps.New(pool)
-	mapID, _, _, _ := procFixture(t, ctx, designerID, baseEtID, ents, svc, maps.GenAlgorithmOverlapping)
+	mapID, _, _, _ := procFixture(t, ctx, designerID, baseEtID, ents, svc)
 
 	res, err := svc.GenerateProceduralPreview(ctx, maps.ProceduralPreviewInput{
 		MapID: mapID, Width: 4, Height: 4, Seed: 1,
@@ -279,7 +278,7 @@ func TestPreview_OverlappingFallsBackWithoutSamplePatch(t *testing.T) {
 	}
 	// No sample patch defined → falls back to socket so the designer
 	// still sees output (with a slog warning, see runProcedural).
-	if res.Algorithm != maps.GenAlgorithmSocket {
+	if res.Algorithm != "chunked-socket" {
 		t.Errorf("expected fallback to socket, got %q", res.Algorithm)
 	}
 }
@@ -291,7 +290,7 @@ func TestPreview_OverlappingUsesSamplePatch(t *testing.T) {
 	designerID, baseEtID := resetDB(t, pool)
 	ents := entities.New(pool, components.Default())
 	svc := maps.New(pool)
-	mapID, et1, et2, layerID := procFixture(t, ctx, designerID, baseEtID, ents, svc, maps.GenAlgorithmOverlapping)
+	mapID, et1, et2, layerID := procFixture(t, ctx, designerID, baseEtID, ents, svc)
 
 	// Paint a tiny stripe sample in the base layer (cols alternate
 	// et1/et2). The sample patch row points at this 4x4 region.
@@ -321,8 +320,8 @@ func TestPreview_OverlappingUsesSamplePatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("preview: %v", err)
 	}
-	if res.Algorithm != maps.GenAlgorithmOverlapping {
-		t.Errorf("algorithm = %q, want %q", res.Algorithm, maps.GenAlgorithmOverlapping)
+	if res.Algorithm != "chunked-overlapping" {
+		t.Errorf("algorithm = %q, want %q", res.Algorithm, "chunked-overlapping")
 	}
 	if res.PatternCount < 2 {
 		t.Errorf("PatternCount = %d, want >= 2 for stripe sample", res.PatternCount)
@@ -345,30 +344,3 @@ func TestPreview_OverlappingUsesSamplePatch(t *testing.T) {
 	_ = wfc.EntityTypeID(et1) // keep wfc import live alongside other tests
 }
 
-func TestSetGenAlgorithm_RoundTrips(t *testing.T) {
-	pool := openTestPool(t)
-	defer pool.Close()
-	ctx := context.Background()
-	designerID, _ := resetDB(t, pool)
-	svc := maps.New(pool)
-	m, err := svc.Create(ctx, maps.CreateInput{
-		Name: "x", Width: 4, Height: 4, Mode: "procedural", CreatedBy: designerID,
-	})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	if m.GenAlgorithm != maps.GenAlgorithmSocket {
-		t.Errorf("default = %q, want socket", m.GenAlgorithm)
-	}
-	if err := svc.SetGenAlgorithm(ctx, m.ID, maps.GenAlgorithmOverlapping); err != nil {
-		t.Fatalf("SetGenAlgorithm: %v", err)
-	}
-	got, _ := svc.FindByID(ctx, m.ID)
-	if got.GenAlgorithm != maps.GenAlgorithmOverlapping {
-		t.Errorf("after set = %q, want overlapping", got.GenAlgorithm)
-	}
-
-	if err := svc.SetGenAlgorithm(ctx, m.ID, "weird"); err == nil {
-		t.Error("expected validation error for weird algorithm")
-	}
-}

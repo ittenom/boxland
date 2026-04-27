@@ -17,7 +17,7 @@ func TestSamplePatch_UpsertAndRoundTrip(t *testing.T) {
 	designerID, baseEtID := resetDB(t, pool)
 	ents := entities.New(pool, components.Default())
 	svc := maps.New(pool)
-	mapID, _, _, layerID := procFixture(t, ctx, designerID, baseEtID, ents, svc, maps.GenAlgorithmOverlapping)
+	mapID, _, _, layerID := procFixture(t, ctx, designerID, baseEtID, ents, svc)
 
 	// No patch yet → ErrNoSamplePatch.
 	if _, err := svc.SamplePatchByMap(ctx, mapID); !errors.Is(err, maps.ErrNoSamplePatch) {
@@ -65,7 +65,7 @@ func TestSamplePatch_RejectsInvalidDims(t *testing.T) {
 	designerID, baseEtID := resetDB(t, pool)
 	ents := entities.New(pool, components.Default())
 	svc := maps.New(pool)
-	mapID, _, _, layerID := procFixture(t, ctx, designerID, baseEtID, ents, svc, maps.GenAlgorithmOverlapping)
+	mapID, _, _, layerID := procFixture(t, ctx, designerID, baseEtID, ents, svc)
 
 	cases := []struct {
 		name string
@@ -93,7 +93,7 @@ func TestSamplePatch_LoadTilesReadsFromMapTiles(t *testing.T) {
 	designerID, baseEtID := resetDB(t, pool)
 	ents := entities.New(pool, components.Default())
 	svc := maps.New(pool)
-	mapID, et1, et2, layerID := procFixture(t, ctx, designerID, baseEtID, ents, svc, maps.GenAlgorithmOverlapping)
+	mapID, et1, et2, layerID := procFixture(t, ctx, designerID, baseEtID, ents, svc)
 
 	// Paint a 2x2: 1 2 / 2 1
 	cells := []struct {
@@ -139,7 +139,7 @@ func TestSamplePatch_LockOverlayWinsOverMapTiles(t *testing.T) {
 	designerID, baseEtID := resetDB(t, pool)
 	ents := entities.New(pool, components.Default())
 	svc := maps.New(pool)
-	mapID, et1, et2, layerID := procFixture(t, ctx, designerID, baseEtID, ents, svc, maps.GenAlgorithmOverlapping)
+	mapID, et1, et2, layerID := procFixture(t, ctx, designerID, baseEtID, ents, svc)
 
 	// Paint base 2x2 all et1.
 	for y := int32(0); y < 2; y++ {
@@ -179,7 +179,7 @@ func TestSamplePatch_TenantIsolated(t *testing.T) {
 	designerID, baseEtID := resetDB(t, pool)
 	ents := entities.New(pool, components.Default())
 	svc := maps.New(pool)
-	mapA, _, _, layerA := procFixture(t, ctx, designerID, baseEtID, ents, svc, maps.GenAlgorithmOverlapping)
+	mapA, _, _, layerA := procFixture(t, ctx, designerID, baseEtID, ents, svc)
 	mB, err := svc.Create(ctx, maps.CreateInput{
 		Name: "proc-b", Width: 4, Height: 4, Mode: "procedural",
 		PersistenceMode: "persistent", CreatedBy: designerID,

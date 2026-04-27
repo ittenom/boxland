@@ -23,7 +23,6 @@ type MapDraft struct {
 	PersistenceMode      string  `json:"persistence_mode"`
 	RefreshWindowSeconds *int32  `json:"refresh_window_seconds,omitempty"`
 	SpectatorPolicy      string  `json:"spectator_policy"`
-	GenAlgorithm         string  `json:"gen_algorithm,omitempty"`
 	Seed                 *int64  `json:"seed,omitempty"`
 }
 
@@ -53,9 +52,6 @@ func (d MapDraft) Validate() error {
 		default:
 			return fmt.Errorf("map draft: spectator_policy %q invalid", d.SpectatorPolicy)
 		}
-	}
-	if d.GenAlgorithm != "" && !ValidGenAlgorithm(d.GenAlgorithm) {
-		return fmt.Errorf("map draft: gen_algorithm %q invalid", d.GenAlgorithm)
 	}
 	return nil
 }
@@ -93,14 +89,6 @@ func (MapDraft) Descriptor() []configurable.FieldDescriptor {
 			},
 		},
 		{
-			Key: "gen_algorithm", Label: "Generation algorithm", Kind: configurable.KindEnum,
-			Help: "Procedural maps only. Socket = strict edge-socket WFC (best for collision/pathing). Overlapping = learns from a small sample patch you paint (best for organic decorative maps).",
-			Options: []configurable.EnumOption{
-				{Value: GenAlgorithmSocket, Label: "Socket (precise; needs edge sockets)"},
-				{Value: GenAlgorithmOverlapping, Label: "Overlapping (learns from a sample patch)"},
-			},
-		},
-		{
 			Key: "seed", Label: "Procedural seed", Kind: configurable.KindInt,
 			Help: "Procedural maps only. Re-roll to regenerate the layout.",
 		},
@@ -135,13 +123,6 @@ func (h *Handler) Publish(ctx context.Context, tx pgx.Tx, draft artifact.DraftRo
 		return artifact.PublishResult{}, err
 	}
 
-	algo := d.GenAlgorithm
-	if algo == "" {
-		algo = GenAlgorithmSocket
-	}
-	if !ValidGenAlgorithm(algo) {
-		return artifact.PublishResult{}, fmt.Errorf("map draft: gen_algorithm %q invalid", algo)
-	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE maps SET
 			name = $2,
@@ -151,11 +132,10 @@ func (h *Handler) Publish(ctx context.Context, tx pgx.Tx, draft artifact.DraftRo
 			refresh_window_seconds = $6,
 			spectator_policy = $7,
 			seed = $8,
-			gen_algorithm = $9,
 			updated_at = now()
 		WHERE id = $1
 	`, draft.ArtifactID, d.Name, d.Public, d.InstancingMode, d.PersistenceMode,
-		d.RefreshWindowSeconds, d.SpectatorPolicy, d.Seed, algo,
+		d.RefreshWindowSeconds, d.SpectatorPolicy, d.Seed,
 	); err != nil {
 		return artifact.PublishResult{}, fmt.Errorf("apply map update: %w", err)
 	}
@@ -168,11 +148,11 @@ func (h *Handler) loadPrev(ctx context.Context, tx pgx.Tx, id int64) (MapDraft, 
 	var d MapDraft
 	err := tx.QueryRow(ctx, `
 		SELECT name, public, instancing_mode, persistence_mode,
-		       refresh_window_seconds, spectator_policy, seed, gen_algorithm
+		       refresh_window_seconds, spectator_policy, seed
 		FROM maps WHERE id = $1
 	`, id).Scan(
 		&d.Name, &d.Public, &d.InstancingMode, &d.PersistenceMode,
-		&d.RefreshWindowSeconds, &d.SpectatorPolicy, &d.Seed, &d.GenAlgorithm,
+		&d.RefreshWindowSeconds, &d.SpectatorPolicy, &d.Seed,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

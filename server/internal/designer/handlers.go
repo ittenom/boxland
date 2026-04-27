@@ -194,13 +194,14 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /design/maps/{id}", auth(getMapmakerPage(d)))
 	mux.Handle("POST /design/maps/{id}/preview", auth(postMapPreview(d)))
 	mux.Handle("POST /design/maps/{id}/materialize", auth(postMapMaterialize(d)))
-	mux.Handle("POST /design/maps/{id}/gen-algorithm", auth(postMapGenAlgorithm(d)))
+
 	mux.Handle("GET /design/maps/{id}/locks", auth(getMapLocks(d)))
 	mux.Handle("POST /design/maps/{id}/locks", auth(postMapLocks(d)))
 	mux.Handle("DELETE /design/maps/{id}/locks", auth(deleteMapLocks(d)))
 	mux.Handle("GET /design/maps/{id}/sample-patch", auth(getMapSamplePatch(d)))
 	mux.Handle("POST /design/maps/{id}/sample-patch", auth(postMapSamplePatch(d)))
 	mux.Handle("DELETE /design/maps/{id}/sample-patch", auth(deleteMapSamplePatch(d)))
+	mux.Handle("POST /design/entity-types/{id}/procedural-include", auth(postEntityTypeProceduralInclude(d)))
 	mux.Handle("GET /design/maps/{id}/constraints", auth(getMapConstraints(d)))
 	mux.Handle("POST /design/maps/{id}/constraints", auth(postMapConstraint(d)))
 	mux.Handle("DELETE /design/maps/{id}/constraints/{cid}", auth(deleteMapConstraint(d)))
@@ -2604,11 +2605,12 @@ func getMapmakerPage(d Deps) http.HandlerFunc {
 			paletteURL := assetPublicURLFunc(mapsValues(assetByID))
 			for _, et := range ets {
 				entry := views.PaletteEntry{
-					ID:         et.ID,
-					Name:       et.Name,
-					AtlasIndex: et.AtlasIndex,
-					TileSize:   assets.TileSize,
-					AtlasCols:  1,
+					ID:                et.ID,
+					Name:              et.Name,
+					AtlasIndex:        et.AtlasIndex,
+					TileSize:          assets.TileSize,
+					AtlasCols:         1,
+					ProceduralInclude: et.ProceduralInclude,
 				}
 				if et.SpriteAssetID != nil {
 					if a, ok := assetByID[*et.SpriteAssetID]; ok {
@@ -2674,10 +2676,7 @@ type previewRequest struct {
 	Width      int32  `json:"width,omitempty"`
 	Height     int32  `json:"height,omitempty"`
 	MaxReseeds int    `json:"max_reseeds,omitempty"`
-	// Algorithm override: pass "socket" or "overlapping" to preview a
-	// different engine without flipping the map's stored value.
-	Algorithm string `json:"algorithm,omitempty"`
-	Anchors   []struct {
+	Anchors    []struct {
 		X            int32 `json:"x"`
 		Y            int32 `json:"y"`
 		EntityTypeID int64 `json:"entity_type_id"`
@@ -2746,11 +2745,10 @@ func postMapPreview(d Deps) http.HandlerFunc {
 		res, err := d.Maps.GenerateProceduralPreview(r.Context(), mapsservice.ProceduralPreviewInput{
 			MapID:             m.ID,
 			Width:             width,
-			Height:            height,
-			Seed:              req.Seed,
-			Anchors:           anchors,
-			MaxReseeds:        req.MaxReseeds,
-			AlgorithmOverride: req.Algorithm,
+			Height:     height,
+			Seed:       req.Seed,
+			Anchors:    anchors,
+			MaxReseeds: req.MaxReseeds,
 		})
 		if err != nil {
 			switch {
@@ -2847,51 +2845,7 @@ func postMapMaterialize(d Deps) http.HandlerFunc {
 	}
 }
 
-// ---- Procedural: gen-algorithm + locked cells ----
-
-type genAlgorithmRequest struct {
-	Algorithm string `json:"algorithm"`
-}
-
-func postMapGenAlgorithm(d Deps) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		id, err := pathID(r)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		var req genAlgorithmRequest
-		// Accept either JSON body or a "?algorithm=..." form param so the
-		// settings drawer's plain form post and the panel's JSON fetch
-		// both work.
-		if r.Header.Get("Content-Type") == "application/json" {
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
-				return
-			}
-		} else {
-			if err := r.ParseForm(); err != nil {
-				http.Error(w, "bad form: "+err.Error(), http.StatusBadRequest)
-				return
-			}
-			req.Algorithm = r.Form.Get("algorithm")
-		}
-		if !mapsservice.ValidGenAlgorithm(req.Algorithm) {
-			http.Error(w, "invalid algorithm", http.StatusBadRequest)
-			return
-		}
-		if err := d.Maps.SetGenAlgorithm(r.Context(), id, req.Algorithm); err != nil {
-			if errors.Is(err, mapsservice.ErrMapNotFound) {
-				http.Error(w, "not found", http.StatusNotFound)
-				return
-			}
-			slog.Error("set gen algorithm", "err", err, "map_id", id)
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	}
-}
+// ---- Procedural: locked cells ----
 
 // lockedCellJSON mirrors mapsservice.LockedCell on the wire.
 type lockedCellJSON struct {
@@ -3182,6 +3136,35 @@ func postMapConstraint(d Deps) http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_ = json.NewEncoder(w).Encode(addConstraintResponse{ID: newID})
+	}
+}
+
+// postEntityTypeProceduralInclude flips the procedural_include flag on
+// one entity type. Powers the eye-icon toggle in the palette.
+func postEntityTypeProceduralInclude(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := pathID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		var req struct {
+			Include bool `json:"include"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := d.Entities.SetProceduralInclude(r.Context(), id, req.Include); err != nil {
+			if errors.Is(err, entities.ErrEntityTypeNotFound) {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			slog.Error("set procedural include", "err", err, "entity_type_id", id)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 

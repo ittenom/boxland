@@ -118,6 +118,85 @@ func (s *Service) DeleteSamplePatch(ctx context.Context, mapID int64) error {
 	return nil
 }
 
+// autoSampleFromPaintedTiles is the zero-config sample source: when the
+// designer hasn't explicitly set a sample patch but has painted *some*
+// cells, we use the bounding box of those cells as the sample. So
+// "paint a few trees and dirt path, hit Generate" → output reflects the
+// painted style, no tool selection or numeric inputs required.
+//
+// Returns ok=false when there's no painted base layer or no painted
+// cells (caller falls back to socket-only mode).
+//
+// Cap: we clamp the bounding box to 32×32 because (a) larger samples
+// extract too many distinct patterns to be useful and (b) the table
+// CHECK constraint matches. When the painted region is bigger we take
+// the top-left 32×32 corner — designers can always set an explicit
+// sample with the Sample tool if they want a different region.
+func (s *Service) autoSampleFromPaintedTiles(ctx context.Context, mapID int64) (wfc.SamplePatch, bool) {
+	layerID, err := s.resolveTargetTileLayer(ctx, mapID, 0)
+	if err != nil {
+		return wfc.SamplePatch{}, false
+	}
+	// Bounding box of painted cells on the base tile layer. One query.
+	var minX, minY, maxX, maxY *int32
+	row := s.Pool.QueryRow(ctx, `
+		SELECT MIN(x), MIN(y), MAX(x), MAX(y)
+		FROM map_tiles
+		WHERE map_id = $1 AND layer_id = $2
+	`, mapID, layerID)
+	if err := row.Scan(&minX, &minY, &maxX, &maxY); err != nil {
+		return wfc.SamplePatch{}, false
+	}
+	if minX == nil || minY == nil || maxX == nil || maxY == nil {
+		return wfc.SamplePatch{}, false
+	}
+	width := *maxX - *minX + 1
+	height := *maxY - *minY + 1
+	if width < 2 || height < 2 {
+		return wfc.SamplePatch{}, false
+	}
+	if width > 32 {
+		width = 32
+	}
+	if height > 32 {
+		height = 32
+	}
+
+	tiles := make([]wfc.EntityTypeID, int(width)*int(height))
+	rows, err := s.Pool.Query(ctx, `
+		SELECT x, y, entity_type_id
+		FROM map_tiles
+		WHERE map_id = $1 AND layer_id = $2
+		  AND x BETWEEN $3 AND $4
+		  AND y BETWEEN $5 AND $6
+	`, mapID, layerID, *minX, *minX+width-1, *minY, *minY+height-1)
+	if err != nil {
+		return wfc.SamplePatch{}, false
+	}
+	defer rows.Close()
+	any := false
+	for rows.Next() {
+		var x, y int32
+		var et int64
+		if err := rows.Scan(&x, &y, &et); err != nil {
+			return wfc.SamplePatch{}, false
+		}
+		idx := (y-*minY)*width + (x - *minX)
+		if idx < 0 || int(idx) >= len(tiles) {
+			continue
+		}
+		tiles[idx] = wfc.EntityTypeID(et)
+		any = true
+	}
+	if err := rows.Err(); err != nil {
+		return wfc.SamplePatch{}, false
+	}
+	if !any {
+		return wfc.SamplePatch{}, false
+	}
+	return wfc.SamplePatch{Width: width, Height: height, Tiles: tiles}, true
+}
+
 // LoadSamplePatchTiles reads the actual tile cells inside the patch's
 // rectangle and returns them as a wfc.SamplePatch ready for the
 // overlapping engine. Locked cells override map_tiles at the same

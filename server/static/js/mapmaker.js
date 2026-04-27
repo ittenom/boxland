@@ -68,6 +68,10 @@
 			// Shape: {name, spriteUrl, atlasIndex, atlasCols, tileSize}
 			paletteByEntity: new Map(),
 			procPreview: null,   // last bx:procedural-preview, drawn as ghost overlay
+			sampleRect: null,    // {x,y,width,height} cell coords; the procedural
+			                      // engine's current sample area, drawn as a yellow
+			                      // dashed frame so the designer always sees what's
+			                      // being sampled.
 			// lockedCells is keyed "L:x:y" same as tiles. Loaded once on
 			// boot via /design/maps/{id}/locks; the Lock tool mutates it
 			// + ships diffs back to the server.
@@ -302,7 +306,7 @@
 					dragging = false;
 					return;
 				}
-				if (state.tool === "rect") {
+				if (state.tool === "rect" || state.tool === "sample") {
 					dragStart = cell;
 					draw(state, ctx, canvas, { rectFrom: dragStart, rectTo: cell });
 					return;
@@ -318,7 +322,7 @@
 			canvas.addEventListener("pointermove", (e) => {
 				if (!dragging) return;
 				const cell = pointerToCell(e, canvas);
-				if (state.tool === "rect") {
+				if (state.tool === "rect" || state.tool === "sample") {
 					draw(state, ctx, canvas, { rectFrom: dragStart, rectTo: cell });
 					return;
 				}
@@ -352,6 +356,24 @@
 					}
 					dragStart = null;
 				}
+				if (state.tool === "sample" && dragStart) {
+					// Sample tool: bubble the dragged rectangle up to the
+					// procedural module via a CustomEvent. mapmaker.js
+					// stays oblivious to the procedural API surface — the
+					// procedural module owns the POST.
+					const cell = pointerToCell(e, canvas);
+					const r = normalizeRect(dragStart, cell);
+					const detail = {
+						x: r.x0,
+						y: r.y0,
+						width: r.x1 - r.x0 + 1,
+						height: r.y1 - r.y0 + 1,
+					};
+					canvas.dispatchEvent(new CustomEvent("bx:procedural-sample-drawn", {
+						bubbles: true, detail,
+					}));
+					dragStart = null;
+				}
 
 				const placedWire = strokePlaced.map(toWire);
 				const erasedPoints = strokeErased.map((t) => [t.x, t.y]);
@@ -380,16 +402,18 @@
 			canvas.addEventListener("pointerleave",  (e) => { if (dragging) finishStroke(e); });
 		}
 
-		// Hotkeys: B / R / F / I / E / L mirror the toolbar tooltips.
-		// L is only meaningful on procedural maps (the toolbar omits the
-		// button on authored maps); the hotkey still flips state safely
-		// because stamp() flashes "pick a layer first" if there's nothing
-		// to lock onto.
+		// Hotkeys: B / R / F / I / E / L / S mirror the toolbar tooltips.
+		// L (Lock) and S (Sample) are only meaningful on procedural maps
+		// (the toolbar omits the buttons on authored maps); the hotkeys
+		// still flip state safely because stamp() flashes "pick a layer
+		// first" if there's nothing to lock onto, and the sample tool's
+		// drag is a no-op until the procedural module responds to the
+		// resulting bx:procedural-sample-drawn event.
 		// T rotates the active tile stamp.
 		// H opens the per-realm HUD editor.
 		document.addEventListener("keydown", (e) => {
 			if (isTextEditingTarget(e.target)) return;
-			const map = { b: "brush", r: "rect", f: "fill", i: "eyedrop", e: "eraser", l: "lock" };
+			const map = { b: "brush", r: "rect", f: "fill", i: "eyedrop", e: "eraser", l: "lock", s: "sample" };
 			const k = e.key.toLowerCase();
 			if (map[k]) { setTool(state, map[k]); e.preventDefault(); return; }
 			if (k === "t" && !e.ctrlKey && !e.metaKey && !e.altKey) { cycleRotation(state); e.preventDefault(); return; }
@@ -647,6 +671,20 @@
 				const ctx = canvas.getContext("2d");
 				if (ctx) draw(state, ctx, canvas);
 			});
+			// Sample-rect overlay: drawn as a persistent dashed yellow
+			// frame so the designer can see what's being sampled.
+			// Detail shape: { x, y, width, height } in cell coords, or
+			// null to clear.
+			canvas.addEventListener("bx:procedural-sample-set", (e) => {
+				state.sampleRect = e.detail || null;
+				const ctx = canvas.getContext("2d");
+				if (ctx) draw(state, ctx, canvas);
+			});
+			canvas.addEventListener("bx:procedural-sample-clear", () => {
+				state.sampleRect = null;
+				const ctx = canvas.getContext("2d");
+				if (ctx) draw(state, ctx, canvas);
+			});
 		}
 
 		// ---------- Render ------------------------------------------------
@@ -696,14 +734,50 @@
 				ctx.restore();
 			}
 
-			// Ghost preview from procedural module: yellow tint, 50% alpha.
+			// Ghost preview from procedural module: draw the actual tile
+			// sprites at 70% alpha. The wire shape (entity_type_id) maps
+			// straight onto drawTile's expected shape — we just need to
+			// project the snake_case fields onto camelCase. Falling back
+			// to a soft yellow tint when the entity has no sprite assigned
+			// preserves the "this cell is procedural" hint without
+			// hiding the rest of the map.
 			if (state.procPreview && state.procPreview.cells) {
 				ctx.save();
-				ctx.globalAlpha = 0.5;
+				ctx.globalAlpha = 0.7;
 				for (const c of state.procPreview.cells) {
-					ctx.fillStyle = "#FFDD4A";
-					ctx.fillRect(c.x * TILE_PX, c.y * TILE_PX, TILE_PX, TILE_PX);
+					drawTile(ctx, state, {
+						x: c.x,
+						y: c.y,
+						entityTypeId: c.entity_type_id,
+						rotationDegrees: c.rotation_degrees || 0,
+					});
 				}
+				ctx.restore();
+			}
+
+			// Procedural sample-rect frame: a yellow dashed outline around
+			// the area the engine is sampling from. Set by the procedural
+			// module via bx:procedural-sample-set / -clear so the designer
+			// always sees what's being sampled.
+			if (state.sampleRect) {
+				const r = state.sampleRect;
+				ctx.save();
+				ctx.strokeStyle = "#FFDD4A";
+				ctx.lineWidth = 2;
+				ctx.setLineDash([6, 4]);
+				ctx.strokeRect(
+					r.x * TILE_PX + 1,
+					r.y * TILE_PX + 1,
+					r.width * TILE_PX - 2,
+					r.height * TILE_PX - 2,
+				);
+				ctx.setLineDash([]);
+				// Tiny "sample" label in the corner.
+				ctx.fillStyle = "rgba(0,0,0,0.65)";
+				ctx.fillRect(r.x * TILE_PX, r.y * TILE_PX - 14, 52, 14);
+				ctx.fillStyle = "#FFDD4A";
+				ctx.font = "10px monospace";
+				ctx.fillText("sample", r.x * TILE_PX + 4, r.y * TILE_PX - 3);
 				ctx.restore();
 			}
 

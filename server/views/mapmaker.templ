@@ -36,12 +36,13 @@ type MapmakerProps struct {
 // of the source asset — without them every tile entity tied to a
 // shared tile sheet would render the same first cell.
 type PaletteEntry struct {
-	ID         int64
-	Name       string
-	SpriteURL  string // CDN URL of the source asset (PNG)
-	AtlasIndex int32  // row-major cell index inside SpriteURL
-	AtlasCols  int32  // sheet width in cells; defaults to 1 for plain sprites
-	TileSize   int32  // canonical 32; carried explicitly for forward compat
+	ID                int64
+	Name              string
+	SpriteURL         string // CDN URL of the source asset (PNG)
+	AtlasIndex        int32  // row-major cell index inside SpriteURL
+	AtlasCols         int32  // sheet width in cells; defaults to 1 for plain sprites
+	TileSize          int32  // canonical 32; carried explicitly for forward compat
+	ProceduralInclude bool   // when false the tile is excluded from procedural fill
 }
 
 templ MapmakerPage(p MapmakerProps) {
@@ -195,6 +196,7 @@ templ MapmakerToolbar(p MapmakerProps) {
 			@toolButton("eraser", "E", "Eraser")
 			if p.Map.Mode == "procedural" {
 				@toolButton("lock", "L", "Lock")
+				@toolButton("sample", "S", "Sample")
 			}
 			<button type="button" class="bx-btn bx-btn--ghost bx-btn--small" data-bx-rotate-tile title="Rotate tile (T)">⟳ 0°</button>
 		</div>
@@ -290,6 +292,8 @@ templ MapmakerToolbar(p MapmakerProps) {
 					data-bx-atlas-index={ fmt.Sprintf("%d", e.AtlasIndex) }
 					data-bx-atlas-cols={ fmt.Sprintf("%d", paletteCols(e)) }
 					data-bx-tile-size={ fmt.Sprintf("%d", paletteTileSize(e)) }
+					data-bx-proc-include={ procIncludeAttr(e) }
+					class={ paletteEntryClass(e) }
 					if i == 0 { aria-selected="true" } else { aria-selected="false" }
 					title={ e.Name }
 				>
@@ -300,6 +304,21 @@ templ MapmakerToolbar(p MapmakerProps) {
 						aria-hidden="true"
 					></canvas>
 					<span class="bx-mapmaker__palette__name">{ e.Name }</span>
+					if p.Map.Mode == "procedural" {
+						<button
+							type="button"
+							class="bx-mapmaker__palette__include"
+							data-bx-palette-include
+							title={ procIncludeTitle(e) }
+							aria-pressed={ procIncludeAttr(e) }
+						>
+							if e.ProceduralInclude {
+								👁
+							} else {
+								🚫
+							}
+						</button>
+					}
 				</li>
 			}
 		</ol>
@@ -325,90 +344,19 @@ templ MapmakerToolbar(p MapmakerProps) {
 // always survive Generate/Reroll/Commit.
 templ MapmakerProceduralPanel(p MapmakerProps) {
 	<script src="/static/js/mapmaker-procedural.js" defer></script>
-	<section class="bx-panel" data-bx-procedural data-map-id={ fmt.Sprintf("%d", p.Map.ID) } data-bx-gen-algorithm={ proceduralAlgorithm(p.Map) } style="padding: var(--bx-s2);">
+	<section
+		class="bx-panel"
+		data-bx-procedural
+		data-map-id={ fmt.Sprintf("%d", p.Map.ID) }
+		data-bx-default-layer-id={ defaultTileLayerIDAttr(p) }
+		style="padding: var(--bx-s2);"
+	>
 		<h3 class="bx-panel__title" data-copy-slot="mapmaker.proc.title">Procedural</h3>
 		<p class="bx-small bx-muted" data-copy-slot="mapmaker.proc.help">
-			Pick a seed, then Generate to preview. Lock the seed to keep it.
+			Paint a few tiles to set the style, then Generate. Use the Sample tool to pick a specific area.
 		</p>
 
 		<div class="bx-stack-tight" style="margin-top: var(--bx-s2);">
-			<fieldset class="bx-stack-tight" style="border:0;padding:0;margin:0;">
-				<legend class="bx-small bx-muted" data-copy-slot="mapmaker.proc.algorithm.title">Algorithm</legend>
-				<div class="bx-segmented" role="radiogroup" aria-label="Generation algorithm" data-bx-proc-algorithm>
-					@procAlgorithmOption(p.Map, "socket", "Socket", "Strict edge sockets, perfect for collisions and pathable areas.")
-					@procAlgorithmOption(p.Map, "overlapping", "Overlapping", "Paint a small sample patch; the generator learns its style and fills the rest.")
-				</div>
-			</fieldset>
-
-			<fieldset
-				class="bx-stack-tight"
-				style="border:1px dashed var(--bx-line, rgba(255,255,255,0.12)); padding: var(--bx-s2); margin:0; border-radius: 6px;"
-				data-bx-sample-patch
-				data-bx-default-layer-id={ defaultTileLayerIDAttr(p) }
-			>
-				<legend class="bx-small bx-muted" data-copy-slot="mapmaker.proc.sample.title">Sample patch</legend>
-				<p class="bx-small bx-muted" data-copy-slot="mapmaker.proc.sample.help">
-					Paint a 2×2 to 32×32 area on the base layer, then save its rectangle here. The generator learns from those cells.
-				</p>
-				<div class="bx-row" style="gap: var(--bx-s1); flex-wrap: wrap;">
-					<label class="bx-small bx-row" style="gap:4px;">x
-						<input type="number" class="bx-input bx-small" data-bx-sample-x value="0" min="0" style="width:64px;"/>
-					</label>
-					<label class="bx-small bx-row" style="gap:4px;">y
-						<input type="number" class="bx-input bx-small" data-bx-sample-y value="0" min="0" style="width:64px;"/>
-					</label>
-					<label class="bx-small bx-row" style="gap:4px;">w
-						<input type="number" class="bx-input bx-small" data-bx-sample-w value="8" min="2" max="32" style="width:64px;"/>
-					</label>
-					<label class="bx-small bx-row" style="gap:4px;">h
-						<input type="number" class="bx-input bx-small" data-bx-sample-h value="8" min="2" max="32" style="width:64px;"/>
-					</label>
-					<label class="bx-small bx-row" style="gap:4px;" title="Pattern size N. 2 = relaxed, 3 = strict.">N
-						<select class="bx-input bx-small" data-bx-sample-n style="width:60px;">
-							<option value="2">2</option>
-							<option value="3">3</option>
-						</select>
-					</label>
-				</div>
-				<div class="bx-row" style="gap: var(--bx-s1);">
-					<button type="button" class="bx-btn bx-btn--primary bx-btn--small" data-bx-sample-save data-copy-slot="mapmaker.proc.sample.save">Save sample</button>
-					<button type="button" class="bx-btn bx-btn--ghost bx-btn--small" data-bx-sample-clear data-copy-slot="mapmaker.proc.sample.clear">Remove</button>
-				</div>
-				<p class="bx-small bx-muted" data-bx-sample-status aria-live="polite"></p>
-			</fieldset>
-
-			<fieldset
-				class="bx-stack-tight"
-				style="border:1px dashed var(--bx-line, rgba(255,255,255,0.12)); padding: var(--bx-s2); margin:0; border-radius: 6px;"
-				data-bx-constraints
-			>
-				<legend class="bx-small bx-muted" data-copy-slot="mapmaker.proc.constraints.title">Constraints</legend>
-				<p class="bx-small bx-muted" data-copy-slot="mapmaker.proc.constraints.help">
-					Border = pin chosen tile to map edges. Path = require all of one tile to stay 4-connected.
-				</p>
-				<ul class="bx-stack-tight" data-bx-constraints-list style="list-style:none;padding:0;margin:0;"></ul>
-				<div class="bx-row" style="gap: var(--bx-s1); flex-wrap: wrap;">
-					<select class="bx-input bx-small" data-bx-constraint-kind style="width:96px;">
-						<option value="border">Border</option>
-						<option value="path">Path</option>
-					</select>
-					<label class="bx-small bx-row" style="gap:4px;" title="Entity-type ID this constraint targets.">tile id
-						<input type="number" class="bx-input bx-small" data-bx-constraint-et value="" min="1" style="width:80px;"/>
-					</label>
-					<label class="bx-small bx-row" style="gap:4px;" data-bx-constraint-edges-wrap title="Which edges to pin (border only).">edges
-						<select class="bx-input bx-small" data-bx-constraint-edges style="width:84px;">
-							<option value="all">all</option>
-							<option value="top">top</option>
-							<option value="bottom">bottom</option>
-							<option value="left">left</option>
-							<option value="right">right</option>
-						</select>
-					</label>
-					<button type="button" class="bx-btn bx-btn--primary bx-btn--small" data-bx-constraint-add data-copy-slot="mapmaker.proc.constraints.add">Add</button>
-				</div>
-				<p class="bx-small bx-muted" data-bx-constraint-status aria-live="polite"></p>
-			</fieldset>
-
 			<label class="bx-row" style="gap: 8px;">
 				<span class="bx-small">Seed</span>
 				<input
@@ -464,6 +412,22 @@ templ MapmakerProceduralPanel(p MapmakerProps) {
 				</p>
 			}
 
+			<div
+				class="bx-row"
+				style="gap: var(--bx-s1); align-items: center; padding: 6px 8px; border:1px dashed var(--bx-line, rgba(255,255,255,0.12)); border-radius: 4px;"
+				data-bx-sample-summary
+			>
+				<span style="background: #FFDD4A; width:10px; height:10px; border-radius:2px;"></span>
+				<span class="bx-small" data-bx-sample-label>No sample — using painted tiles, or sockets if blank.</span>
+				<button
+					type="button"
+					class="bx-btn bx-btn--ghost bx-btn--small"
+					data-bx-sample-clear
+					title="Remove the explicit sample so generation auto-picks from painted tiles."
+					data-copy-slot="mapmaker.proc.sample.clear"
+				>Clear sample</button>
+			</div>
+
 			<div class="bx-row" style="gap: var(--bx-s1); align-items: center;">
 				<span class="bx-dot" style="background: var(--bx-warn, #f5b800); width:10px;height:10px;border-radius:2px;"></span>
 				<span class="bx-small bx-muted" data-bx-locked-count>
@@ -484,39 +448,6 @@ templ MapmakerProceduralPanel(p MapmakerProps) {
 			<p class="bx-small" data-bx-proc-error role="alert" style="color: var(--bx-danger); display: none;"></p>
 		</div>
 	</section>
-}
-
-// procAlgorithmOption renders one segment of the algorithm picker.
-templ procAlgorithmOption(m maps.Map, value, label, hint string) {
-	<label
-		class={ procAlgorithmOptionClass(m, value) }
-		title={ hint }
-	>
-		<input
-			type="radio"
-			name="bx-proc-algorithm"
-			value={ value }
-			if proceduralAlgorithm(m) == value { checked }
-			class="bx-sr-only"
-		/>
-		<span>{ label }</span>
-	</label>
-}
-
-func procAlgorithmOptionClass(m maps.Map, value string) string {
-	if proceduralAlgorithm(m) == value {
-		return "bx-segmented__option bx-segmented__option--on"
-	}
-	return "bx-segmented__option"
-}
-
-// proceduralAlgorithm returns the map's stored gen_algorithm or the
-// "socket" default when the column is empty (legacy rows pre-migration).
-func proceduralAlgorithm(m maps.Map) string {
-	if m.GenAlgorithm == "" {
-		return maps.GenAlgorithmSocket
-	}
-	return m.GenAlgorithm
 }
 
 // lockedCountLabel pluralizes the count chip; matches the staged-changes
@@ -635,6 +566,33 @@ func paletteTileSize(e PaletteEntry) int32 {
 		return 32
 	}
 	return e.TileSize
+}
+
+// procIncludeAttr is the data-bx-proc-include attribute value for the
+// palette tile. "1" / "0" so the JS toggle can read it as a flag without
+// parsing booleans.
+func procIncludeAttr(e PaletteEntry) string {
+	if e.ProceduralInclude {
+		return "1"
+	}
+	return "0"
+}
+
+// procIncludeTitle is the include-toggle button's tooltip.
+func procIncludeTitle(e PaletteEntry) string {
+	if e.ProceduralInclude {
+		return "Tile is included in procedural fill — click to exclude"
+	}
+	return "Tile is excluded from procedural fill — click to include"
+}
+
+// paletteEntryClass adds the muted class when the tile is excluded so
+// the CSS can fade it out without the JS having to do it on every render.
+func paletteEntryClass(e PaletteEntry) string {
+	if !e.ProceduralInclude {
+		return "bx-mapmaker__palette__entry bx-mapmaker__palette__entry--excluded"
+	}
+	return "bx-mapmaker__palette__entry"
 }
 
 // paletteThumbStyle builds the CSS background-image + background-position

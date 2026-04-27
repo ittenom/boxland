@@ -46,11 +46,6 @@ type ProceduralPreviewInput struct {
 	// MaxReseeds caps WFC retry attempts per call. 0 = WFC default.
 	MaxReseeds int
 
-	// AlgorithmOverride lets the caller force a specific engine
-	// regardless of the map's stored gen_algorithm. Empty = use the
-	// stored value. Useful for "preview as overlapping before I commit
-	// to switching" UX.
-	AlgorithmOverride string
 }
 
 // ProceduralPreviewResult is what the Mapmaker renders as a ghost overlay.
@@ -145,7 +140,7 @@ func (s *Service) MaterializeProcedural(ctx context.Context, in MaterializeProce
 	}
 	anchors := lockedCellsToAnchors(locks)
 
-	res, err := s.runProcedural(ctx, m, in.Seed, anchors, "")
+	res, err := s.runProcedural(ctx, m, in.Seed, anchors)
 	if err != nil {
 		// PLAN.md §139: failures get a structured slog entry with
 		// seed + map id so the designer can reproduce the failure.
@@ -237,7 +232,7 @@ func (s *Service) GenerateTransientRegion(ctx context.Context, mapID int64, seed
 		return nil, fmt.Errorf("load locked cells: %w", err)
 	}
 	anchors := lockedCellsToAnchors(locks)
-	res, err := s.runProcedural(ctx, m, seed, anchors, "")
+	res, err := s.runProcedural(ctx, m, seed, anchors)
 	if err != nil {
 		return nil, err
 	}
@@ -296,12 +291,11 @@ func (s *Service) GenerateProceduralPreview(ctx context.Context, in ProceduralPr
 		allAnchors = filtered
 	} else {
 		// No MapID supplied (legacy/tests). Synthesise a transient Map
-		// matching the requested dimensions; algorithm defaults to socket.
+		// matching the requested dimensions.
 		m = &Map{
-			Width:        in.Width,
-			Height:       in.Height,
-			Mode:         "procedural",
-			GenAlgorithm: GenAlgorithmSocket,
+			Width: in.Width,
+			Height: in.Height,
+			Mode:   "procedural",
 		}
 	}
 
@@ -311,7 +305,7 @@ func (s *Service) GenerateProceduralPreview(ctx context.Context, in ProceduralPr
 	gen.Width = in.Width
 	gen.Height = in.Height
 
-	res, err := s.runProcedural(ctx, &gen, in.Seed, allAnchors, in.AlgorithmOverride)
+	res, err := s.runProcedural(ctx, &gen, in.Seed, allAnchors)
 	if err != nil {
 		return nil, err
 	}
@@ -369,103 +363,175 @@ type proceduralRunResult struct {
 	PatternCount int // populated by overlapping engine; 0 otherwise
 }
 
-// runProcedural dispatches by m.GenAlgorithm (or the override) and runs
-// the right engine. Returns the expanded region, the algorithm that ran,
-// and any engine-specific metadata (pattern count, etc).
+// procChunkSizeMax is the largest per-axis chunk size we'll use. A
+// 64×48 map (the customer's screenshot) at chunkSize=32 becomes 2×2
+// chunks — enough seam-aware chunking to break the "one big noise
+// sample" feel without fragmenting small maps.
+const procChunkSizeMax int32 = 32
+
+// pickChunkLayout returns (chunkW, chunkH, countX, countY) such that
+// chunkW*countX == width and chunkH*countY == height (the chunked
+// engine requires chunk * count == total — partial chunks are out).
+// We pick the largest divisor ≤ procChunkSizeMax for each axis, which
+// gives sensible coverage across irregular dimensions:
+//
+//   64 → 32 (×2)        50 → 25 (×2)
+//   48 → 24 (×2)        30 → 15 (×2)        16 → 16 (×1)
+//   17 → 17 (×1, prime)
+func pickChunkLayout(width, height int32) (int32, int32, int32, int32) {
+	chunkW := largestDivisorAtMost(width, procChunkSizeMax)
+	chunkH := largestDivisorAtMost(height, procChunkSizeMax)
+	return chunkW, chunkH, width / chunkW, height / chunkH
+}
+
+// largestDivisorAtMost returns the largest d in (0, max] that divides n.
+// n itself is the answer when n ≤ max (so a 24×24 map runs as a single
+// 24×24 chunk rather than fragmenting). Worst case for big primes is
+// O(sqrt(n)) but maps are at most a few hundred cells per axis.
+func largestDivisorAtMost(n, max int32) int32 {
+	if n <= 0 {
+		return 1
+	}
+	if n <= max {
+		return n
+	}
+	for d := max; d >= 1; d-- {
+		if n%d == 0 {
+			return d
+		}
+	}
+	return 1
+}
+
+// proceduralAlgorithmLabel is the string the API returns for the
+// "what engine ran" field. The designer never picks; we just report.
+//   * "chunked-overlapping" — chunked WFC with sample-based patterns
+//   * "chunked-socket"      — chunked WFC with socket-only adjacency
+const (
+	proceduralAlgorithmOverlapping = "chunked-overlapping"
+	proceduralAlgorithmSocket      = "chunked-socket"
+)
+
+// runProcedural is the one and only generation path. It builds a
+// sample patch from designer-painted tiles when possible (zero-config:
+// "paint a few cells in the style you want, hit Generate") and falls
+// through to socket-adjacency when there's nothing to learn from.
+// Either way it always calls GenerateChunked so seam-aware generation
+// is the default for every map.
 func (s *Service) runProcedural(
 	ctx context.Context,
 	m *Map,
 	seed uint64,
 	anchors []wfc.Cell,
-	override string,
 ) (proceduralRunResult, error) {
-	algo := override
-	if algo == "" {
-		algo = m.GenAlgorithm
-	}
-	if algo == "" {
-		algo = GenAlgorithmSocket
-	}
-
 	procSet, err := s.loadTileSetForProcedural(ctx)
 	if err != nil {
-		return proceduralRunResult{Algorithm: algo}, err
+		return proceduralRunResult{}, err
 	}
 	if len(procSet.tiles) == 0 {
-		return proceduralRunResult{Algorithm: algo}, ErrNoTileKinds
+		return proceduralRunResult{}, ErrNoTileKinds
 	}
 
-	// Per-map non-local constraints. Loaded once and forwarded to
-	// whichever engine fires below. Skipped for synthetic maps (no
-	// id) because there's no row to read.
+	// Per-map non-local constraints (border / path). Stays a quiet
+	// engine-side feature; the panel doesn't expose it for now.
 	var constraints []wfc.Constraint
 	if m.ID > 0 {
 		constraints, err = s.loadMapConstraints(ctx, m.ID)
 		if err != nil {
-			return proceduralRunResult{Algorithm: algo}, fmt.Errorf("load constraints: %w", err)
+			return proceduralRunResult{}, fmt.Errorf("load constraints: %w", err)
 		}
 	}
 
-	switch algo {
-	case GenAlgorithmOverlapping:
-		// Overlapping engine reads its sample patch from
-		// map_sample_patches; if no patch is defined (or it's empty),
-		// degrade to socket so the designer still gets *something*.
-		if m.ID == 0 {
-			// Synthetic Map (no DB row) — overlapping requires a real
-			// map id to look up its patch. Degrade silently.
-			slog.Debug("overlapping requested for synthetic map; falling back to socket")
-			algo = GenAlgorithmSocket
-			break
-		}
-		sample, serr := s.LoadSamplePatchTiles(ctx, m.ID)
-		if errors.Is(serr, ErrNoSamplePatch) {
-			slog.Warn("overlapping requested but no sample patch defined; falling back to socket",
-				"map_id", m.ID)
-			algo = GenAlgorithmSocket
-			break
-		}
-		if serr != nil {
-			return proceduralRunResult{Algorithm: algo}, fmt.Errorf("load sample patch: %w", serr)
-		}
-		if !sampleHasContent(sample) {
-			slog.Warn("overlapping sample patch is empty (no painted tiles); falling back to socket",
-				"map_id", m.ID)
-			algo = GenAlgorithmSocket
-			break
-		}
-		ores, gerr := wfc.GenerateOverlapping(wfc.OverlappingOptions{
-			Sample:      sample,
-			Width:       m.Width,
-			Height:      m.Height,
-			Seed:        seed,
-			Anchors:     wfc.Anchors{Cells: anchors},
-			Constraints: constraints,
-		})
-		if gerr != nil {
-			return proceduralRunResult{Algorithm: algo}, fmt.Errorf("overlapping wfc: %w", gerr)
-		}
-		region := expandProceduralGroups(ores.Region, procSet.groups)
-		return proceduralRunResult{
-			Region:       region,
-			Algorithm:    algo,
-			PatternCount: ores.PatternCount,
-		}, nil
+	// Resolve the sample. Precedence:
+	//   1. Explicit map_sample_patches row (Sample tool wrote it).
+	//   2. Bounding box of painted tiles on the lowest-ord tile layer
+	//      (auto-pick: "paint a few tiles, hit Generate").
+	//   3. Nothing — socket-adjacency mode.
+	sample, sampleSource := s.resolveProceduralSample(ctx, m.ID)
+
+	chunkW, chunkH, countX, countY := pickChunkLayout(m.Width, m.Height)
+
+	algo := proceduralAlgorithmSocket
+	if sample.Width > 0 && sampleHasContent(sample) {
+		algo = proceduralAlgorithmOverlapping
+	} else if sampleSource != "" {
+		// Sample existed but was empty. Surface in logs so a designer
+		// can tell why the output reverted to plain socket.
+		slog.Debug("procedural sample exists but is empty; using socket path",
+			"map_id", m.ID, "source", sampleSource)
 	}
 
-	// Socket path (default + fallback).
-	region, gerr := wfc.Generate(wfc.NewTileSet(procSet.tiles), wfc.GenerateOptions{
-		Width:       m.Width,
-		Height:      m.Height,
-		Seed:        seed,
-		Anchors:     wfc.Anchors{Cells: anchors},
+	region, gerr := wfc.GenerateChunked(wfc.NewTileSet(procSet.tiles), wfc.ChunkedOptions{
+		ChunkW: chunkW,
+		ChunkH: chunkH,
+		CountX: countX,
+		CountY: countY,
+		Seed:   seed,
+		Anchors: wfc.Anchors{Cells: anchors},
 		Constraints: constraints,
+		// OverlappingSample is honoured per-chunk by the chunked engine
+		// (zero-value SamplePatch falls through to socket mode).
+		OverlappingSample: sample,
 	})
 	if gerr != nil {
-		return proceduralRunResult{Algorithm: algo}, fmt.Errorf("wfc generate: %w", gerr)
+		return proceduralRunResult{Algorithm: algo}, fmt.Errorf("chunked wfc: %w", gerr)
 	}
 	region = expandProceduralGroups(region, procSet.groups)
-	return proceduralRunResult{Region: region, Algorithm: algo}, nil
+
+	patternCount := 0
+	if algo == proceduralAlgorithmOverlapping {
+		// Per-chunk pattern count varies; report the sample's potential
+		// pattern count for the UI hint. Cheap to recompute, no extra
+		// state to thread through the chunked engine.
+		patternCount = approxPatternCount(sample)
+	}
+	return proceduralRunResult{
+		Region:       region,
+		Algorithm:    algo,
+		PatternCount: patternCount,
+	}, nil
+}
+
+// resolveProceduralSample picks a sample patch for the engine. Returns
+// a zero-value patch when no source applies; the second return is a
+// short label for diagnostics ("explicit", "auto-painted", "").
+func (s *Service) resolveProceduralSample(ctx context.Context, mapID int64) (wfc.SamplePatch, string) {
+	if mapID == 0 {
+		return wfc.SamplePatch{}, ""
+	}
+	if patch, err := s.LoadSamplePatchTiles(ctx, mapID); err == nil {
+		return patch, "explicit"
+	} else if !errors.Is(err, ErrNoSamplePatch) {
+		// DB error reading the patch is non-fatal — log + fall through.
+		slog.Warn("load explicit sample patch failed; falling through to auto-pick",
+			"map_id", mapID, "err", err)
+	}
+	if patch, ok := s.autoSampleFromPaintedTiles(ctx, mapID); ok {
+		return patch, "auto-painted"
+	}
+	return wfc.SamplePatch{}, ""
+}
+
+// approxPatternCount returns the number of distinct N=2 patterns the
+// overlapping engine would extract from `s`. Cheap (<1ms for 32×32).
+// We recompute because the chunked engine doesn't surface per-chunk
+// pattern counts and an aggregate would be misleading anyway.
+func approxPatternCount(s wfc.SamplePatch) int {
+	if s.Width < 2 || s.Height < 2 {
+		return 0
+	}
+	seen := make(map[uint64]struct{})
+	w, h := int(s.Width), int(s.Height)
+	for y := 0; y < h-1; y++ {
+		for x := 0; x < w-1; x++ {
+			a := uint64(s.Tiles[y*w+x])
+			b := uint64(s.Tiles[y*w+x+1])
+			c := uint64(s.Tiles[(y+1)*w+x])
+			d := uint64(s.Tiles[(y+1)*w+x+1])
+			seen[a^(b<<16)^(c<<32)^(d<<48)] = struct{}{}
+		}
+	}
+	return len(seen)
 }
 
 // sampleHasContent reports whether the patch has at least one non-zero
@@ -526,13 +592,16 @@ func (s *Service) loadTileSetForProcedural(ctx context.Context) (*proceduralTile
 		FROM entity_types et
 		LEFT JOIN tile_edge_assignments tea
 		        ON tea.entity_type_id = et.id
-		WHERE et.tags @> ARRAY['tile']::text[]
-		   OR EXISTS (
-		        SELECT 1
-		        FROM entity_components ec
-		        WHERE ec.entity_type_id = et.id
-		          AND ec.component_kind = 'tile'
-		   )
+		WHERE et.procedural_include
+		  AND (
+		        et.tags @> ARRAY['tile']::text[]
+		     OR EXISTS (
+		          SELECT 1
+		          FROM entity_components ec
+		          WHERE ec.entity_type_id = et.id
+		            AND ec.component_kind = 'tile'
+		     )
+		  )
 		ORDER BY et.id
 	`)
 	if err != nil {

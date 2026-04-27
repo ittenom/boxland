@@ -56,6 +56,15 @@ type ChunkedOptions struct {
 	// the caller is responsible for translating into per-chunk anchors
 	// or per-chunk constraints (a future helper might automate this).
 	Constraints []Constraint
+
+	// OverlappingSample, when populated, switches each chunk from the
+	// socket engine to the overlapping engine using this sample as the
+	// pattern source. Zero value = socket-only chunked generation
+	// (existing behavior). The same sample is used for every chunk;
+	// seam anchors carry pattern context across chunk boundaries via
+	// the existing seam mechanism, so 32×32 chunks driven by a 16×16
+	// sample produce visually continuous output.
+	OverlappingSample SamplePatch
 }
 
 // GenerateChunked tiles WFC across (CountX * CountY) chunks, returning
@@ -169,15 +178,52 @@ func GenerateChunked(ts *TileSet, opts ChunkedOptions) (*Region, error) {
 				}
 			}
 
-			region, err := Generate(chunkTS, GenerateOptions{
-				Width:           opts.ChunkW,
-				Height:          opts.ChunkH,
-				Seed:            chunkSeed,
-				Anchors:         anchors,
-				BacktrackBudget: opts.BacktrackBudget,
-				MaxReseeds:      opts.MaxReseeds,
-				Constraints:     opts.Constraints,
-			})
+			// Pick engine: overlapping when the caller supplied a
+			// sample patch, socket otherwise. The overlapping engine
+			// owns its own pattern table so we don't pre-build one.
+			useOverlapping := opts.OverlappingSample.Width > 0 &&
+				opts.OverlappingSample.Height > 0 &&
+				len(opts.OverlappingSample.Tiles) > 0
+			var region *Region
+			var err error
+			if useOverlapping {
+				ores, oerr := GenerateOverlapping(OverlappingOptions{
+					Sample:          opts.OverlappingSample,
+					Width:           opts.ChunkW,
+					Height:          opts.ChunkH,
+					Seed:            chunkSeed,
+					Anchors:         anchors,
+					BacktrackBudget: opts.BacktrackBudget,
+					MaxReseeds:      opts.MaxReseeds,
+					Constraints:     opts.Constraints,
+				})
+				if oerr != nil {
+					// Overlapping can fail on small samples / hard
+					// seams; fall back to socket for this chunk so a
+					// single bad chunk doesn't sink the whole map.
+					region, err = Generate(chunkTS, GenerateOptions{
+						Width:           opts.ChunkW,
+						Height:          opts.ChunkH,
+						Seed:            chunkSeed,
+						Anchors:         anchors,
+						BacktrackBudget: opts.BacktrackBudget,
+						MaxReseeds:      opts.MaxReseeds,
+						Constraints:     opts.Constraints,
+					})
+				} else {
+					region = ores.Region
+				}
+			} else {
+				region, err = Generate(chunkTS, GenerateOptions{
+					Width:           opts.ChunkW,
+					Height:          opts.ChunkH,
+					Seed:            chunkSeed,
+					Anchors:         anchors,
+					BacktrackBudget: opts.BacktrackBudget,
+					MaxReseeds:      opts.MaxReseeds,
+					Constraints:     opts.Constraints,
+				})
+			}
 			if err != nil {
 				return nil, fmt.Errorf("wfc: chunk (%d,%d): %w", cx, cy, err)
 			}

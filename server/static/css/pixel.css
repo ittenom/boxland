@@ -1563,6 +1563,26 @@ p, li { font-size: 13px; line-height: 1.55; }
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     flex: 1; min-width: 0;
 }
+/* Procedural-mode include toggle (eye / no-entry icon on each palette tile). */
+.bx-mapmaker__palette__include {
+    background: transparent;
+    border: 0;
+    color: inherit;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 2px 4px;
+    margin-left: 4px;
+    opacity: 0.55;
+    transition: opacity 80ms ease-out;
+}
+.bx-mapmaker__palette__include:hover { opacity: 1; }
+.bx-mapmaker__palette__entry--excluded {
+    opacity: 0.35;
+}
+.bx-mapmaker__palette__entry--excluded .bx-mapmaker__palette__thumb {
+    filter: grayscale(1);
+}
 
 
 /* -- Maps cards ------------------------------------------------------ */
