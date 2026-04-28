@@ -246,11 +246,11 @@ func TestAssetUpload_ExplicitAnimatedSpriteReturnsFrameCaption(t *testing.T) {
 		t.Fatalf("status %d, body=%s", rr.Code, rr.Body.String())
 	}
 	out := rr.Body.String()
-	// TODO(phase 2): restore frame captions ("16 frames", "animations")
-	// when the upload-result UI is rebuilt for the new kind set. For
-	// now we just confirm the asset was tagged with the new kind.
-	if !strings.Contains(out, "added as sprite_animated") {
-		t.Errorf("missing %q in body=%s", "added as sprite_animated", out)
+	// The upload result toast presents the new kind in friendly form
+	// ("animated sprite" rather than the wire-level "sprite_animated").
+	// We assert on the user-visible copy.
+	if !strings.Contains(out, "added as animated sprite") {
+		t.Errorf("missing %q in body=%s", "added as animated sprite", out)
 	}
 }
 

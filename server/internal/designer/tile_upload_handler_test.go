@@ -15,6 +15,7 @@ import (
 
 	"boxland/server/internal/assets"
 	"boxland/server/internal/entities"
+	"boxland/server/internal/tilemaps"
 )
 
 // makeTileSheetPNG builds a 64x32 PNG (2x1 cells of 32x32). Both cells
@@ -114,56 +115,80 @@ func TestAssetUpload_KindFromFormHonored(t *testing.T) {
 	}
 }
 
-// TestAssetUpload_TileSheetAutoSlices covers the headline workflow
-// fix: uploading an N-cell tile sheet should yield N tile-tagged
-// entity_types in one shot — no manual "promote" step. Each entity
-// is associated with a distinct atlas_index (0..N-1, row-major) so
-// the Mapmaker palette renders the right cell of the source PNG.
-func TestAssetUpload_TileSheetAutoSlices(t *testing.T) {
-	t.Skip("Phase 2: tilemap upload UI revamped")
+// TestAssetUpload_TilemapAutoCreates is the headline regression test:
+// uploading an N-cell tile sheet should produce
+//   1) one `assets` row (kind=sprite_animated)
+//   2) one `tilemaps` row pointing at that asset
+//   3) N tile-class `entity_types` rows linked to the tilemap, each
+//      with a distinct atlas_index in [0..N-1]
+//
+// in a single HTTP request — no manual "create tilemap" step. The
+// caller-visible toast advertises the slice count so the designer
+// can confirm at a glance that the tilemap landed.
+func TestAssetUpload_TilemapAutoCreates(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
 	resetDB(t, pool)
 	deps, designerID := fullDepsWithEntities(t, pool)
 	srv := buildHandler(deps)
+	ctx := context.Background()
 
 	// 3 cols x 2 rows = 6 cells, all non-empty.
 	body, ct := multipartUploadWithKind(t, makeTileSheetPNG(t, 3, 2), "town.png", assets.KindOverrideTilemap)
-	tok, _ := deps.Auth.OpenSession(context.Background(), designerID, "ua", nil)
+	tok, _ := deps.Auth.OpenSession(ctx, designerID, "ua", nil)
 	req := authedReq(http.MethodPost, "/design/assets/upload", tok, body)
 	req.Header.Set("Content-Type", ct)
 	req.Header.Set("HX-Request", "true")
 
 	rr := httptest.NewRecorder()
 	srv.ServeHTTP(rr, req)
-
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d, body=%s", rr.Code, rr.Body.String())
 	}
 
-	// Result toast should advertise the per-cell count so the designer
-	// can confirm at a glance.
-	if !strings.Contains(rr.Body.String(), "6 paintable cells") {
-		t.Errorf("expected '6 paintable cells' in toast; body=%s", rr.Body.String())
+	// (1) Asset row exists and is the new sprite_animated kind.
+	list, err := deps.Assets.List(ctx, assets.ListOpts{})
+	if err != nil {
+		t.Fatalf("list assets: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected 1 asset; got %d", len(list))
+	}
+	if list[0].Kind != assets.KindSpriteAnimated {
+		t.Errorf("asset kind = %q; want %q", list[0].Kind, assets.KindSpriteAnimated)
 	}
 
-	ets, err := deps.Entities.List(context.Background(), entities.ListOpts{
-		Tags: []string{"tile"}, Limit: 100,
-	})
+	// (2) Tilemap row exists, pointing at the asset.
+	tms, err := deps.Tilemaps.List(ctx, tilemaps.ListOpts{Limit: 32})
 	if err != nil {
-		t.Fatalf("list entities: %v", err)
+		t.Fatalf("list tilemaps: %v", err)
+	}
+	if len(tms) != 1 {
+		t.Fatalf("expected 1 tilemap row; got %d", len(tms))
+	}
+	if tms[0].AssetID != list[0].ID {
+		t.Errorf("tilemap.asset_id = %d; want %d", tms[0].AssetID, list[0].ID)
+	}
+	if tms[0].NonEmptyCount != 6 {
+		t.Errorf("tilemap.non_empty_count = %d; want 6", tms[0].NonEmptyCount)
+	}
+
+	// (3) Six tile-class entity_types, each linked to the tilemap.
+	ets, err := deps.Entities.ListByClass(ctx, entities.ClassTile, entities.ListOpts{Limit: 100})
+	if err != nil {
+		t.Fatalf("list tile entities: %v", err)
 	}
 	if len(ets) != 6 {
 		t.Fatalf("expected 6 tile entities; got %d", len(ets))
 	}
-
-	// Atlas indexes 0..5 should be present and unique. (Order is by
-	// name from List(); we just check the SET.)
 	seen := make(map[int32]bool, len(ets))
 	for _, e := range ets {
 		if e.SpriteAssetID == nil {
 			t.Errorf("entity %d has no sprite asset", e.ID)
 			continue
+		}
+		if e.TilemapID == nil || *e.TilemapID != tms[0].ID {
+			t.Errorf("entity %d tilemap_id = %v; want %d", e.ID, e.TilemapID, tms[0].ID)
 		}
 		if seen[e.AtlasIndex] {
 			t.Errorf("duplicate atlas_index %d", e.AtlasIndex)
@@ -175,20 +200,24 @@ func TestAssetUpload_TileSheetAutoSlices(t *testing.T) {
 			t.Errorf("missing atlas_index %d", i)
 		}
 	}
+
+	// Toast advertises the slice count.
+	if !strings.Contains(rr.Body.String(), "6 tiles") {
+		t.Errorf("expected '6 tiles' in toast; body=%s", rr.Body.String())
+	}
 }
 
-// TestAssetUpload_TileSheetReuploadIsIdempotent re-uploads the same
-// sheet and asserts that the second call doesn't double the entity
-// count. Designers will hit this when iterating on a sheet (re-export
-// from Aseprite, drag in again).
-func TestAssetUpload_TileSheetReuploadIsIdempotent(t *testing.T) {
-	t.Skip("Phase 2: tilemap upload UI revamped")
+// TestAssetUpload_TilemapReuploadIsIdempotent — re-uploading the same
+// bytes shouldn't double the tilemap or the tile-entity set.
+// Designers hit this iterating in Aseprite + dragging back in.
+func TestAssetUpload_TilemapReuploadIsIdempotent(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
 	resetDB(t, pool)
 	deps, designerID := fullDepsWithEntities(t, pool)
 	srv := buildHandler(deps)
-	tok, _ := deps.Auth.OpenSession(context.Background(), designerID, "ua", nil)
+	ctx := context.Background()
+	tok, _ := deps.Auth.OpenSession(ctx, designerID, "ua", nil)
 
 	pngBytes := makeTileSheetPNG(t, 2, 2) // 4 cells
 
@@ -204,28 +233,27 @@ func TestAssetUpload_TileSheetReuploadIsIdempotent(t *testing.T) {
 		}
 	}
 
-	ets, err := deps.Entities.List(context.Background(), entities.ListOpts{
-		Tags: []string{"tile"}, Limit: 100,
-	})
-	if err != nil {
-		t.Fatalf("list entities: %v", err)
+	tms, _ := deps.Tilemaps.List(ctx, tilemaps.ListOpts{Limit: 32})
+	if len(tms) != 1 {
+		t.Errorf("re-upload should keep one tilemap; got %d", len(tms))
 	}
+	ets, _ := deps.Entities.ListByClass(ctx, entities.ClassTile, entities.ListOpts{Limit: 100})
 	if len(ets) != 4 {
-		t.Errorf("re-upload should be idempotent; got %d entities, want 4", len(ets))
+		t.Errorf("re-upload should be idempotent; got %d tile entities, want 4", len(ets))
 	}
 }
 
-// TestAssetUpload_TileSheetSkipsTransparentCells covers the user-
-// approved policy: fully-transparent cells are dropped from the auto-
-// slice so the palette stays clean for sparse sheets.
-func TestAssetUpload_TileSheetSkipsTransparentCells(t *testing.T) {
-	t.Skip("Phase 2: tilemap upload UI revamped")
+// TestAssetUpload_TilemapSkipsTransparentCells covers the user-
+// approved policy: fully-transparent cells are dropped from the
+// fan-out so the palette stays clean for sparse sheets.
+func TestAssetUpload_TilemapSkipsTransparentCells(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
 	resetDB(t, pool)
 	deps, designerID := fullDepsWithEntities(t, pool)
 	srv := buildHandler(deps)
-	tok, _ := deps.Auth.OpenSession(context.Background(), designerID, "ua", nil)
+	ctx := context.Background()
+	tok, _ := deps.Auth.OpenSession(ctx, designerID, "ua", nil)
 
 	// 2x2 sheet; only top-left cell is opaque.
 	w, h := 64, 64
@@ -250,12 +278,7 @@ func TestAssetUpload_TileSheetSkipsTransparentCells(t *testing.T) {
 		t.Fatalf("status %d, body=%s", rr.Code, rr.Body.String())
 	}
 
-	ets, err := deps.Entities.List(context.Background(), entities.ListOpts{
-		Tags: []string{"tile"}, Limit: 100,
-	})
-	if err != nil {
-		t.Fatalf("list entities: %v", err)
-	}
+	ets, _ := deps.Entities.ListByClass(ctx, entities.ClassTile, entities.ListOpts{Limit: 100})
 	if len(ets) != 1 {
 		t.Errorf("expected 1 tile entity (only top-left cell is non-empty); got %d", len(ets))
 	}

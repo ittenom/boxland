@@ -46,6 +46,11 @@ type UploadResult struct {
 	TilemapEligible bool
 	TilemapCells    []TileCell
 	TilemapMeta     TileSheetMetadata
+	// PngBody is the raw uploaded PNG bytes — surfaced only when
+	// TilemapEligible is true so the handler can pass them straight
+	// to tilemaps.Service.Create (which computes per-cell pixel +
+	// edge-strip hashes). Empty for every other path.
+	PngBody []byte
 
 	SpriteImport *ImportResult
 }
@@ -199,6 +204,7 @@ func (s *Service) UploadMany(
 		entry.TilemapEligible = res.TilemapEligible
 		entry.TilemapCells = res.TilemapCells
 		entry.TilemapMeta = res.TilemapMeta
+		entry.PngBody = res.PngBody
 		entry.SpriteImport = res.SpriteImport
 		out = append(out, entry)
 	}
@@ -248,21 +254,32 @@ func (s *Service) uploadFromHeader(
 		return nil, fmt.Errorf("%w: %s", ErrUnsupportedContentType, sniffed)
 	}
 
+	// kindOverride arrives as the RAW form value
+	// ("" / "sprite" / "sprite_sheet" / "animated_sprite" / "tilemap"
+	// / "audio" / "ui_panel" — see the upload modal). We capture the
+	// raw signal here BEFORE normalizing because two raw values
+	// ("tilemap" and "animated_sprite") collapse to the same persisted
+	// Kind (sprite_animated), but only the former should auto-create
+	// a tilemap. The handler is allowed to pass an already-normalized
+	// Kind too — programmatic callers do — so anything that matches a
+	// canonical Kind string also flows through.
+	rawOverride := string(kindOverride)
 	kind := supported.Kind
 	if kindOverride != "" {
-		kind = NormalizeUploadKind(string(kindOverride))
+		kind = NormalizeUploadKind(rawOverride)
 	}
-	// Auto-detect tilemap-eligible PNGs only when the upload arrived
-	// without an explicit kind hint. An explicit
-	// KindOverrideSpriteSheet / KindOverrideAnimatedSprite says "this
-	// is a character strip, not a tilemap"; we honor that even when
-	// the PNG would slice cleanly into a 32×32 grid.
+	// Auto-detect tilemap-eligible PNGs:
+	//   1) Explicit "tilemap" override — always eligible (single-cell
+	//      sheets included; designer asked for it).
+	//   2) No kind hint AND a multi-cell 32×32 grid — auto-promote.
+	// An explicit "sprite_sheet" / "animated_sprite" override stays a
+	// frame strip, not a tilemap, even when the grid slices cleanly.
 	tilemapEligible := false
 	switch {
-	case string(kindOverride) == KindOverrideTilemap:
+	case rawOverride == KindOverrideTilemap:
 		tilemapEligible = true
 		kind = KindSpriteAnimated
-	case kindOverride == "" && supported.Kind == KindSprite && isAutoTileSheet(body):
+	case rawOverride == "" && supported.Kind == KindSprite && isAutoTileSheet(body):
 		tilemapEligible = true
 		kind = KindSpriteAnimated
 	}
@@ -344,6 +361,7 @@ func (s *Service) uploadFromHeader(
 			Asset: existing, Reused: true, OriginalFn: originalName,
 			TilemapEligible: tilemapEligible,
 			TilemapCells:    tilemapCells, TilemapMeta: tilemapMeta,
+			PngBody:      pngBodyForResult(tilemapEligible, body),
 			SpriteImport: spriteImport,
 		}, nil
 	} else if !errors.Is(err, ErrAssetNotFound) {
@@ -439,8 +457,22 @@ func (s *Service) uploadFromHeader(
 		Asset: asset, Reused: false, OriginalFn: originalName,
 		TilemapEligible: tilemapEligible,
 		TilemapCells:    tilemapCells, TilemapMeta: tilemapMeta,
+		PngBody:      pngBodyForResult(tilemapEligible, body),
 		SpriteImport: spriteImport,
 	}, nil
+}
+
+// pngBodyForResult surfaces the PNG bytes only when the upload is
+// tilemap-eligible. Plain sprite / audio / ui_panel uploads don't need
+// them on the result, and surfacing them anyway would inflate the
+// caller's working set for no benefit.
+func pngBodyForResult(tilemapEligible bool, body []byte) []byte {
+	if !tilemapEligible {
+		return nil
+	}
+	out := make([]byte, len(body))
+	copy(out, body)
+	return out
 }
 
 // MaxFilesPerUpload caps how many files a single multi-file upload
@@ -467,6 +499,10 @@ type MultiUploadResult struct {
 	TilemapEligible bool
 	TilemapCells    []TileCell
 	TilemapMeta     TileSheetMetadata
+	// PngBody — see UploadResult.PngBody. Surfaced for tilemap-
+	// eligible uploads so the handler can hand them to
+	// tilemaps.Service.Create without re-fetching from object storage.
+	PngBody []byte
 
 	SpriteImport *ImportResult
 }

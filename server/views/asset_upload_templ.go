@@ -461,19 +461,25 @@ func promotableIDs(items []AssetUploadItem) string {
 	return out
 }
 
-// uploadAddedCaption produces the per-row success caption. For tile
-// sheets we surface the slice count so the designer can confirm at a
-// glance that "tile sheet → N paintable cells" worked.
+// uploadAddedCaption produces the per-row success caption. Tilemap-
+// eligible PNGs (sprite_animated kind + a non-zero TileEntityCount
+// from autoCreateTilemap) surface the slice count so the designer
+// can confirm at a glance that the tilemap landed.
 func uploadAddedCaption(it AssetUploadItem) string {
-	if it.Kind == "tile" {
-		switch {
-		case it.TileEntityCount == 0:
-			return "added as tile sheet"
-		case it.TileEntityCount == 1:
-			return "added as tile sheet · 1 paintable cell"
+	if it.TileEntityCount > 0 {
+		switch it.TileEntityCount {
+		case 1:
+			return "added as tilemap · 1 tile"
 		default:
-			return "added as tile sheet · " + intToA(it.TileEntityCount) + " paintable cells"
+			return "added as tilemap · " + intToA(it.TileEntityCount) + " tiles"
 		}
+	}
+	if it.Kind == "sprite_animated" && it.SpriteFrameCount > 1 {
+		caption := "added as animated sprite · " + intToA(it.SpriteFrameCount) + " frames"
+		if it.SpriteAnimationCount > 0 {
+			caption += " · " + intToA(it.SpriteAnimationCount) + " animations"
+		}
+		return caption
 	}
 	if it.Kind == "sprite" && it.SpriteFrameCount > 1 {
 		caption := "added as sprite sheet · " + intToA(it.SpriteFrameCount) + " frames"
@@ -482,19 +488,20 @@ func uploadAddedCaption(it AssetUploadItem) string {
 		}
 		return caption
 	}
-	return "added as " + it.Kind
+	return "added as " + uploadKindLabel(it.Kind)
 }
 
-// uploadReusedCaption is the caption for a re-uploaded asset. Tile
-// sheets still get the cell-count surfaced when re-slicing added
-// cells (e.g. designer deleted some and wants them back).
+// uploadReusedCaption is the caption for a re-uploaded asset. Tilemaps
+// still get the cell count surfaced when re-uploading the same bytes
+// — that's the round-trip-after-export path or a designer hitting
+// upload again on a sheet they already have.
 func uploadReusedCaption(it AssetUploadItem) string {
-	if it.Kind == "tile" && it.TileEntityCount > 0 {
+	if it.TileEntityCount > 0 {
 		switch it.TileEntityCount {
 		case 1:
-			return "already in library · 1 new cell added"
+			return "already in library · tilemap with 1 tile"
 		default:
-			return "already in library · " + intToA(it.TileEntityCount) + " new cells added"
+			return "already in library · tilemap with " + intToA(it.TileEntityCount) + " tiles"
 		}
 	}
 	if it.Kind == "sprite" && it.SpriteFrameCount > 1 {
@@ -505,6 +512,19 @@ func uploadReusedCaption(it AssetUploadItem) string {
 		return caption
 	}
 	return "already in library"
+}
+
+// uploadKindLabel turns the persisted kind value into a UI-friendly
+// label. The wire-level "sprite_animated" reads better as "animated
+// sprite" in a sentence, etc.
+func uploadKindLabel(kind string) string {
+	switch kind {
+	case "sprite_animated":
+		return "animated sprite"
+	case "ui_panel":
+		return "UI panel"
+	}
+	return kind
 }
 
 func uploadResultSeverity(reused bool) string {

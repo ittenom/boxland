@@ -1257,11 +1257,12 @@ func postAssetPromoteBulk(d Deps) http.HandlerFunc {
 // does. Pulled out so postAssetPromoteToEntity, postAssetPromoteBulk,
 // and the upload-time promote-after-upload path all share the rules.
 //
-// Used for SPRITE assets (single-cell). Tile sheets go through
-// autoSliceTileSheet so each non-empty 32x32 cell gets its own
-// entity_type with the right atlas_index — the only way the Mapmaker
-// palette can render real tile artwork instead of a yellow #1213
-// chip.
+// Used for SPRITE assets (single-cell). Tilemap-eligible uploads (a
+// `sprite_animated` asset whose PNG slices into a 32×32 grid) go
+// through `autoCreateTilemap` so each non-empty cell gets its own
+// tile-class entity_type with the right atlas_index — the only way
+// the Mapmaker palette can render real tile artwork instead of a
+// yellow #1213 chip.
 func promoteAssetToEntity(ctx context.Context, d Deps, a *assets.Asset, designerID int64) (*entities.EntityType, error) {
 	baseName := a.Name
 	newName := baseName
@@ -1282,76 +1283,63 @@ func promoteAssetToEntity(ctx context.Context, d Deps, a *assets.Asset, designer
 	})
 }
 
-// autoSliceTileSheet creates one tile-tagged entity_type per non-empty
-// 32x32 cell of a freshly uploaded tile sheet. Idempotent against the
-// existing (sprite_asset_id, atlas_index) set so re-uploads or
-// re-slices don't pile up duplicate palette entries.
+// autoCreateTilemap turns a tilemap-eligible upload into a `tilemaps`
+// row + per-cell tile-class entity_types + tilemap_tiles rows. Wraps
+// `tilemaps.Service.Create` with idempotency: if the asset already
+// powers a tilemap (re-upload of identical bytes), the existing row
+// is reused and the cell count returned reflects the existing layout.
 //
-// Returns the number of entities ACTUALLY created (skipped + reused
-// cells don't count). Errors per-cell are logged and skipped — the
-// rest of the sheet still slices, so a partial failure leaves the
-// designer with a usable palette instead of nothing.
+// Returns the number of non-empty cells the tilemap holds. Errors per
+// cell are surfaced by the underlying service; a hard failure here
+// (bad PNG, etc.) is logged by the caller — the asset row still
+// exists, so the upload result still says "added," and the designer
+// can re-create the tilemap from the asset detail later.
 //
-// Naming: "<asset name> #r{R}c{C}" — the column/row coordinates are
-// what designers use when tiles are arranged spatially in their
-// source app (Aseprite, Tiled, etc.), so it's the most legible
-// label for finding a specific cell in the palette.
-func autoSliceTileSheet(
+// Naming: the tilemap takes the asset's name verbatim. The per-cell
+// tile entity names use "<asset name> #r{R}c{C}" — designers find
+// specific tiles by their source-sheet coordinates.
+func autoCreateTilemap(
 	ctx context.Context,
 	d Deps,
-	a *assets.Asset,
-	cells []assets.TileCell,
+	res assets.MultiUploadResult,
 	designerID int64,
 ) (int, error) {
-	if d.Entities == nil {
-		return 0, errors.New("entities service not configured")
+	if d.Tilemaps == nil {
+		return 0, errors.New("tilemaps service not configured")
 	}
-	existing, err := d.Entities.FindBySpriteAtlas(ctx, a.ID)
+	if res.Asset == nil {
+		return 0, errors.New("upload result has no asset")
+	}
+	// Idempotency: a previous upload of the same bytes may have
+	// already produced a tilemap. The asset is dedup'd by content
+	// path; the tilemap-by-asset-id lookup tells us whether the
+	// downstream rows survived too.
+	if existing, err := d.Tilemaps.FindByAssetID(ctx, res.Asset.ID); err == nil && existing != nil {
+		return int(existing.NonEmptyCount), nil
+	}
+	if len(res.PngBody) == 0 {
+		// Re-uploads of an identical asset hit the dedup branch in
+		// uploadFromHeader, which still returns the slice metadata
+		// but skips the body copy. Without bytes we can't compute
+		// pixel + edge hashes, so we can't create the tilemap row
+		// here. The asset is still saved; the designer can create
+		// the tilemap manually from /design/tilemaps if they really
+		// need to (rare path; typically the original upload created
+		// the tilemap and Reused=true means we already have one).
+		return 0, errors.New("tilemap-eligible upload missing PNG bytes (already-imported asset)")
+	}
+	tm, err := d.Tilemaps.Create(ctx, tilemaps.CreateInput{
+		Name:      res.Asset.Name,
+		AssetID:   res.Asset.ID,
+		CreatedBy: designerID,
+		Cells:     res.TilemapCells,
+		Meta:      res.TilemapMeta,
+		PngBody:   res.PngBody,
+	})
 	if err != nil {
-		return 0, fmt.Errorf("lookup existing tile entities: %w", err)
+		return 0, fmt.Errorf("tilemap create: %w", err)
 	}
-	have := make(map[int32]struct{}, len(existing))
-	for _, et := range existing {
-		have[et.AtlasIndex] = struct{}{}
-	}
-
-	assetID := a.ID
-	created := 0
-	for _, cell := range cells {
-		if !cell.NonEmpty {
-			continue
-		}
-		if _, ok := have[int32(cell.Index)]; ok {
-			continue
-		}
-		name := fmt.Sprintf("%s #r%dc%d", a.Name, cell.Row, cell.Col)
-		// Name uniqueness across the whole project is enforced by the
-		// entity_types_name_key constraint; bump the suffix on
-		// collision (e.g. two sheets with the same base name).
-		uniqueName := name
-		for i := 2; i < 100; i++ {
-			if _, ferr := d.Entities.FindByName(ctx, uniqueName); errors.Is(ferr, entities.ErrEntityTypeNotFound) {
-				break
-			}
-			uniqueName = fmt.Sprintf("%s (%d)", name, i)
-		}
-		if _, cerr := d.Entities.Create(ctx, entities.CreateInput{
-			Name:          uniqueName,
-			SpriteAssetID: &assetID,
-			AtlasIndex:    int32(cell.Index),
-			Tags:          []string{"tile"},
-			CreatedBy:     designerID,
-		}); cerr != nil {
-			slog.Warn("auto-slice cell create",
-				"err", cerr,
-				"asset_id", a.ID,
-				"atlas_index", cell.Index,
-			)
-			continue
-		}
-		created++
-	}
-	return created, nil
+	return int(tm.NonEmptyCount), nil
 }
 
 // postAssetDeleteBulk deletes a list of assets and re-renders the
@@ -4274,8 +4262,15 @@ func postAssetUpload(d Deps) http.HandlerFunc {
 		// modal's <select name="kind"> was silently ignored and tile
 		// uploads were classified as sprites. ParseMultipartForm is
 		// idempotent, so the inner UploadMany call is unaffected.
+		//
+		// We pass the RAW form value through (not NormalizeUploadKind'd)
+		// because the upload service needs the original signal — e.g.
+		// "tilemap" and "animated_sprite" both normalize to
+		// KindSpriteAnimated, but only the former should drive the
+		// auto-create-tilemap path. The service does its own
+		// normalization downstream.
 		_ = r.ParseMultipartForm(int64(assets.MaxUploadBytes) * int64(assets.MaxFilesPerUpload))
-		kindOverride := assets.NormalizeUploadKind(firstNonEmpty(
+		kindOverride := assets.Kind(firstNonEmpty(
 			r.URL.Query().Get("kind"),
 			r.FormValue("kind"),
 		))
@@ -4311,16 +4306,16 @@ func postAssetUpload(d Deps) http.HandlerFunc {
 				item.Kind = string(res.Asset.Kind)
 				item.Reused = res.Reused
 				// Tilemap-eligible uploads (multi-cell 32×32 grids)
-				// auto-slice into one tile-class entity_type per
-				// non-empty cell + a tilemap row on top. Phase 1b:
-				// the legacy autoSliceTileSheet path stays for now;
-				// Phase 2 routes new uploads through
-				// tilemaps.Service.Create which also fans out the
-				// tilemap_tiles + adjacency rows.
-				if res.TilemapEligible && len(res.TilemapCells) > 0 {
-					n, perr := autoSliceTileSheet(r.Context(), d, res.Asset, res.TilemapCells, dr.ID)
+				// land as a sprite_animated asset PLUS a `tilemaps`
+				// row on top. The tilemap service slices the PNG,
+				// creates one tile-class entity_type per non-empty
+				// cell, and persists per-cell pixel + edge-strip
+				// hashes (which power Replace's diff-by-pixel-hash
+				// flow + the auto-extracted edge sockets).
+				if res.TilemapEligible && len(res.TilemapCells) > 0 && d.Tilemaps != nil {
+					n, perr := autoCreateTilemap(r.Context(), d, res, dr.ID)
 					if perr != nil {
-						slog.Warn("auto-slice tilemap sheet",
+						slog.Warn("auto-create tilemap",
 							"err", perr,
 							"asset_id", res.Asset.ID,
 						)

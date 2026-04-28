@@ -12,6 +12,7 @@ import (
 	designerhandlers "boxland/server/internal/designer"
 	"boxland/server/internal/entities"
 	"boxland/server/internal/entities/components"
+	"boxland/server/internal/tilemaps"
 )
 
 // fullDepsWithEntities mirrors fullDeps but also wires the entity service +
@@ -22,6 +23,10 @@ func fullDepsWithEntities(t *testing.T, pool *pgxpool.Pool) (designerhandlers.De
 	d, designerID := fullDeps(t, pool)
 	d.Components = components.Default()
 	d.Entities = entities.New(pool, d.Components)
+	// Tilemaps depends on Assets + Entities — adding it here lets
+	// tilemap-eligible asset uploads flow through the full
+	// autoCreateTilemap path in tests, matching production wiring.
+	d.Tilemaps = tilemaps.New(pool, d.Assets, d.Entities)
 	return d, designerID
 }
 
