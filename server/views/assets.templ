@@ -168,10 +168,10 @@ templ AssetsToolbar(p AssetsListProps) {
 		/>
 		<select name="kind" class="bx-select" style="max-width: 160px;">
 			<option value="" if p.ActiveKind == "" { selected }>All kinds</option>
-			<option value="sprite"   if p.ActiveKind == "sprite"   { selected }>Sprites</option>
-			<option value="tile"     if p.ActiveKind == "tile"     { selected }>Tiles</option>
-			<option value="audio"    if p.ActiveKind == "audio"    { selected }>Audio</option>
-			<option value="ui_panel" if p.ActiveKind == "ui_panel" { selected }>UI panels</option>
+			<option value="sprite"          if p.ActiveKind == "sprite"          { selected }>Sprites</option>
+			<option value="sprite_animated" if p.ActiveKind == "sprite_animated" { selected }>Animated sprites</option>
+			<option value="audio"           if p.ActiveKind == "audio"           { selected }>Audio</option>
+			<option value="ui_panel"        if p.ActiveKind == "ui_panel"        { selected }>UI panels</option>
 		</select>
 		if p.ActiveFilter != "" {
 			<input type="hidden" name="filter" value={ p.ActiveFilter }/>

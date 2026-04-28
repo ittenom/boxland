@@ -779,6 +779,24 @@ func getAssetsList(d Deps) http.HandlerFunc {
 		kindRoot := strings.TrimSpace(r.URL.Query().Get("kind"))
 		sort := strings.TrimSpace(r.URL.Query().Get("sort"))
 
+		// Phase 2: kind_roots `tilemap`, `level`, `world` belong to
+		// dedicated pages — redirect there so the rail link goes to
+		// the right home rather than rendering an empty asset grid.
+		// folder_id is preserved so a click on a tilemap-folder ROW
+		// still lands on the tilemaps list (Phase 3 follow-up may
+		// surface folder-scoped tilemap views).
+		switch kindRoot {
+		case "tilemap":
+			http.Redirect(w, r, "/design/tilemaps", http.StatusFound)
+			return
+		case "level":
+			http.Redirect(w, r, "/design/levels", http.StatusFound)
+			return
+		case "world":
+			http.Redirect(w, r, "/design/worlds", http.StatusFound)
+			return
+		}
+
 		items, err := d.Assets.List(r.Context(), opts)
 		if err != nil {
 			slog.Error("assets list", "err", err)

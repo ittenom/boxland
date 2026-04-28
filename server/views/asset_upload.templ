@@ -85,12 +85,12 @@ templ AssetUploadModal(p AssetUploadModalProps) {
 							<option value="sprite">Sprite — single 32×32 image</option>
 							<option value="sprite_sheet">Sprite sheet — save 32×32 frames</option>
 							<option value="animated_sprite">Animated sprite — auto-create animations</option>
-							<option value="tile">Tile sheet — sliced into 32×32 cells</option>
+							<option value="tilemap">Tilemap — slice into per-cell tiles with adjacency</option>
 							<option value="audio">Audio</option>
 							<option value="ui_panel">UI panel — 9-slice HUD border</option>
 						</select>
 						<small class="bx-help" data-copy-slot="assets.upload.kind-help">
-							Auto-detect keeps a single 32×32 PNG as a sprite and slices any larger 32px grid into individual tile sprites. Pick <strong>Sprite sheet</strong> when a character/object sheet should stay together as frames. Pick <strong>Animated sprite</strong> when walking or idle frames should create animations — Boxland saves the 32×32 grid when the layout is recognizable. Pick <strong>UI panel</strong> when the PNG is a 9-slice HUD border.
+							Auto-detect keeps a single 32×32 PNG as a sprite and turns any larger 32-pixel grid into a tilemap (one tile entity per non-empty cell, with the source layout's adjacency baked in). Pick <strong>Sprite sheet</strong> when a character/object sheet should stay together as frames. Pick <strong>Animated sprite</strong> when walking or idle frames should create animations — Boxland reads the 32×32 grid when the layout is recognizable. Pick <strong>Tilemap</strong> to force tilemap slicing on a single-cell PNG. Pick <strong>UI panel</strong> when the PNG is a 9-slice HUD border.
 						</small>
 					</div>
 					<div class="bx-row bx-row--end">
