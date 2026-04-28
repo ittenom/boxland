@@ -88,6 +88,12 @@ func TestMapmakerPage_RendersAtlasAwarePalette(t *testing.T) {
 		`data-bx-atlas-index="5"`,
 		`data-bx-atlas-cols="4"`,
 		`class="bx-mapmaker__palette__thumb bx-pixel"`,
+		// Pixi-driven mapmaker: surface drives boot.ts dispatch
+		// + the entry script's auto-boot guard. The replacement of
+		// the canvas with a Pixi-mounted host happens at runtime in
+		// the entry script, so the templ still ships <canvas> here.
+		`data-surface="mapmaker"`,
+		`/static/web/mapmaker.js`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q in body", want)

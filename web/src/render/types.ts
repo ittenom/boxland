@@ -65,6 +65,20 @@ export interface Renderable {
 	/** Optional w/h hint for a sprite that needs tile-grid snapping (tiles). */
 	gridSnap?: boolean;
 
+	/**
+	 * Optional quarter-turn rotation in degrees. Only 0/90/180/270 are
+	 * accepted — those four are the rotations the rest of the stack
+	 * (server-side `rotation_degrees` columns on map_tiles +
+	 * level_entities, collision rotation helpers, FlatBuffers wire
+	 * format) supports. Sprite rotation pivots around its center, so
+	 * the cell footprint stays the same; this is the right behaviour
+	 * for grid-snapped tiles and entity placements alike.
+	 *
+	 * Undefined / 0 = no rotation. The renderer falls through to the
+	 * fast path (no transform set) when this is omitted.
+	 */
+	rotation?: 0 | 90 | 180 | 270;
+
 	/** Optional bag for debug overlays (collision boxes etc). */
 	debug?: { aabb?: { w: number; h: number } };
 

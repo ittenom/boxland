@@ -1486,6 +1486,40 @@ p, li { font-size: 13px; line-height: 1.55; }
     background: var(--bx-bg-2);
 }
 
+/* -- Level editor (entities tab) -------------------------------------- *
+ * Reuses every .bx-mapmaker__* primitive (sidebar/canvas/inspector/
+ * toolbar/palette) so the two editors look identical at a glance. The
+ * only override is a slightly wider inspector — the per-placement
+ * forms (overrides JSON, tags, instance fields) need more room than
+ * the mapmaker's read-only inspector.                                  */
+.bx-level-editor__entities {
+    height: calc(100vh - 200px);
+    min-height: 480px;
+}
+.bx-level-editor__entities .bx-mapmaker__layout {
+    grid-template-columns: 240px 1fr 320px;
+}
+.bx-level-editor__entities .bx-mapmaker__canvas {
+    /* Level editor draws its own checkerboard via Canvas2D, so kill
+       the CSS background pattern that mapmaker.css applies — we want
+       a flat dark surface to make placements pop. */
+    background-image: none;
+}
+/* Class-colored dots/labels in the palette + inspector. NPCs read as
+   cool/diegetic, PCs as warm/heroic, logic as hot/abstract — matches
+   the runtime ring colours drawn over each placement on the canvas. */
+.bx-place-class--npc   { color: rgb(0, 200, 230); }
+.bx-place-class--pc    { color: rgb(245, 184, 0); }
+.bx-place-class--logic { color: rgb(220, 80, 200); }
+.bx-place-ring--npc   { box-shadow: inset 0 0 0 2px rgba(0, 200, 230, 0.55); }
+.bx-place-ring--pc    { box-shadow: inset 0 0 0 2px rgba(245, 184, 0, 0.55); }
+.bx-place-ring--logic { box-shadow: inset 0 0 0 2px rgba(220, 80, 200, 0.55); }
+[data-bx-level-palette-entry][aria-selected="true"] {
+    background: var(--bx-bg-3);
+    outline: 2px solid var(--bx-accent);
+    outline-offset: -2px;
+}
+
 /* -- Ref-field picker (form.templ refField + picker.templ) ----------- */
 .bx-ref-field input[type="text"] {
     font-variant-numeric: tabular-nums;

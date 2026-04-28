@@ -209,7 +209,24 @@ export class Scene {
 			this.opts.worldViewW, this.opts.worldViewH,
 			SUB_PER_PX,
 		);
-		sprite.position.set(screen.x, screen.y);
+		// Quarter-turn rotation. Pixi rotates around the sprite's
+		// anchor; for tile-shaped sprites we want the rotation to
+		// pivot in the cell's center so a 90° turn doesn't translate
+		// the visible footprint. We only switch to a centered anchor
+		// when rotation is non-zero (the un-rotated fast path is
+		// untouched, preserving the existing top-left convention).
+		const rot = r.rotation ?? 0;
+		if (rot !== 0 && sprite.texture && sprite.texture.width > 0) {
+			const halfW = sprite.texture.width / 2;
+			const halfH = sprite.texture.height / 2;
+			sprite.anchor.set(0.5);
+			sprite.angle = rot;
+			sprite.position.set(screen.x + halfW, screen.y + halfH);
+		} else {
+			sprite.anchor.set(0);
+			sprite.angle = 0;
+			sprite.position.set(screen.x, screen.y);
+		}
 		sprite.zIndex = r.layer;
 		// Update the parallel sort key (consumed by the comparator above).
 		// Reused on every upsert so the GC pressure of per-frame allocation

@@ -311,6 +311,21 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /design/levels/{id}", auth(getLevelDetail(d)))
 	mux.Handle("DELETE /design/levels/{id}", auth(deleteLevel(d)))
 	mux.Handle("POST /design/levels/{id}/public-toggle", auth(postLevelPublic(d)))
+	mux.Handle("POST /design/levels/{id}/settings", auth(postLevelSettings(d)))
+	// Per-level entity placement editor: list / place / move / remove.
+	// Tile placements live on the MAP (mapmaker); these are NPCs,
+	// PCs, doors, region triggers, spawn points — anything with
+	// coordinates that isn't tile geometry.
+	mux.Handle("GET /design/levels/{id}/entities", auth(getLevelEntities(d)))
+	mux.Handle("POST /design/levels/{id}/entities", auth(postLevelEntity(d)))
+	mux.Handle("PATCH /design/levels/{id}/entities/{eid}", auth(patchLevelEntity(d)))
+	mux.Handle("DELETE /design/levels/{id}/entities/{eid}", auth(deleteLevelEntity(d)))
+	// Atlas catalog endpoints — feed the Pixi-driven editor canvases'
+	// StaticAssetCatalog. tile-types is scoped to the entity_types
+	// referenced by this map's geometry; entity-types is the project-
+	// wide placeable (npc/pc/logic) catalog.
+	mux.Handle("GET /design/maps/{id}/tile-types", auth(getMapTileTypes(d)))
+	mux.Handle("GET /design/levels/{id}/entity-types", auth(getLevelEntityTypes(d)))
 	// Level export/import — full bundle (level + map + entities + HUD).
 	mux.Handle("GET /design/levels/{id}/export", auth(getLevelExport(d)))
 	mux.Handle("GET /design/levels/import", auth(getLevelImportModal(d)))
@@ -2848,73 +2863,23 @@ func getMapmakerPage(d Deps) http.HandlerFunc {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		// Build the tile-palette. Per the holistic redesign, paintable
-		// tiles are entity_class='tile' (set by the tilemap service
-		// when it slices a sheet). NPCs / PCs / logic entities have
-		// their own classes and can't be painted here.
-		var palette []views.PaletteEntry
-		ets, err := d.Entities.ListByClass(r.Context(), entities.ClassTile, entities.ListOpts{Limit: 4096})
-		if err == nil && len(ets) > 0 {
-			// Batch-load every referenced sprite asset in one query
-			// so the palette build is O(1) DB calls regardless of how
-			// many tile entities the project has. (Was N+1.)
-			assetIDs := make([]int64, 0, len(ets))
-			seen := make(map[int64]struct{}, len(ets))
-			for _, et := range ets {
-				if et.SpriteAssetID == nil {
-					continue
-				}
-				if _, ok := seen[*et.SpriteAssetID]; ok {
-					continue
-				}
-				seen[*et.SpriteAssetID] = struct{}{}
-				assetIDs = append(assetIDs, *et.SpriteAssetID)
-			}
-			assetByID := make(map[int64]assets.Asset, len(assetIDs))
-			if d.Assets != nil && len(assetIDs) > 0 {
-				if rows, lerr := d.Assets.ListByIDs(r.Context(), assetIDs); lerr == nil {
-					for _, a := range rows {
-						assetByID[a.ID] = a
-					}
-				} else {
-					slog.Warn("palette assets bulk lookup", "err", lerr)
-				}
-			}
-			paletteURL := assetPublicURLFunc(mapsValues(assetByID))
-			for _, et := range ets {
-				entry := views.PaletteEntry{
-					ID:                et.ID,
-					Name:              et.Name,
-					AtlasIndex:        et.AtlasIndex,
-					TileSize:          assets.TileSize,
-					AtlasCols:         1,
-					ProceduralInclude: et.ProceduralInclude,
-				}
-				if et.SpriteAssetID != nil {
-					if a, ok := assetByID[*et.SpriteAssetID]; ok {
-						entry.SpriteURL = paletteURL(a.ContentAddressedPath)
-						// Tile sheets carry their grid dims in
-						// metadata_json; sprite assets fall through
-						// to the (1x1, idx 0) defaults above so the
-						// renderer still draws them as a single 32x32
-						// cell.
-						if md, derr := assets.DecodeTileSheetMetadata(a.MetadataJSON); derr == nil && md.Cols > 0 {
-							entry.AtlasCols = int32(md.Cols)
-							entry.TileSize = int32(md.TileSize)
-						}
-						// Folder grouping: the palette tree shows
-						// each entity_type under the folder of its
-						// sprite asset. Tile assets in the kind
-						// root keep FolderID nil → render at the
-						// top of the palette.
-						if a.FolderID != nil {
-							fid := *a.FolderID
-							entry.FolderID = &fid
-						}
-					}
-				}
-				palette = append(palette, entry)
-			}
+		// Build the tile-palette via the shared helper (see
+		// palette_helper.go). Per the holistic redesign, paintable
+		// tiles are entity_class='tile'; NPCs/PCs/logic have their
+		// own classes and can't be painted here.
+		atlas := BuildPaletteAtlas(r.Context(), d, []entities.Class{entities.ClassTile})
+		palette := make([]views.PaletteEntry, 0, len(atlas))
+		for _, e := range atlas {
+			palette = append(palette, views.PaletteEntry{
+				ID:                e.ID,
+				Name:              e.Name,
+				SpriteURL:         e.SpriteURL,
+				AtlasIndex:        e.AtlasIndex,
+				AtlasCols:         e.AtlasCols,
+				TileSize:          e.TileSize,
+				ProceduralInclude: e.ProceduralInclude,
+				FolderID:          e.FolderID,
+			})
 		}
 		// Pull the tilemap-folder tree once so the view can group
 		// entries without a round-trip per folder. Sprite/audio/UI

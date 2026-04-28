@@ -16,6 +16,10 @@ export { DebugOverlay } from "./debug";
 export type { DebugOptions } from "./debug";
 export { computeLayout, worldToScreen } from "./viewport";
 export type { ViewportLayout, ViewportPx } from "./viewport";
+export { StaticAssetCatalog } from "./static-catalog";
+export type { StaticAssetCatalogOptions, StaticCatalogEntry } from "./static-catalog";
+export { EditorHarness } from "./editor-harness";
+export type { EditorHarnessOptions, FrameScheduler } from "./editor-harness";
 export type {
 	AnimationFrame,
 	AssetCatalog,

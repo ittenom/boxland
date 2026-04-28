@@ -298,6 +298,46 @@ func (s *Service) SetPublic(ctx context.Context, levelID int64, public bool) err
 	return nil
 }
 
+// SetModes updates the three runtime mode fields (instancing,
+// persistence, spectator policy) in one round-trip. Empty strings
+// mean "leave unchanged" — the editor sends only the fields the user
+// actually touched. Returns ErrInvalidMode for any non-empty value
+// that isn't in the enum.
+func (s *Service) SetModes(ctx context.Context, levelID int64, instancing, persistence, spectator string) error {
+	instancing = strings.TrimSpace(instancing)
+	persistence = strings.TrimSpace(persistence)
+	spectator = strings.TrimSpace(spectator)
+	if instancing == "" && persistence == "" && spectator == "" {
+		return nil
+	}
+	if instancing != "" && !validInstancing(instancing) {
+		return fmt.Errorf("%w: instancing %q", ErrInvalidMode, instancing)
+	}
+	if persistence != "" && !validPersistence(persistence) {
+		return fmt.Errorf("%w: persistence %q", ErrInvalidMode, persistence)
+	}
+	if spectator != "" && !validSpectator(spectator) {
+		return fmt.Errorf("%w: spectator %q", ErrInvalidMode, spectator)
+	}
+	// COALESCE($N, current) leaves unspecified columns untouched in
+	// one statement instead of three round-trips.
+	tag, err := s.Pool.Exec(ctx, `
+		UPDATE levels SET
+		  instancing_mode  = COALESCE(NULLIF($2,''), instancing_mode),
+		  persistence_mode = COALESCE(NULLIF($3,''), persistence_mode),
+		  spectator_policy = COALESCE(NULLIF($4,''), spectator_policy),
+		  updated_at       = now()
+		WHERE id = $1
+	`, levelID, instancing, persistence, spectator)
+	if err != nil {
+		return fmt.Errorf("set modes: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrLevelNotFound
+	}
+	return nil
+}
+
 // SetHUDLayout writes the level's HUD layout JSON. Caller validates
 // the JSON shape via internal/hud before passing it here.
 func (s *Service) SetHUDLayout(ctx context.Context, levelID int64, layoutJSON []byte) error {

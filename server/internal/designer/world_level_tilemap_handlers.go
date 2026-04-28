@@ -10,6 +10,7 @@ import (
 
 	"boxland/server/internal/assets"
 	"boxland/server/internal/entities"
+	"boxland/server/internal/folders"
 	"boxland/server/internal/levels"
 	"boxland/server/internal/tilemaps"
 	"boxland/server/internal/worlds"
@@ -397,7 +398,15 @@ func getLevelDetail(d Deps) http.HandlerFunc {
 		}
 		crumbs = append(crumbs, views.Crumb{Label: lv.Name})
 		layout.Crumbs = crumbs
-		renderHTML(w, r, views.LevelEditorPage(views.LevelEditorProps{
+
+		activeTab := tabFromQuery(r)
+		// Surface drives web/src/boot.ts dispatch + the level-editor
+		// entry script's auto-boot guard. Only set on the entities
+		// tab (the Pixi-driven one); other tabs are static templ.
+		if activeTab == "entities" {
+			layout.Surface = "level-editor-entities"
+		}
+		props := views.LevelEditorProps{
 			Layout:         layout,
 			Level:          *lv,
 			MapName:        mapName,
@@ -405,8 +414,74 @@ func getLevelDetail(d Deps) http.HandlerFunc {
 			MapHeight:      mapHeight,
 			WorldName:      worldName,
 			PlacementCount: placementCount,
-			ActiveTab:      tabFromQuery(r),
-		}))
+			ActiveTab:      activeTab,
+		}
+		// Build the placement-editor palette only on the entities tab
+		// so the geometry/hud/settings tabs don't pay the
+		// ListByClass + asset bulk-load cost on every render.
+		if activeTab == "entities" && d.Entities != nil {
+			editor := buildLevelEntitiesEditorProps(r, d, *lv, mapWidth, mapHeight, placementCount)
+			props.EntitiesEditor = &editor
+		}
+		renderHTML(w, r, views.LevelEditorPage(props))
+	}
+}
+
+// buildLevelEntitiesEditorProps assembles the placement editor's
+// palette: every entity_type of class npc / pc / logic, grouped by
+// the folder of its sprite asset. Tile-class entities are excluded —
+// they're painted on the MAP, not placed on the LEVEL.
+//
+// All asset URLs are resolved in one bulk lookup (ListByIDs) — same
+// pattern as the mapmaker palette. Three ListByClass calls is N+1-
+// safe because the class set is bounded.
+func buildLevelEntitiesEditorProps(
+	r *http.Request,
+	d Deps,
+	lv levels.Level,
+	mapWidth, mapHeight int32,
+	placementCount int,
+) views.LevelEntitiesEditorProps {
+	// Shared palette builder lives in palette_helper.go — same data
+	// shape powers the JSON catalog endpoint feeding the Pixi-driven
+	// editor canvas, so the templ and the JS can never disagree.
+	atlas := BuildPaletteAtlas(r.Context(), d, []entities.Class{
+		entities.ClassNPC, entities.ClassPC, entities.ClassLogic,
+	})
+	palette := make([]views.LevelEntityPaletteEntry, 0, len(atlas))
+	for _, e := range atlas {
+		palette = append(palette, views.LevelEntityPaletteEntry{
+			ID:         e.ID,
+			Name:       e.Name,
+			Class:      e.Class,
+			SpriteURL:  e.SpriteURL,
+			AtlasIndex: e.AtlasIndex,
+			AtlasCols:  e.AtlasCols,
+			TileSize:   e.TileSize,
+			FolderID:   e.FolderID,
+		})
+	}
+
+	// Sprite-folder tree for grouping. Failure renders a flat list,
+	// which is still usable.
+	var paletteFolders []folders.Folder
+	if d.Folders != nil {
+		fs, ferr := d.Folders.ListByKindRoot(r.Context(), folders.KindSprite)
+		if ferr != nil {
+			slog.Warn("level palette folder tree", "err", ferr)
+		} else {
+			paletteFolders = fs
+		}
+	}
+
+	return views.LevelEntitiesEditorProps{
+		Level:          lv,
+		MapID:          lv.MapID,
+		MapWidth:       mapWidth,
+		MapHeight:      mapHeight,
+		Palette:        palette,
+		PaletteFolders: paletteFolders,
+		PlacementCount: placementCount,
 	}
 }
 
@@ -435,6 +510,48 @@ func deleteLevel(d Deps) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("HX-Redirect", "/design/levels")
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
+// postLevelSettings updates instancing/persistence/spectator modes
+// from the Settings tab. Empty form values mean "leave unchanged",
+// so the same handler covers single-field tweaks and full saves.
+func postLevelSettings(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := pathID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if d.Levels == nil {
+			http.Error(w, "levels service unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		err = d.Levels.SetModes(r.Context(), id,
+			strings.TrimSpace(r.FormValue("instancing_mode")),
+			strings.TrimSpace(r.FormValue("persistence_mode")),
+			strings.TrimSpace(r.FormValue("spectator_policy")),
+		)
+		if err != nil {
+			if errors.Is(err, levels.ErrInvalidMode) {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if errors.Is(err, levels.ErrLevelNotFound) {
+				http.NotFound(w, r)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// HX-Refresh re-renders the page with the new chip values
+		// without us having to handcraft a partial response.
+		w.Header().Set("HX-Refresh", "true")
 		w.WriteHeader(http.StatusOK)
 	}
 }

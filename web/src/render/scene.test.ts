@@ -99,6 +99,35 @@ describe("Scene", () => {
 	});
 });
 
+describe("Scene rotation", () => {
+	// stubCatalog frame() returns undefined, so sprite.texture stays
+	// the Pixi default (Texture.EMPTY, width/height = 0). Under that
+	// condition the rotation branch correctly falls through to the
+	// no-rotation path. We only assert sprite.angle here — the
+	// position-compensation math is exercised once a real texture is
+	// present (covered indirectly by the snapshot tests in the
+	// editor integration suite once the new asset catalog is wired).
+	it("leaves angle at 0 when rotation is omitted", async () => {
+		const s = new Scene(stubCatalog, SCENE_OPTS);
+		await s.update([rb(1)], { cx: 0, cy: 0 });
+		expect((s.entitySprites()[0] as unknown as { angle: number }).angle).toBe(0);
+	});
+
+	it("leaves angle at 0 when rotation is 0 explicitly", async () => {
+		const s = new Scene(stubCatalog, SCENE_OPTS);
+		await s.update([{ ...rb(1), rotation: 0 }], { cx: 0, cy: 0 });
+		expect((s.entitySprites()[0] as unknown as { angle: number }).angle).toBe(0);
+	});
+
+	it("falls back to anchor 0 when rotation isn't applied", async () => {
+		const s = new Scene(stubCatalog, SCENE_OPTS);
+		await s.update([rb(1)], { cx: 0, cy: 0 });
+		const sprite = s.entitySprites()[0] as unknown as { anchor: { x: number; y: number } };
+		expect(sprite.anchor.x).toBe(0);
+		expect(sprite.anchor.y).toBe(0);
+	});
+});
+
 describe("Scene y-sort + draw-above (indie-RPG research §P1 #8)", () => {
 	it("y-sorts siblings on the same layer by ascending footY", async () => {
 		const s = new Scene(stubCatalog, SCENE_OPTS);

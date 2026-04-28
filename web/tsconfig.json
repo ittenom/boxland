@@ -33,6 +33,8 @@
       "@pixel-editor/*":["pixel-editor/*"],
       "@mapmaker":     ["mapmaker/index.ts"],
       "@mapmaker/*":   ["mapmaker/*"],
+      "@level-editor": ["level-editor/index.ts"],
+      "@level-editor/*": ["level-editor/*"],
       "@sandbox":      ["sandbox/index.ts"],
       "@sandbox/*":    ["sandbox/*"],
       "@game":         ["game/index.ts"],

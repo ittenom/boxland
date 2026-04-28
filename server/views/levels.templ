@@ -206,6 +206,11 @@ type LevelEditorProps struct {
 	WorldName      string
 	PlacementCount int
 	ActiveTab      string // "geometry" | "entities" | "hud" | "automations" | "settings"
+
+	// EntitiesEditor is populated only when ActiveTab == "entities" so
+	// the geometry/hud/settings tabs don't pay the palette+folder query
+	// cost on every render. nil on every other tab.
+	EntitiesEditor *LevelEntitiesEditorProps
 }
 
 templ LevelEditorPage(p LevelEditorProps) {
@@ -258,7 +263,7 @@ templ LevelEditorPage(p LevelEditorProps) {
 			<div class="bx-level-editor__pane">
 				switch p.ActiveTab {
 					case "entities":
-						@levelEntitiesTabStub(p)
+						@levelEntitiesTab(p)
 					case "hud":
 						@levelHUDTabStub(p)
 					case "automations":
@@ -299,7 +304,12 @@ templ levelGeometryTab(p LevelEditorProps) {
 	<div class="bx-stack">
 		<p class="bx-small bx-muted">
 			Geometry — tile placements, lighting, locks, and procedural settings — lives on the
-			<strong>map</strong> this level references. One map can back many levels.
+			<strong>map</strong> this level references. One map can back many levels, so a
+			day/night pair (for example) shares geometry while layering different placements.
+		</p>
+		<p class="bx-small bx-muted" data-copy-slot="level.geometry.hint">
+			To paint tiles, jump to the map editor. To place NPCs, doors, or spawn points,
+			use the <strong>Entities</strong> tab.
 		</p>
 		<a
 			class="bx-btn bx-btn--primary"
@@ -310,18 +320,24 @@ templ levelGeometryTab(p LevelEditorProps) {
 	</div>
 }
 
-// Entities tab stub: placement editor placeholder + list link.
-templ levelEntitiesTabStub(p LevelEditorProps) {
-	<div class="bx-stack">
-		<p class="bx-muted">
-			{ fmt.Sprintf("%d non-tile entity placement%s on this level.", p.PlacementCount, pluralS(p.PlacementCount)) }
-		</p>
-		<p class="bx-small bx-muted">
-			NPCs, doors, spawn points, region triggers, and any other non-tile entities live here.
-			Phase 2 follow-up: a Pixi-canvas placement editor with drag-and-drop. The placement API
-			(<code>POST /design/levels/&lcub;id&rcub;/entities</code>) is wired and accepts JSON or form data.
-		</p>
-	</div>
+// Entities tab: full visual placement editor. Falls back to a small
+// hint if the props builder didn't populate EntitiesEditor (defensive
+// — should never happen in production since the handler always
+// builds it on this tab).
+templ levelEntitiesTab(p LevelEditorProps) {
+	if p.EntitiesEditor != nil {
+		@LevelEntitiesEditor(*p.EntitiesEditor)
+	} else {
+		<div class="bx-stack">
+			<p class="bx-muted">
+				{ fmt.Sprintf("%d non-tile entity placement%s on this level.", p.PlacementCount, pluralS(p.PlacementCount)) }
+			</p>
+			<p class="bx-small bx-muted">
+				The placement editor failed to load. Refresh the page; if this persists,
+				report it as a bug.
+			</p>
+		</div>
+	}
 }
 
 templ levelHUDTabStub(p LevelEditorProps) {
@@ -345,10 +361,14 @@ templ levelAutomationsTabStub(p LevelEditorProps) {
 }
 
 // Settings tab — instancing, persistence, spectator policy, public flag.
+//
+// All four are persisted on /design/levels/{id}/{public-toggle|settings}
+// and round-trip on export. Instancing and persistence affect the
+// runtime sim; spectator policy gates spectator WS connections.
 templ levelSettingsTab(p LevelEditorProps) {
-	<div class="bx-stack">
+	<div class="bx-stack" style="max-width: 520px;">
 		<form
-			class="bx-stack"
+			class="bx-stack-tight"
 			hx-post={ fmt.Sprintf("/design/levels/%d/public-toggle", p.Level.ID) }
 			hx-swap="none"
 		>
@@ -358,19 +378,54 @@ templ levelSettingsTab(p LevelEditorProps) {
 						checked
 					}
 				/>
-				<span>Public</span>
+				<span>Public — players can join once the level is pushed live.</span>
 			</label>
-			<button type="submit" class="bx-btn bx-btn--small">Save</button>
+			<button type="submit" class="bx-btn bx-btn--small bx-btn--primary" data-copy-slot="level.settings.public.save">Save public</button>
 		</form>
 
-		<dl class="bx-defs bx-small">
-			<dt>Instancing</dt><dd>{ p.Level.InstancingMode }</dd>
-			<dt>Persistence</dt><dd>{ p.Level.PersistenceMode }</dd>
-			<dt>Spectator policy</dt><dd>{ p.Level.SpectatorPolicy }</dd>
-		</dl>
-		<p class="bx-small bx-muted">
-			Inline editors for instancing, persistence, and spectator policy are a follow-up.
-			The fields are persisted via <code>levels.Service</code> and round-trip on level export.
-		</p>
+		<form
+			class="bx-stack-tight"
+			hx-post={ fmt.Sprintf("/design/levels/%d/settings", p.Level.ID) }
+			hx-swap="none"
+			data-copy-slot="level.settings.modes.form"
+		>
+			<label class="bx-stack-tight">
+				<span class="bx-small bx-muted" data-copy-slot="level.settings.instancing.label">Instancing</span>
+				@levelModeSelect("instancing_mode", p.Level.InstancingMode, []levelModeOption{
+					{Value: "shared", Label: "Shared — everyone in the same world"},
+					{Value: "per_user", Label: "Per user — each player gets their own copy"},
+					{Value: "per_party", Label: "Per party — group members share a copy"},
+				})
+			</label>
+			<label class="bx-stack-tight">
+				<span class="bx-small bx-muted" data-copy-slot="level.settings.persistence.label">Persistence</span>
+				@levelModeSelect("persistence_mode", p.Level.PersistenceMode, []levelModeOption{
+					{Value: "persistent", Label: "Persistent — changes save"},
+					{Value: "transient", Label: "Transient — resets when empty"},
+				})
+			</label>
+			<label class="bx-stack-tight">
+				<span class="bx-small bx-muted" data-copy-slot="level.settings.spectator.label">Spectator policy</span>
+				@levelModeSelect("spectator_policy", p.Level.SpectatorPolicy, []levelModeOption{
+					{Value: "public", Label: "Public — anyone can spectate"},
+					{Value: "private", Label: "Private — no spectators"},
+					{Value: "invite", Label: "Invite — invited players only"},
+				})
+			</label>
+			<button type="submit" class="bx-btn bx-btn--small bx-btn--primary" data-copy-slot="level.settings.modes.save">Save modes</button>
+		</form>
 	</div>
+}
+
+type levelModeOption struct {
+	Value string
+	Label string
+}
+
+templ levelModeSelect(name, current string, opts []levelModeOption) {
+	<select class="bx-select" name={ name }>
+		for _, o := range opts {
+			<option value={ o.Value } selected?={ o.Value == current }>{ o.Label }</option>
+		}
+	</select>
 }

@@ -130,6 +130,11 @@ func TestRedesignRoutes_RegisteredCleanly(t *testing.T) {
 		{"GET", "/design/levels/" + itoa(lv.ID) + "?tab=hud"},
 		{"GET", "/design/levels/" + itoa(lv.ID) + "?tab=automations"},
 		{"GET", "/design/levels/" + itoa(lv.ID) + "?tab=settings"},
+		// Visual level-editor placement API. List should return an
+		// empty array on a fresh level — proves the route resolved
+		// without 500. PATCH/DELETE are exercised end-to-end in
+		// level_entities_handlers_test.go.
+		{"GET", "/design/levels/" + itoa(lv.ID) + "/entities"},
 
 		// Modals.
 		{"GET", "/design/worlds/new"},

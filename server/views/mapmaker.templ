@@ -144,7 +144,13 @@ templ MapmakerPage(p MapmakerProps) {
 		</section>
 
 		<div id="modal-host"></div>
-		<script src="/static/js/mapmaker.js" defer></script>
+		// Pixi-driven mapmaker. The templ's <body data-surface="mapmaker">
+		// (set by the handler in BuildChrome) triggers the auto-boot at
+		// the bottom of the entry script. The procedural overlay sibling
+		// is loaded from /static/js when the map's mode is "procedural"
+		// (see MapmakerProceduralPanel) — it talks to us via CustomEvents
+		// so it didn't need migrating in lockstep.
+		<script type="module" src="/static/web/mapmaker.js" defer></script>
 	}
 }
 
