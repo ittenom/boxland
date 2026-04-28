@@ -2392,12 +2392,54 @@ body[data-bx-spectator="1"] [data-bx-camera-mode][data-bx-camera-mode="free-cam"
 }
 .bx-tilemap-viewer__sheet {
     display: block;
-    /* Integer-scale rendering preserved; the JS layer scales up. */
+    /* Width comes from inline style on the <img> (cols × tile_size ×
+       integer scale). image-rendering: pixelated keeps every pixel
+       crisp at any integer scale. */
 }
 .bx-tilemap-viewer__overlay {
     position: absolute;
     inset: var(--bx-s2);
     pointer-events: none;
+}
+
+/* The stage holds the source PNG + the adjacency overlay in the same
+   coordinate space (relative-positioned parent, absolute children).
+   Sized via inline style on the element so the surrounding wrap
+   knows to scroll once it overflows. */
+.bx-tilemap-viewer__stage {
+    position: relative;
+}
+.bx-tilemap-viewer__stage > .bx-tilemap-viewer__sheet {
+    position: absolute;
+    top: 0; left: 0;
+}
+
+/* Adjacency overlay (SVG). Hidden by default; the rail's checkbox
+   toggles a class on the canvas-wrap that flips opacity. The lines
+   themselves render in the accent color at 30% opacity so they don't
+   drown out the source art. */
+.bx-tilemap-viewer__adjacency {
+    position: absolute;
+    top: 0; left: 0;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 80ms linear;
+}
+.bx-tilemap-viewer__adjacency line {
+    stroke: var(--bx-accent);
+    stroke-width: 1;
+    stroke-opacity: 0.4;
+}
+.bx-tilemap-viewer__canvas-wrap.is-adjacency-on .bx-tilemap-viewer__adjacency {
+    opacity: 1;
+}
+
+/* Empty-state when the backing PNG can't be loaded (e.g. asset row
+   exists but the blob is missing). Keeps the canvas pane from
+   collapsing flat. */
+.bx-tilemap-viewer__missing {
+    padding: var(--bx-s4);
+    text-align: center;
 }
 .bx-tilemap-viewer__rail {
     background: var(--bx-bg-1);

@@ -16,10 +16,13 @@ import (
 // returns the map id, both entity-type ids, and the base tile layer id.
 func procFixture(t *testing.T, ctx context.Context, designerID, baseEtID int64, ents *entities.Service, svc *maps.Service) (mapID int64, et1, et2, layerID int64) {
 	t.Helper()
-	if _, err := svc.Pool.Exec(ctx, `UPDATE entity_types SET tags = ARRAY['tile'] WHERE id = $1`, baseEtID); err != nil {
-		t.Fatalf("tag base entity: %v", err)
-	}
-	floor, err := ents.Create(ctx, entities.CreateInput{Name: "floor", CreatedBy: designerID, Tags: []string{"tile"}})
+	// resetDB already mints baseEtID with entity_class='tile'; the
+	// floor entity needs the same class so the procedural tile-set
+	// query picks it up.
+	_ = baseEtID
+	floor, err := ents.Create(ctx, entities.CreateInput{
+		Name: "floor", CreatedBy: designerID, EntityClass: entities.ClassTile,
+	})
 	if err != nil {
 		t.Fatalf("create floor: %v", err)
 	}

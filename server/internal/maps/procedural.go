@@ -561,11 +561,13 @@ func lockedCellsToAnchors(cells []LockedCell) []wfc.Cell {
 	return out
 }
 
-// loadTileSetForProcedural reads every entity-type that can be painted as a
-// tile and joins its edge-socket assignments. Upload-time tile-sheet slicing
-// marks paintable cells with the stable "tile" tag; placed tile instances get
-// the Tile component later when materialized into a map. Accept both markers so
-// procedural generation sees the same tile palette designers see in Mapmaker.
+// loadTileSetForProcedural reads every entity-type that can be painted
+// as a tile and joins its edge-socket assignments. Per the holistic
+// redesign, paintable tiles are identified by entity_class='tile' —
+// the tilemap service sets the column when it slices a sheet, and the
+// procedural-include flag lets designers mute individual cells from
+// the random-fill candidate pool without retagging.
+//
 // One query total — no per-tile follow-up.
 type proceduralTileSet struct {
 	tiles  []wfc.Tile
@@ -593,16 +595,8 @@ func (s *Service) loadTileSetForProcedural(ctx context.Context) (*proceduralTile
 		FROM entity_types et
 		LEFT JOIN tile_edge_assignments tea
 		        ON tea.entity_type_id = et.id
-		WHERE et.procedural_include
-		  AND (
-		        et.tags @> ARRAY['tile']::text[]
-		     OR EXISTS (
-		          SELECT 1
-		          FROM entity_components ec
-		          WHERE ec.entity_type_id = et.id
-		            AND ec.component_kind = 'tile'
-		     )
-		  )
+		WHERE et.entity_class = 'tile'
+		  AND et.procedural_include
 		ORDER BY et.id
 	`)
 	if err != nil {

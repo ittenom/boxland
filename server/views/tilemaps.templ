@@ -146,26 +146,42 @@ templ TilemapViewerPage(p TilemapViewerProps) {
 			</header>
 
 			<div class="bx-tilemap-viewer__layout">
+				{{ scale := tilemapViewerScale(p.Tilemap.Cols, p.Tilemap.Rows, p.Tilemap.TileSize) }}
+				{{ pxW := int(p.Tilemap.Cols) * int(p.Tilemap.TileSize) * scale }}
+				{{ pxH := int(p.Tilemap.Rows) * int(p.Tilemap.TileSize) * scale }}
 				<div class="bx-tilemap-viewer__canvas-wrap"
 					data-bx-tilemap-id={ fmt.Sprintf("%d", p.Tilemap.ID) }
 					data-bx-tile-size={ fmt.Sprintf("%d", p.Tilemap.TileSize) }
 					data-bx-cols={ fmt.Sprintf("%d", p.Tilemap.Cols) }
 					data-bx-rows={ fmt.Sprintf("%d", p.Tilemap.Rows) }
+					data-bx-scale={ fmt.Sprintf("%d", scale) }
 				>
-					if p.AssetURL != "" {
-						<img
-							class="bx-tilemap-viewer__sheet bx-pixel"
-							src={ p.AssetURL }
-							alt={ p.Tilemap.Name }
-							style="image-rendering: pixelated;"
-						/>
-					}
-					<div class="bx-tilemap-viewer__overlay" data-bx-cell-overlay></div>
+					<div class="bx-tilemap-viewer__stage"
+						style={ fmt.Sprintf("width: %dpx; height: %dpx;", pxW, pxH) }
+					>
+						if p.AssetURL != "" {
+							<img
+								class="bx-tilemap-viewer__sheet bx-pixel"
+								src={ p.AssetURL }
+								alt={ p.Tilemap.Name }
+								width={ fmt.Sprintf("%d", pxW) }
+								height={ fmt.Sprintf("%d", pxH) }
+								style="image-rendering: pixelated;"
+							/>
+						} else {
+							<div class="bx-tilemap-viewer__missing">
+								<p class="bx-muted bx-small">
+									Backing PNG not available. Re-upload the source sheet to restore the preview.
+								</p>
+							</div>
+						}
+						@tilemapAdjacencySVG(p.Tilemap, p.Adjacency, scale)
+					</div>
 				</div>
 
 				<aside class="bx-tilemap-viewer__rail bx-stack">
 					<label class="bx-row" style="gap: var(--bx-s2);">
-						<input type="checkbox" class="bx-checkbox" data-bx-toggle-adjacency/>
+						<input type="checkbox" class="bx-checkbox" data-bx-toggle-adjacency checked/>
 						<span>Show adjacency overlay</span>
 					</label>
 					<p class="bx-small bx-muted">
@@ -193,6 +209,38 @@ templ TilemapViewerPage(p TilemapViewerProps) {
 				</aside>
 			</div>
 		</section>
+		// Tilemap viewer interactions. Tiny enough to live inline —
+		// the only dynamic behavior is the adjacency-overlay toggle
+		// and the optional `A` hotkey from docs/hotkeys.md.
+		<script>
+			(function () {
+				var wrap = document.querySelector("[data-bx-tilemap-id]");
+				var box  = document.querySelector("[data-bx-toggle-adjacency]");
+				if (!wrap || !box) return;
+
+				function sync() {
+					if (box.checked) wrap.classList.add("is-adjacency-on");
+					else             wrap.classList.remove("is-adjacency-on");
+				}
+				sync();
+				box.addEventListener("change", sync);
+
+				// Hotkey: `A` toggles the overlay (suppressed in text
+				// fields and when modifier keys are down so it doesn't
+				// hijack typing or browser shortcuts).
+				document.addEventListener("keydown", function (e) {
+					if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+					var t = e.target;
+					var tag = t && t.tagName ? t.tagName.toLowerCase() : "";
+					if (tag === "input" || tag === "textarea" || (t && t.isContentEditable)) return;
+					if (e.key === "a" || e.key === "A") {
+						box.checked = !box.checked;
+						sync();
+						e.preventDefault();
+					}
+				});
+			})();
+		</script>
 	}
 }
 
@@ -201,4 +249,59 @@ func entityNameOr(names map[int64]string, id int64, fallback string) string {
 		return n
 	}
 	return fallback
+}
+
+// tilemapViewerScale picks an integer scale so a tilemap renders large
+// enough to be useful but doesn't overflow a typical workspace pane.
+// Targets ~600px on the longest axis: a 4×4 sheet renders 4×, a
+// 12×16 sheet renders 1× (and the canvas-wrap is scrollable above
+// that anyway). All scales are integers — no fractional sub-pixels —
+// so the pixel-art aesthetic stays crisp.
+func tilemapViewerScale(cols, rows, tileSize int32) int {
+	if tileSize <= 0 {
+		tileSize = 32
+	}
+	long := int(cols)
+	if int(rows) > long {
+		long = int(rows)
+	}
+	natural := long * int(tileSize)
+	const target = 600
+	scale := target / natural
+	if scale < 1 {
+		scale = 1
+	}
+	if scale > 4 {
+		scale = 4
+	}
+	return scale
+}
+
+// tilemapAdjacencySVG draws the cell-to-cell adjacency edges as faint
+// SVG lines. Toggled visible by the rail's "Show adjacency overlay"
+// checkbox via a sibling-selector CSS rule. Each edge is drawn from
+// the source cell's center to the neighbor's; we render every edge
+// even though they come in N/S and E/W pairs because the duplicate
+// pass anti-aliases out at integer scales.
+templ tilemapAdjacencySVG(tm tilemaps.Tilemap, adj []tilemaps.Adjacency, scale int) {
+	{{ ts := int(tm.TileSize) * scale }}
+	{{ pxW := int(tm.Cols) * ts }}
+	{{ pxH := int(tm.Rows) * ts }}
+	<svg
+		class="bx-tilemap-viewer__adjacency"
+		data-bx-adjacency
+		width={ fmt.Sprintf("%d", pxW) }
+		height={ fmt.Sprintf("%d", pxH) }
+		viewBox={ fmt.Sprintf("0 0 %d %d", pxW, pxH) }
+		aria-hidden="true"
+	>
+		for _, e := range adj {
+			<line
+				x1={ fmt.Sprintf("%d", int(e.FromCol)*ts+ts/2) }
+				y1={ fmt.Sprintf("%d", int(e.FromRow)*ts+ts/2) }
+				x2={ fmt.Sprintf("%d", int(e.ToCol)*ts+ts/2) }
+				y2={ fmt.Sprintf("%d", int(e.ToRow)*ts+ts/2) }
+			></line>
+		}
+	</svg>
 }

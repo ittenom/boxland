@@ -65,7 +65,7 @@ func TestMapmakerPage_RendersAtlasAwarePalette(t *testing.T) {
 	})
 	et, _ := entitySvc.Create(ctx, entities.CreateInput{
 		Name: "town wall", SpriteAssetID: &a.ID, AtlasIndex: 5,
-		Tags: []string{"tile"}, CreatedBy: d.ID,
+		EntityClass: entities.ClassTile, CreatedBy: d.ID,
 	})
 	m, _ := mapSvc.Create(ctx, mapsservice.CreateInput{Name: "demo", Width: 8, Height: 8, CreatedBy: d.ID})
 	layers, _ := mapSvc.Layers(ctx, m.ID)

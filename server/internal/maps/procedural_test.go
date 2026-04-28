@@ -2,7 +2,6 @@ package maps_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"testing"
 
@@ -15,7 +14,8 @@ import (
 func TestProceduralPreview_NoTileKindsReturnsError(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
-	resetDB(t, pool) // creates a designer + plain (non-tile) entity-type
+	// Don't call resetDB — it seeds a tile-class entity, and the
+	// scenario we want is "fresh project, no tiles yet."
 	svc := maps.New(pool)
 	_, err := svc.GenerateProceduralPreview(context.Background(), maps.ProceduralPreviewInput{
 		Width: 4, Height: 4, Seed: 1,
@@ -38,23 +38,21 @@ func TestProceduralPreview_RejectsInvalidDimensions(t *testing.T) {
 	}
 }
 
-func TestProceduralPreview_DetectsTileTaggedEntityTypes(t *testing.T) {
+func TestProceduralPreview_DetectsTileClassEntityTypes(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
-	designerID, baseEtID := resetDB(t, pool) // creates 'wall' with tags but no Tile component
+	designerID, baseEtID := resetDB(t, pool) // creates 'wall' (entity_class='tile')
+	_ = baseEtID
 	ents := entities.New(pool, components.Default())
 
+	// Mirror the upload-time tilemap workflow: auto-sliced cells are
+	// minted with entity_class='tile' (no tag, no component). The
+	// procedural query keys off the class column.
 	floor, err := ents.Create(context.Background(), entities.CreateInput{
-		Name: "floor", CreatedBy: designerID, Tags: []string{"tile"},
+		Name: "floor", CreatedBy: designerID, EntityClass: entities.ClassTile,
 	})
 	if err != nil {
 		t.Fatalf("create floor: %v", err)
-	}
-	// Mirror the upload-time tile-sheet workflow: auto-sliced paintable
-	// cells are tagged as tiles. They do not get a Tile component until
-	// placed in a map, so procedural mode must classify them by tag.
-	if _, err := pool.Exec(context.Background(), `UPDATE entity_types SET tags = ARRAY['tile'] WHERE id = $1`, baseEtID); err != nil {
-		t.Fatalf("tag wall: %v", err)
 	}
 
 	sock, err := ents.CreateSocket(context.Background(), "open", 0xffffffff, designerID)
@@ -87,13 +85,11 @@ func TestProceduralPreview_TileGroupProceduralToggles(t *testing.T) {
 	ents := entities.New(pool, components.Default())
 	ctx := context.Background()
 
-	floor, err := ents.Create(ctx, entities.CreateInput{Name: "floor", CreatedBy: designerID, Tags: []string{"tile"}})
+	floor, err := ents.Create(ctx, entities.CreateInput{Name: "floor", CreatedBy: designerID, EntityClass: entities.ClassTile})
 	if err != nil {
 		t.Fatalf("create floor: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE entity_types SET tags = ARRAY['tile'] WHERE id = $1`, baseEtID); err != nil {
-		t.Fatalf("tag wall: %v", err)
-	}
+	_ = baseEtID
 	sock, err := ents.CreateSocket(ctx, "open", 0xffffffff, designerID)
 	if err != nil {
 		t.Fatalf("create socket: %v", err)
@@ -150,34 +146,27 @@ func containsHorizontalPair(r *wfc.Region, left, right wfc.EntityTypeID) bool {
 	return false
 }
 
-// addTileComponent attaches the components.KindTile component to an entity
-// type so it surfaces in the procedural tile-set query.
-func addTileComponent(t *testing.T, ents *entities.Service, etID int64) {
-	t.Helper()
-	if err := ents.SetComponents(context.Background(), nil, etID, map[components.Kind]json.RawMessage{
-		components.KindTile: []byte(`{"layer_id":0,"gx":0,"gy":0}`),
-	}); err != nil {
-		t.Fatalf("SetComponents: %v", err)
-	}
-}
+// (addTileComponent helper removed: paintable tiles are identified
+// by entity_class='tile' in the redesigned schema, not by the Tile
+// ECS component. The component still attaches at map-instance time
+// when a tile is materialized into a level's runtime ECS, but the
+// procedural query no longer reads it.)
 
 func TestProceduralPreview_FillsRegionWithProjectTiles(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
-	designerID, baseEtID := resetDB(t, pool) // creates 'wall'
+	designerID, baseEtID := resetDB(t, pool) // creates 'wall' (entity_class='tile')
 	ents := entities.New(pool, components.Default())
+	_ = baseEtID
 
-	// Make the 'wall' entity-type a tile-kind.
-	addTileComponent(t, ents, baseEtID)
-
-	// Create a second tile-kind entity-type so WFC has > 1 option.
+	// Create a second tile-class entity-type so WFC has > 1 option.
+	// resetDB already seeded the first one as ClassTile.
 	floor, err := ents.Create(context.Background(), entities.CreateInput{
-		Name: "floor", CreatedBy: designerID,
+		Name: "floor", CreatedBy: designerID, EntityClass: entities.ClassTile,
 	})
 	if err != nil {
 		t.Fatalf("create floor: %v", err)
 	}
-	addTileComponent(t, ents, floor.ID)
 
 	// Create one socket; assign it to all 4 edges of both types so they
 	// can sit anywhere next to each other (no contradictions possible).
@@ -217,9 +206,10 @@ func TestMaterializeProcedural_PersistsTilesAndUpdatesSeed(t *testing.T) {
 	defer pool.Close()
 	designerID, baseEtID := resetDB(t, pool)
 	ents := entities.New(pool, components.Default())
-	addTileComponent(t, ents, baseEtID)
-	floor, _ := ents.Create(context.Background(), entities.CreateInput{Name: "floor", CreatedBy: designerID})
-	addTileComponent(t, ents, floor.ID)
+	// resetDB already mints baseEtID with entity_class='tile'.
+	floor, _ := ents.Create(context.Background(), entities.CreateInput{
+		Name: "floor", CreatedBy: designerID, EntityClass: entities.ClassTile,
+	})
 	sock, _ := ents.CreateSocket(context.Background(), "open", 0xffffffff, designerID)
 	_ = ents.SetTileEdges(context.Background(), baseEtID, &sock.ID, &sock.ID, &sock.ID, &sock.ID)
 	_ = ents.SetTileEdges(context.Background(), floor.ID, &sock.ID, &sock.ID, &sock.ID, &sock.ID)
@@ -301,10 +291,10 @@ func TestProceduralPreview_DeterministicForSameSeed(t *testing.T) {
 	defer pool.Close()
 	designerID, baseEtID := resetDB(t, pool)
 	ents := entities.New(pool, components.Default())
-	addTileComponent(t, ents, baseEtID)
 
-	floor, _ := ents.Create(context.Background(), entities.CreateInput{Name: "floor", CreatedBy: designerID})
-	addTileComponent(t, ents, floor.ID)
+	floor, _ := ents.Create(context.Background(), entities.CreateInput{
+		Name: "floor", CreatedBy: designerID, EntityClass: entities.ClassTile,
+	})
 	sock, _ := ents.CreateSocket(context.Background(), "open", 0xffffffff, designerID)
 	_ = ents.SetTileEdges(context.Background(), baseEtID, &sock.ID, &sock.ID, &sock.ID, &sock.ID)
 	_ = ents.SetTileEdges(context.Background(), floor.ID, &sock.ID, &sock.ID, &sock.ID, &sock.ID)

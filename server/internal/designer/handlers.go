@@ -2848,16 +2848,12 @@ func getMapmakerPage(d Deps) http.HandlerFunc {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		// Build the tile-palette. Prefer entity types tagged "tile" so
-		// NPCs / items / triggers don't pollute the brush. Fall back to
-		// listing everything if the project hasn't tagged anything yet —
-		// otherwise a brand-new designer would see an empty palette and
-		// nothing to paint with.
+		// Build the tile-palette. Per the holistic redesign, paintable
+		// tiles are entity_class='tile' (set by the tilemap service
+		// when it slices a sheet). NPCs / PCs / logic entities have
+		// their own classes and can't be painted here.
 		var palette []views.PaletteEntry
-		ets, err := d.Entities.List(r.Context(), entities.ListOpts{Tags: []string{"tile"}, Limit: 200})
-		if err == nil && len(ets) == 0 {
-			ets, err = d.Entities.List(r.Context(), entities.ListOpts{Limit: 200})
-		}
+		ets, err := d.Entities.ListByClass(r.Context(), entities.ClassTile, entities.ListOpts{Limit: 4096})
 		if err == nil && len(ets) > 0 {
 			// Batch-load every referenced sprite asset in one query
 			// so the palette build is O(1) DB calls regardless of how

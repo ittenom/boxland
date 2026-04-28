@@ -32,8 +32,15 @@ func resetDB(t *testing.T, pool *pgxpool.Pool) (designerID, tileEntityID int64) 
 		t.Fatalf("create designer: %v", err)
 	}
 	ents := entities.New(pool, components.Default())
+	// Per the holistic redesign, tile-paintable entities have
+	// entity_class='tile'. The procedural / palette queries filter on
+	// that column, so seed accordingly. (Previously this seed used
+	// the legacy "tile" tag, which the queries also accepted; the
+	// redesign drops the tag fallback.)
 	et, err := ents.Create(context.Background(), entities.CreateInput{
-		Name: "wall", CreatedBy: d.ID,
+		Name:        "wall",
+		EntityClass: entities.ClassTile,
+		CreatedBy:   d.ID,
 	})
 	if err != nil {
 		t.Fatalf("create entity type: %v", err)

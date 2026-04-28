@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"boxland/server/internal/assets"
+	"boxland/server/internal/entities"
 	"boxland/server/internal/levels"
 	"boxland/server/internal/tilemaps"
 	"boxland/server/internal/worlds"
@@ -487,12 +488,16 @@ func getTilemapsList(d Deps) http.HandlerFunc {
 			}
 			items = got
 		}
-		// Resolve backing-asset public URLs for thumbnail rendering.
+		// Resolve backing-asset URLs for thumbnail rendering. Use the
+		// designer-realm /design/assets/blob/{id} route so the
+		// browser doesn't have to hit the (possibly private) bucket
+		// directly — same pattern as the asset grid + mapmaker
+		// palette.
 		assetURLs := map[int64]string{}
-		if d.Assets != nil && d.ObjectStore != nil {
+		if d.Assets != nil {
 			for _, tm := range items {
 				if a, err := d.Assets.FindByID(r.Context(), tm.AssetID); err == nil && a != nil {
-					assetURLs[tm.ID] = d.ObjectStore.PublicURL(a.ContentAddressedPath)
+					assetURLs[tm.ID] = fmt.Sprintf("/design/assets/blob/%d", a.ID)
 				}
 			}
 		}
@@ -521,24 +526,29 @@ func getTilemapDetail(d Deps) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
-		// Backing asset URL for the viewer canvas.
+		// Backing asset URL for the viewer canvas. We point at the
+		// designer-realm /design/assets/blob/{id} streamer rather
+		// than the object store's public URL — that endpoint uses
+		// the designer's session, so it works even when the bucket
+		// isn't configured for public-read (typical dev MinIO).
 		assetURL := ""
-		if d.Assets != nil && d.ObjectStore != nil {
+		if d.Assets != nil {
 			if a, err := d.Assets.FindByID(r.Context(), tm.AssetID); err == nil && a != nil {
-				assetURL = d.ObjectStore.PublicURL(a.ContentAddressedPath)
+				assetURL = fmt.Sprintf("/design/assets/blob/%d", a.ID)
 			}
 		}
-		// Per-cell entity rows for hover labels.
+		// Per-cell entity rows for hover labels. Bulk-resolve names
+		// in one query rather than N FindByID calls (a 12×16 grid is
+		// 108+ entities).
 		cells, _ := d.Tilemaps.Cells(r.Context(), tm.ID)
 		entityNames := map[int64]string{}
-		entityIDs := []int64{}
-		for _, c := range cells {
-			entityIDs = append(entityIDs, c.EntityTypeID)
-		}
-		if d.Entities != nil {
-			for _, eid := range entityIDs {
-				if et, err := d.Entities.FindByID(r.Context(), eid); err == nil && et != nil {
-					entityNames[eid] = et.Name
+		if d.Entities != nil && len(cells) > 0 {
+			byClass, err := d.Entities.ListByClass(r.Context(), entities.ClassTile, entities.ListOpts{Limit: 4096})
+			if err == nil {
+				for _, et := range byClass {
+					if et.TilemapID != nil && *et.TilemapID == tm.ID {
+						entityNames[et.ID] = et.Name
+					}
 				}
 			}
 		}
@@ -691,16 +701,18 @@ func libraryTabTitle(tab string) string {
 }
 
 // libraryResolveTilemapURLs builds the tilemap_id → backing PNG URL
-// map the Library tilemaps tab needs. One asset lookup per tilemap;
-// Phase 3 may consolidate via a JOIN.
+// map the Library tilemaps tab needs. URLs route through the
+// designer-realm /design/assets/blob/{id} streamer so the browser
+// doesn't need direct read access to the object-store bucket. One
+// asset lookup per tilemap; Phase 3+ may consolidate via a JOIN.
 func libraryResolveTilemapURLs(ctx context.Context, d Deps, items []tilemaps.Tilemap) map[int64]string {
 	out := make(map[int64]string, len(items))
-	if d.Assets == nil || d.ObjectStore == nil {
+	if d.Assets == nil {
 		return out
 	}
 	for _, tm := range items {
 		if a, err := d.Assets.FindByID(ctx, tm.AssetID); err == nil && a != nil {
-			out[tm.ID] = d.ObjectStore.PublicURL(a.ContentAddressedPath)
+			out[tm.ID] = fmt.Sprintf("/design/assets/blob/%d", a.ID)
 		}
 	}
 	return out
