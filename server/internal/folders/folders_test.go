@@ -37,13 +37,13 @@ func TestCreate_HappyPath(t *testing.T) {
 
 	f, err := svc.Create(context.Background(), folders.CreateInput{
 		Name:      "Forest",
-		KindRoot:  folders.KindTile,
+		KindRoot:  folders.KindTilemap,
 		CreatedBy: dID,
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if f.KindRoot != folders.KindTile || f.Name != "Forest" || f.SortMode != folders.SortAlpha {
+	if f.KindRoot != folders.KindTilemap || f.Name != "Forest" || f.SortMode != folders.SortAlpha {
 		t.Errorf("got %+v", f)
 	}
 	if f.ParentID != nil {
@@ -57,11 +57,11 @@ func TestCreate_DuplicateNameRejected(t *testing.T) {
 	svc, dID := fixture(t, pool)
 	ctx := context.Background()
 
-	_, err := svc.Create(ctx, folders.CreateInput{Name: "Forest", KindRoot: folders.KindTile, CreatedBy: dID})
+	_, err := svc.Create(ctx, folders.CreateInput{Name: "Forest", KindRoot: folders.KindTilemap, CreatedBy: dID})
 	if err != nil {
 		t.Fatalf("first create: %v", err)
 	}
-	_, err = svc.Create(ctx, folders.CreateInput{Name: "Forest", KindRoot: folders.KindTile, CreatedBy: dID})
+	_, err = svc.Create(ctx, folders.CreateInput{Name: "Forest", KindRoot: folders.KindTilemap, CreatedBy: dID})
 	if !errors.Is(err, folders.ErrNameInUse) {
 		t.Fatalf("want ErrNameInUse, got %v", err)
 	}
@@ -73,8 +73,8 @@ func TestCreate_SameNameDifferentKindRoot(t *testing.T) {
 	svc, dID := fixture(t, pool)
 	ctx := context.Background()
 
-	if _, err := svc.Create(ctx, folders.CreateInput{Name: "Town", KindRoot: folders.KindTile, CreatedBy: dID}); err != nil {
-		t.Fatalf("create tile: %v", err)
+	if _, err := svc.Create(ctx, folders.CreateInput{Name: "Town", KindRoot: folders.KindTilemap, CreatedBy: dID}); err != nil {
+		t.Fatalf("create tilemap: %v", err)
 	}
 	if _, err := svc.Create(ctx, folders.CreateInput{Name: "Town", KindRoot: folders.KindSprite, CreatedBy: dID}); err != nil {
 		t.Fatalf("create sprite: %v", err)
@@ -100,12 +100,12 @@ func TestCreate_ParentMustShareKindRoot(t *testing.T) {
 	svc, dID := fixture(t, pool)
 	ctx := context.Background()
 
-	tileFolder, _ := svc.Create(ctx, folders.CreateInput{Name: "Tiles", KindRoot: folders.KindTile, CreatedBy: dID})
+	tilemapFolder, _ := svc.Create(ctx, folders.CreateInput{Name: "Tilemaps", KindRoot: folders.KindTilemap, CreatedBy: dID})
 
 	_, err := svc.Create(ctx, folders.CreateInput{
 		Name:      "Sprites",
 		KindRoot:  folders.KindSprite,
-		ParentID:  &tileFolder.ID,
+		ParentID:  &tilemapFolder.ID,
 		CreatedBy: dID,
 	})
 	if !errors.Is(err, folders.ErrCrossKindMove) {
@@ -119,7 +119,7 @@ func TestRename_Happy(t *testing.T) {
 	svc, dID := fixture(t, pool)
 	ctx := context.Background()
 
-	f, _ := svc.Create(ctx, folders.CreateInput{Name: "Forest", KindRoot: folders.KindTile, CreatedBy: dID})
+	f, _ := svc.Create(ctx, folders.CreateInput{Name: "Forest", KindRoot: folders.KindTilemap, CreatedBy: dID})
 	if err := svc.Rename(ctx, f.ID, "Woodland"); err != nil {
 		t.Fatalf("rename: %v", err)
 	}
@@ -135,8 +135,8 @@ func TestRename_DuplicateRejected(t *testing.T) {
 	svc, dID := fixture(t, pool)
 	ctx := context.Background()
 
-	a, _ := svc.Create(ctx, folders.CreateInput{Name: "Forest", KindRoot: folders.KindTile, CreatedBy: dID})
-	_, _ = svc.Create(ctx, folders.CreateInput{Name: "Town", KindRoot: folders.KindTile, CreatedBy: dID})
+	a, _ := svc.Create(ctx, folders.CreateInput{Name: "Forest", KindRoot: folders.KindTilemap, CreatedBy: dID})
+	_, _ = svc.Create(ctx, folders.CreateInput{Name: "Town", KindRoot: folders.KindTilemap, CreatedBy: dID})
 
 	if err := svc.Rename(ctx, a.ID, "Town"); !errors.Is(err, folders.ErrNameInUse) {
 		t.Fatalf("want ErrNameInUse, got %v", err)
@@ -149,9 +149,9 @@ func TestMove_PreventsCycle(t *testing.T) {
 	svc, dID := fixture(t, pool)
 	ctx := context.Background()
 
-	root, _ := svc.Create(ctx, folders.CreateInput{Name: "Root", KindRoot: folders.KindTile, CreatedBy: dID})
-	mid, _ := svc.Create(ctx, folders.CreateInput{Name: "Mid", KindRoot: folders.KindTile, ParentID: &root.ID, CreatedBy: dID})
-	leaf, _ := svc.Create(ctx, folders.CreateInput{Name: "Leaf", KindRoot: folders.KindTile, ParentID: &mid.ID, CreatedBy: dID})
+	root, _ := svc.Create(ctx, folders.CreateInput{Name: "Root", KindRoot: folders.KindTilemap, CreatedBy: dID})
+	mid, _ := svc.Create(ctx, folders.CreateInput{Name: "Mid", KindRoot: folders.KindTilemap, ParentID: &root.ID, CreatedBy: dID})
+	leaf, _ := svc.Create(ctx, folders.CreateInput{Name: "Leaf", KindRoot: folders.KindTilemap, ParentID: &mid.ID, CreatedBy: dID})
 
 	// Try moving Root under Leaf — would create a cycle.
 	if err := svc.Move(ctx, root.ID, &leaf.ID); !errors.Is(err, folders.ErrCycle) {
@@ -169,10 +169,10 @@ func TestMove_AcrossKindRootRejected(t *testing.T) {
 	svc, dID := fixture(t, pool)
 	ctx := context.Background()
 
-	tileF, _ := svc.Create(ctx, folders.CreateInput{Name: "Forest", KindRoot: folders.KindTile, CreatedBy: dID})
+	tilemapF, _ := svc.Create(ctx, folders.CreateInput{Name: "Forest", KindRoot: folders.KindTilemap, CreatedBy: dID})
 	spriteF, _ := svc.Create(ctx, folders.CreateInput{Name: "NPCs", KindRoot: folders.KindSprite, CreatedBy: dID})
 
-	if err := svc.Move(ctx, tileF.ID, &spriteF.ID); !errors.Is(err, folders.ErrCrossKindMove) {
+	if err := svc.Move(ctx, tilemapF.ID, &spriteF.ID); !errors.Is(err, folders.ErrCrossKindMove) {
 		t.Fatalf("want ErrCrossKindMove, got %v", err)
 	}
 }
@@ -183,15 +183,15 @@ func TestDelete_CascadesChildrenSparesAssets(t *testing.T) {
 	svc, dID := fixture(t, pool)
 	ctx := context.Background()
 
-	parent, _ := svc.Create(ctx, folders.CreateInput{Name: "Forest", KindRoot: folders.KindTile, CreatedBy: dID})
-	child, _ := svc.Create(ctx, folders.CreateInput{Name: "Trees", KindRoot: folders.KindTile, ParentID: &parent.ID, CreatedBy: dID})
+	parent, _ := svc.Create(ctx, folders.CreateInput{Name: "Heroes", KindRoot: folders.KindSprite, CreatedBy: dID})
+	child, _ := svc.Create(ctx, folders.CreateInput{Name: "NPCs", KindRoot: folders.KindSprite, ParentID: &parent.ID, CreatedBy: dID})
 
-	// Add an asset into child and verify it bubbles back to root after delete.
+	// Add a sprite asset into child and verify it bubbles back to root after delete.
 	asvc := assets.New(pool)
 	a, err := asvc.Create(ctx, assets.CreateInput{
-		Kind:                 assets.KindTile,
-		Name:                 "tree-a",
-		ContentAddressedPath: "test/tree-a",
+		Kind:                 assets.KindSprite,
+		Name:                 "hero-a",
+		ContentAddressedPath: "test/hero-a",
 		OriginalFormat:       "png",
 		FolderID:             &child.ID,
 		CreatedBy:            dID,
@@ -224,7 +224,7 @@ func TestEnsurePath_CreatesAndIsIdempotent(t *testing.T) {
 	svc, dID := fixture(t, pool)
 	ctx := context.Background()
 
-	id1, err := svc.EnsurePath(ctx, folders.KindTile, "forest/trees/oaks", dID)
+	id1, err := svc.EnsurePath(ctx, folders.KindTilemap, "forest/trees/oaks", dID)
 	if err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestEnsurePath_CreatesAndIsIdempotent(t *testing.T) {
 		t.Fatal("expected non-zero leaf id")
 	}
 	// Run again: should hit the existing rows, not create dupes.
-	id2, err := svc.EnsurePath(ctx, folders.KindTile, "forest/trees/oaks", dID)
+	id2, err := svc.EnsurePath(ctx, folders.KindTilemap, "forest/trees/oaks", dID)
 	if err != nil {
 		t.Fatalf("ensure idempotent: %v", err)
 	}
@@ -256,8 +256,8 @@ func TestEnsurePath_CaseInsensitiveMatch(t *testing.T) {
 	svc, dID := fixture(t, pool)
 	ctx := context.Background()
 
-	id1, _ := svc.EnsurePath(ctx, folders.KindTile, "Forest", dID)
-	id2, _ := svc.EnsurePath(ctx, folders.KindTile, "forest", dID)
+	id1, _ := svc.EnsurePath(ctx, folders.KindTilemap, "Forest", dID)
+	id2, _ := svc.EnsurePath(ctx, folders.KindTilemap, "forest", dID)
 	if id1 != id2 {
 		t.Errorf("case-insensitive match failed: %d vs %d", id1, id2)
 	}
@@ -268,7 +268,7 @@ func TestEnsurePath_EmptyReturnsZero(t *testing.T) {
 	defer pool.Close()
 	svc, dID := fixture(t, pool)
 
-	id, err := svc.EnsurePath(context.Background(), folders.KindTile, "", dID)
+	id, err := svc.EnsurePath(context.Background(), folders.KindTilemap, "", dID)
 	if err != nil {
 		t.Fatalf("ensure empty: %v", err)
 	}
@@ -283,8 +283,8 @@ func TestPathsByID_BulkResolve(t *testing.T) {
 	svc, dID := fixture(t, pool)
 	ctx := context.Background()
 
-	a, _ := svc.EnsurePath(ctx, folders.KindTile, "forest/trees", dID)
-	b, _ := svc.EnsurePath(ctx, folders.KindTile, "town/walls", dID)
+	a, _ := svc.EnsurePath(ctx, folders.KindTilemap, "forest/trees", dID)
+	b, _ := svc.EnsurePath(ctx, folders.KindTilemap, "town/walls", dID)
 
 	got, err := svc.PathsByID(ctx, []int64{a, b})
 	if err != nil {
@@ -301,7 +301,7 @@ func TestMoveAssets_KindMismatchRejected(t *testing.T) {
 	svc, dID := fixture(t, pool)
 	ctx := context.Background()
 
-	tileFolder, _ := svc.Create(ctx, folders.CreateInput{Name: "Forest", KindRoot: folders.KindTile, CreatedBy: dID})
+	audioFolder, _ := svc.Create(ctx, folders.CreateInput{Name: "SFX", KindRoot: folders.KindAudio, CreatedBy: dID})
 
 	asvc := assets.New(pool)
 	spriteAsset, err := asvc.Create(ctx, assets.CreateInput{
@@ -315,7 +315,7 @@ func TestMoveAssets_KindMismatchRejected(t *testing.T) {
 		t.Fatalf("create asset: %v", err)
 	}
 
-	_, err = svc.MoveAssets(ctx, []int64{spriteAsset.ID}, &tileFolder.ID)
+	_, err = svc.MoveAssets(ctx, []int64{spriteAsset.ID}, &audioFolder.ID)
 	if !errors.Is(err, folders.ErrCrossKindMove) {
 		t.Fatalf("want ErrCrossKindMove, got %v", err)
 	}
@@ -327,19 +327,19 @@ func TestMoveAssets_HappyPath(t *testing.T) {
 	svc, dID := fixture(t, pool)
 	ctx := context.Background()
 
-	tileFolder, _ := svc.Create(ctx, folders.CreateInput{Name: "Forest", KindRoot: folders.KindTile, CreatedBy: dID})
+	spriteFolder, _ := svc.Create(ctx, folders.CreateInput{Name: "Heroes", KindRoot: folders.KindSprite, CreatedBy: dID})
 
 	asvc := assets.New(pool)
 	t1, _ := asvc.Create(ctx, assets.CreateInput{
-		Kind: assets.KindTile, Name: "tree-a", ContentAddressedPath: "test/a",
+		Kind: assets.KindSprite, Name: "hero-a", ContentAddressedPath: "test/a",
 		OriginalFormat: "png", CreatedBy: dID,
 	})
 	t2, _ := asvc.Create(ctx, assets.CreateInput{
-		Kind: assets.KindTile, Name: "tree-b", ContentAddressedPath: "test/b",
+		Kind: assets.KindSprite, Name: "hero-b", ContentAddressedPath: "test/b",
 		OriginalFormat: "png", CreatedBy: dID,
 	})
 
-	n, err := svc.MoveAssets(ctx, []int64{t1.ID, t2.ID}, &tileFolder.ID)
+	n, err := svc.MoveAssets(ctx, []int64{t1.ID, t2.ID}, &spriteFolder.ID)
 	if err != nil {
 		t.Fatalf("move: %v", err)
 	}
@@ -348,8 +348,31 @@ func TestMoveAssets_HappyPath(t *testing.T) {
 	}
 
 	got, _ := asvc.FindByID(ctx, t1.ID)
-	if got.FolderID == nil || *got.FolderID != tileFolder.ID {
-		t.Errorf("asset 1 folder = %v, want %d", got.FolderID, tileFolder.ID)
+	if got.FolderID == nil || *got.FolderID != spriteFolder.ID {
+		t.Errorf("asset 1 folder = %v, want %d", got.FolderID, spriteFolder.ID)
+	}
+}
+
+// MoveAssets into a non-asset folder (e.g. a tilemap or level folder)
+// is rejected because tilemaps/levels/worlds aren't backed by `assets`
+// rows.
+func TestMoveAssets_RejectsNonAssetFolder(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	svc, dID := fixture(t, pool)
+	ctx := context.Background()
+
+	tilemapFolder, _ := svc.Create(ctx, folders.CreateInput{Name: "Forest", KindRoot: folders.KindTilemap, CreatedBy: dID})
+
+	asvc := assets.New(pool)
+	a, _ := asvc.Create(ctx, assets.CreateInput{
+		Kind: assets.KindSprite, Name: "hero", ContentAddressedPath: "test/h",
+		OriginalFormat: "png", CreatedBy: dID,
+	})
+
+	_, err := svc.MoveAssets(ctx, []int64{a.ID}, &tilemapFolder.ID)
+	if !errors.Is(err, folders.ErrNotAssetKind) {
+		t.Fatalf("want ErrNotAssetKind, got %v", err)
 	}
 }
 
@@ -359,7 +382,7 @@ func TestSetSortMode(t *testing.T) {
 	svc, dID := fixture(t, pool)
 	ctx := context.Background()
 
-	f, _ := svc.Create(ctx, folders.CreateInput{Name: "Forest", KindRoot: folders.KindTile, CreatedBy: dID})
+	f, _ := svc.Create(ctx, folders.CreateInput{Name: "Forest", KindRoot: folders.KindTilemap, CreatedBy: dID})
 
 	if err := svc.SetSortMode(ctx, f.ID, folders.SortColor); err != nil {
 		t.Fatalf("set sort: %v", err)
@@ -380,13 +403,13 @@ func TestListByKindRoot_FlatOrdered(t *testing.T) {
 	svc, dID := fixture(t, pool)
 	ctx := context.Background()
 
-	a, _ := svc.Create(ctx, folders.CreateInput{Name: "alpha", KindRoot: folders.KindTile, CreatedBy: dID})
-	_, _ = svc.Create(ctx, folders.CreateInput{Name: "child-a", KindRoot: folders.KindTile, ParentID: &a.ID, CreatedBy: dID})
-	_, _ = svc.Create(ctx, folders.CreateInput{Name: "beta", KindRoot: folders.KindTile, CreatedBy: dID})
+	a, _ := svc.Create(ctx, folders.CreateInput{Name: "alpha", KindRoot: folders.KindTilemap, CreatedBy: dID})
+	_, _ = svc.Create(ctx, folders.CreateInput{Name: "child-a", KindRoot: folders.KindTilemap, ParentID: &a.ID, CreatedBy: dID})
+	_, _ = svc.Create(ctx, folders.CreateInput{Name: "beta", KindRoot: folders.KindTilemap, CreatedBy: dID})
 	// Folder under a different kind_root must NOT appear.
 	_, _ = svc.Create(ctx, folders.CreateInput{Name: "shouldnotappear", KindRoot: folders.KindSprite, CreatedBy: dID})
 
-	got, err := svc.ListByKindRoot(ctx, folders.KindTile)
+	got, err := svc.ListByKindRoot(ctx, folders.KindTilemap)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -394,7 +417,7 @@ func TestListByKindRoot_FlatOrdered(t *testing.T) {
 		t.Fatalf("expected 3, got %d (%+v)", len(got), got)
 	}
 	for _, f := range got {
-		if f.KindRoot != folders.KindTile {
+		if f.KindRoot != folders.KindTilemap {
 			t.Errorf("leaked %+v", f)
 		}
 	}
@@ -415,10 +438,29 @@ func TestAvailableSortModes_PerKind(t *testing.T) {
 	if !contains(folders.AvailableSortModes(folders.KindAudio), folders.SortLength) {
 		t.Error("audio should offer sort by length")
 	}
-	if contains(folders.AvailableSortModes(folders.KindTile), folders.SortLength) {
-		t.Error("tile should not offer sort by length")
+	if contains(folders.AvailableSortModes(folders.KindTilemap), folders.SortLength) {
+		t.Error("tilemap should not offer sort by length")
 	}
 	if !contains(folders.AvailableSortModes(folders.KindSprite), folders.SortColor) {
 		t.Error("sprite should offer sort by color")
+	}
+}
+
+// Object-folder moves: tilemaps/levels/worlds. The move helpers reject
+// kind-mismatched targets but otherwise just bulk UPDATE folder_id on
+// the right table. Per-table tests live in those packages; here we
+// just confirm the kind validation fires on bad targets.
+func TestMoveTilemaps_KindMismatchRejected(t *testing.T) {
+	pool := openTestPool(t)
+	defer pool.Close()
+	svc, dID := fixture(t, pool)
+	ctx := context.Background()
+
+	spriteFolder, _ := svc.Create(ctx, folders.CreateInput{Name: "x", KindRoot: folders.KindSprite, CreatedBy: dID})
+	// Passing a stray id is fine — the kind check runs before the
+	// UPDATE, so we never look at whether tilemap 1 exists.
+	_, err := svc.MoveTilemaps(ctx, []int64{1}, &spriteFolder.ID)
+	if !errors.Is(err, folders.ErrCrossKindMove) {
+		t.Fatalf("want ErrCrossKindMove, got %v", err)
 	}
 }

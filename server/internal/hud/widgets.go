@@ -375,11 +375,11 @@ func (c PortraitConfig) Descriptor() []configurable.FieldDescriptor {
 
 // ButtonConfig is a clickable widget that fires a named action group.
 // The action group is validated at publish time against the realm's
-// map_action_groups.
+// level_action_groups.
 type ButtonConfig struct {
 	Label         string `json:"label"`
 	Hotkey        string `json:"hotkey,omitempty"` // free char like "Q", "E", or "F1"
-	ActionGroup   string `json:"action_group"`     // name in map_action_groups
+	ActionGroup   string `json:"action_group"`     // name in level_action_groups
 	HitPaddingPx  int32  `json:"hit_padding_px"`   // grow hit-area beyond visual; default 4
 }
 

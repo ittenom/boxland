@@ -1,0 +1,204 @@
+package views
+
+import (
+	"fmt"
+
+	"boxland/server/internal/tilemaps"
+)
+
+// tilemaps.templ — tilemap list page + per-tilemap viewer (with the
+// adjacency overlay toggle and per-cell hover labels).
+
+type TilemapsListProps struct {
+	Layout    LayoutProps
+	Items     []tilemaps.Tilemap
+	AssetURLs map[int64]string // tilemap_id → backing PNG URL for thumb
+	Search    string
+}
+
+templ TilemapsListPage(p TilemapsListProps) {
+	@Layout(p.Layout) {
+		<div class="bx-work__body bx-stack">
+			<header class="bx-row bx-row--apart">
+				<div>
+					<h1 data-copy-slot="tilemaps.title">Tilemaps</h1>
+					<p class="bx-muted bx-small" data-copy-slot="tilemaps.lede">
+						A tilemap is a sheet of tile sprites with adjacency baked in by the source layout.
+					</p>
+				</div>
+				<div class="bx-row" style="gap: var(--bx-s2);">
+					<form method="get" action="/design/tilemaps" class="bx-row" style="gap: var(--bx-s1);">
+						<input
+							class="bx-input"
+							type="search"
+							name="q"
+							value={ p.Search }
+							placeholder="Search tilemaps..."
+							style="width: 220px;"
+						/>
+					</form>
+					<button
+						type="button"
+						class="bx-btn bx-btn--ghost"
+						hx-get="/design/tilemaps/import"
+						hx-target="#modal-host"
+						hx-swap="innerHTML"
+					>+ Import</button>
+					<button
+						type="button"
+						class="bx-btn bx-btn--primary"
+						hx-get="/design/assets/upload?kind=tilemap"
+						hx-target="#modal-host"
+						hx-swap="innerHTML"
+						data-copy-slot="tilemaps.upload"
+					>+ Upload tilemap</button>
+				</div>
+			</header>
+
+			if len(p.Items) == 0 {
+				<div class="bx-panel bx-stack-tight">
+					<p class="bx-muted" data-copy-slot="tilemaps.empty">No tilemaps yet.</p>
+					<p class="bx-small bx-muted">
+						Upload a 32×N grid PNG and Boxland will slice it into one tile entity per non-empty cell,
+						auto-extract edge sockets where pixels match, and surface the result in the Mapmaker palette.
+					</p>
+				</div>
+			} else {
+				<div class="bx-grid bx-grid--auto">
+					for _, tm := range p.Items {
+						@tilemapCard(tm, p.AssetURLs[tm.ID])
+					}
+				</div>
+			}
+		</div>
+		<div id="modal-host"></div>
+	}
+}
+
+templ tilemapCard(tm tilemaps.Tilemap, assetURL string) {
+	<a
+		class="bx-card bx-card--tilemap"
+		href={ templ.URL(fmt.Sprintf("/design/tilemaps/%d", tm.ID)) }
+	>
+		<div class="bx-card__thumb bx-pixel" style="background: var(--bx-bg-2);">
+			if assetURL != "" {
+				<img
+					src={ assetURL }
+					alt={ tm.Name }
+					style="image-rendering: pixelated; max-width: 100%; max-height: 96px;"
+				/>
+			}
+		</div>
+		<div class="bx-card__title">
+			<span class="bx-dot bx-dot--tilemap"></span>
+			{ tm.Name }
+		</div>
+		<div class="bx-card__meta bx-small bx-muted">
+			{ fmt.Sprintf("%d×%d cells · %d tile%s",
+				tm.Cols, tm.Rows, tm.NonEmptyCount, pluralS(int(tm.NonEmptyCount))) }
+		</div>
+	</a>
+}
+
+// ---- tilemap viewer page -------------------------------------------
+
+type TilemapViewerProps struct {
+	Layout      LayoutProps
+	Tilemap     tilemaps.Tilemap
+	AssetURL    string
+	Cells       []tilemaps.Cell
+	EntityNames map[int64]string // entity_type_id → display name
+	Adjacency   []tilemaps.Adjacency
+}
+
+templ TilemapViewerPage(p TilemapViewerProps) {
+	@Layout(p.Layout) {
+		<section class="bx-tilemap-viewer bx-stack">
+			<header class="bx-row bx-row--apart" style="padding: 0 var(--bx-s2);">
+				<div class="bx-row" style="gap: var(--bx-s2);">
+					<a href="/design/tilemaps" class="bx-btn bx-btn--ghost bx-btn--small">← Tilemaps</a>
+					<h1 style="margin: 0; font-size: 16px;">
+						<span class="bx-dot bx-dot--tilemap"></span>
+						{ p.Tilemap.Name }
+					</h1>
+					<span class="bx-mono bx-small bx-muted">
+						{ fmt.Sprintf("%d×%d cells · %d tiles", p.Tilemap.Cols, p.Tilemap.Rows, p.Tilemap.NonEmptyCount) }
+					</span>
+				</div>
+				<div class="bx-row" style="gap: var(--bx-s2);">
+					<a
+						href={ templ.URL(fmt.Sprintf("/design/tilemaps/%d/export", p.Tilemap.ID)) }
+						class="bx-btn bx-btn--ghost bx-btn--small bx-row"
+						style="gap: 6px;"
+						download
+						title="Save this tilemap (with its tile entities and the backing PNG) as a re-importable .boxtilemap.zip"
+						data-bx-export-tilemap
+					>
+						@Icon("save")
+						<span>Export</span>
+					</a>
+					<button type="button" class="bx-btn bx-btn--danger bx-btn--small"
+						hx-delete={ fmt.Sprintf("/design/tilemaps/%d", p.Tilemap.ID) }
+						hx-confirm="Delete this tilemap? Its tile entities go with it. (Map placements that reference any of those tiles will block the delete.)">
+						Delete
+					</button>
+				</div>
+			</header>
+
+			<div class="bx-tilemap-viewer__layout">
+				<div class="bx-tilemap-viewer__canvas-wrap"
+					data-bx-tilemap-id={ fmt.Sprintf("%d", p.Tilemap.ID) }
+					data-bx-tile-size={ fmt.Sprintf("%d", p.Tilemap.TileSize) }
+					data-bx-cols={ fmt.Sprintf("%d", p.Tilemap.Cols) }
+					data-bx-rows={ fmt.Sprintf("%d", p.Tilemap.Rows) }
+				>
+					if p.AssetURL != "" {
+						<img
+							class="bx-tilemap-viewer__sheet bx-pixel"
+							src={ p.AssetURL }
+							alt={ p.Tilemap.Name }
+							style="image-rendering: pixelated;"
+						/>
+					}
+					<div class="bx-tilemap-viewer__overlay" data-bx-cell-overlay></div>
+				</div>
+
+				<aside class="bx-tilemap-viewer__rail bx-stack">
+					<label class="bx-row" style="gap: var(--bx-s2);">
+						<input type="checkbox" class="bx-checkbox" data-bx-toggle-adjacency/>
+						<span>Show adjacency overlay</span>
+					</label>
+					<p class="bx-small bx-muted">
+						{ fmt.Sprintf("%d adjacencies derived from the source sheet's layout.", len(p.Adjacency)) }
+					</p>
+
+					<section class="bx-stack-tight">
+						<h3 class="bx-panel__title">Cells</h3>
+						<ul class="bx-list bx-small">
+							for _, c := range p.Cells {
+								<li class="bx-row bx-row--apart">
+									<span class="bx-mono">
+										{ fmt.Sprintf("r%dc%d", c.CellRow, c.CellCol) }
+									</span>
+									<a
+										class="bx-tilemap-viewer__cell-link"
+										href={ templ.URL(fmt.Sprintf("/design/entities/%d", c.EntityTypeID)) }
+									>
+										{ entityNameOr(p.EntityNames, c.EntityTypeID, "tile") }
+									</a>
+								</li>
+							}
+						</ul>
+					</section>
+				</aside>
+			</div>
+		</section>
+	}
+}
+
+func entityNameOr(names map[int64]string, id int64, fallback string) string {
+	if n, ok := names[id]; ok && n != "" {
+		return n
+	}
+	return fallback
+}

@@ -1,0 +1,376 @@
+package views
+
+import (
+	"fmt"
+
+	"boxland/server/internal/levels"
+)
+
+// levels.templ — list page, "new level" modal, and the level editor
+// shell with its tab strip.
+//
+// Per the holistic redesign, a LEVEL = a MAP + non-tile entity
+// placements + level-scoped automations + HUD + instancing settings.
+// One MAP can back many LEVELs (e.g. day/night variants of a town).
+
+type LevelsListProps struct {
+	Layout     LayoutProps
+	Items      []levels.Level
+	MapNames   map[int64]string
+	WorldNames map[int64]string
+	Search     string
+}
+
+templ LevelsListPage(p LevelsListProps) {
+	@Layout(p.Layout) {
+		<div class="bx-work__body bx-stack">
+			<header class="bx-row bx-row--apart">
+				<div>
+					<h1 data-copy-slot="levels.title">Levels</h1>
+					<p class="bx-muted bx-small" data-copy-slot="levels.lede">
+						A level pairs a map (geometry) with entity placements, HUD, and instancing settings.
+					</p>
+				</div>
+				<div class="bx-row" style="gap: var(--bx-s2);">
+					<form method="get" action="/design/levels" class="bx-row" style="gap: var(--bx-s1);">
+						<input
+							class="bx-input"
+							type="search"
+							name="q"
+							value={ p.Search }
+							placeholder="Search levels..."
+							style="width: 220px;"
+						/>
+					</form>
+					<button
+						type="button"
+						class="bx-btn bx-btn--ghost"
+						hx-get="/design/levels/import"
+						hx-target="#modal-host"
+						hx-swap="innerHTML"
+					>+ Import</button>
+					<button
+						type="button"
+						class="bx-btn bx-btn--primary"
+						hx-get="/design/levels/new"
+						hx-target="#modal-host"
+						hx-swap="innerHTML"
+						data-copy-slot="levels.new"
+					>+ Level</button>
+				</div>
+			</header>
+
+			if len(p.Items) == 0 {
+				<div class="bx-panel bx-stack-tight">
+					<p class="bx-muted" data-copy-slot="levels.empty">No levels yet.</p>
+					<p class="bx-small bx-muted">
+						A level needs a map. <a href="/design/maps">Create a map</a> first if you don't have one.
+					</p>
+				</div>
+			} else {
+				<div class="bx-grid bx-grid--auto">
+					for _, lv := range p.Items {
+						@levelCard(lv, p.MapNames[lv.MapID], worldNameOf(lv, p.WorldNames))
+					}
+				</div>
+			}
+		</div>
+		<div id="modal-host"></div>
+	}
+}
+
+templ levelCard(lv levels.Level, mapName, worldName string) {
+	<a
+		class="bx-card bx-card--level"
+		href={ templ.URL(fmt.Sprintf("/design/levels/%d", lv.ID)) }
+	>
+		<div class="bx-row bx-row--apart">
+			<span class="bx-card__title">
+				<span class="bx-dot bx-dot--level"></span>
+				{ lv.Name }
+			</span>
+			if lv.Public {
+				<span class="bx-badge bx-badge--success">public</span>
+			}
+		</div>
+		<div class="bx-card__meta bx-small bx-muted">
+			if mapName != "" {
+				<span>map: { mapName }</span>
+			}
+			if worldName != "" {
+				<span>·</span>
+				<span>{ worldName }</span>
+			}
+			<span>·</span>
+			<span>{ lv.InstancingMode }</span>
+		</div>
+	</a>
+}
+
+func worldNameOf(lv levels.Level, names map[int64]string) string {
+	if lv.WorldID == nil {
+		return ""
+	}
+	return names[*lv.WorldID]
+}
+
+// ---- new level modal -----------------------------------------------
+
+type LevelNewMapOption struct {
+	ID   int64
+	Name string
+}
+
+type LevelNewWorldOption struct {
+	ID   int64
+	Name string
+}
+
+type LevelNewProps struct {
+	Maps   []LevelNewMapOption
+	Worlds []LevelNewWorldOption
+}
+
+templ LevelNewModal(p LevelNewProps) {
+	<div class="bx-modal-backdrop" data-bx-dismissible role="dialog" aria-modal="true">
+		<div class="bx-modal" style="width: min(480px, 95vw);">
+			<header class="bx-modal__header">
+				<h2 style="margin:0;" data-copy-slot="levels.new.title">New level</h2>
+				<button type="button" class="bx-btn bx-btn--ghost bx-btn--small"
+					hx-on:click="this.closest('.bx-modal-backdrop').remove()" aria-label="Close">Esc</button>
+			</header>
+			<form
+				class="bx-modal__body bx-stack"
+				hx-post="/design/levels"
+				hx-swap="none"
+			>
+				<label class="bx-stack-tight">
+					<span class="bx-small bx-muted">Name</span>
+					<input class="bx-input" name="name" required autofocus maxlength="64"/>
+				</label>
+				<label class="bx-stack-tight">
+					<span class="bx-small bx-muted">Map (geometry)</span>
+					if len(p.Maps) == 0 {
+						<p class="bx-small">
+							<span class="bx-badge bx-badge--warn">required</span>
+							No maps exist yet. <a href="/design/maps">Create a map</a> first.
+						</p>
+					} else {
+						<select class="bx-select" name="map_id" required>
+							for _, m := range p.Maps {
+								<option value={ fmt.Sprintf("%d", m.ID) }>{ m.Name }</option>
+							}
+						</select>
+					}
+				</label>
+				if len(p.Worlds) > 0 {
+					<label class="bx-stack-tight">
+						<span class="bx-small bx-muted">World (optional)</span>
+						<select class="bx-select" name="world_id">
+							<option value="">— Unbound —</option>
+							for _, w := range p.Worlds {
+								<option value={ fmt.Sprintf("%d", w.ID) }>{ w.Name }</option>
+							}
+						</select>
+					</label>
+				}
+				<label class="bx-row" style="gap: var(--bx-s2);">
+					<input type="checkbox" name="public" value="1" class="bx-checkbox"/>
+					<span class="bx-small">Public — players can join this level once it's pushed live.</span>
+				</label>
+				<footer class="bx-modal__footer">
+					<button
+						type="submit"
+						class="bx-btn bx-btn--primary"
+						data-copy-slot="levels.new.submit"
+						if len(p.Maps) == 0 {
+							disabled
+						}
+					>
+						Create level
+					</button>
+				</footer>
+			</form>
+		</div>
+	</div>
+}
+
+// ---- level editor shell ---------------------------------------------
+
+type LevelEditorProps struct {
+	Layout         LayoutProps
+	Level          levels.Level
+	MapName        string
+	MapWidth       int32
+	MapHeight      int32
+	WorldName      string
+	PlacementCount int
+	ActiveTab      string // "geometry" | "entities" | "hud" | "automations" | "settings"
+}
+
+templ LevelEditorPage(p LevelEditorProps) {
+	@Layout(p.Layout) {
+		<section class="bx-level-editor bx-stack">
+			<header class="bx-row bx-row--apart" style="padding: 0 var(--bx-s2);">
+				<div class="bx-row" style="gap: var(--bx-s2);">
+					<a href="/design/levels" class="bx-btn bx-btn--ghost bx-btn--small">← Levels</a>
+					<h1 style="margin: 0; font-size: 16px;">{ p.Level.Name }</h1>
+					if p.Level.Public {
+						<span class="bx-badge bx-badge--success">public</span>
+					} else {
+						<span class="bx-badge">private</span>
+					}
+					if p.MapName != "" {
+						<span class="bx-mono bx-small bx-muted">
+							map: { p.MapName } · { fmt.Sprintf("%d×%d", p.MapWidth, p.MapHeight) }
+						</span>
+					}
+				</div>
+				<div class="bx-row" style="gap: var(--bx-s2);">
+					<a
+						href={ templ.URL(fmt.Sprintf("/design/levels/%d/export", p.Level.ID)) }
+						class="bx-btn bx-btn--ghost bx-btn--small bx-row"
+						style="gap: 6px;"
+						download
+						title="Save this level (with its map, entities, HUD, and assets) as a re-importable .boxlevel.zip"
+						data-bx-export-level
+					>
+						@Icon("save")
+						<span>Export</span>
+					</a>
+					<a
+						href={ templ.URL(fmt.Sprintf("/design/sandbox/launch/%d", p.Level.ID)) }
+						class="bx-btn bx-btn--primary bx-btn--small"
+					>
+						Sandbox →
+					</a>
+				</div>
+			</header>
+
+			<nav class="bx-tabstrip" role="tablist" aria-label="Level editor tabs">
+				@levelTab(p.Level.ID, "geometry", "Geometry", p.ActiveTab)
+				@levelTab(p.Level.ID, "entities", fmt.Sprintf("Entities · %d", p.PlacementCount), p.ActiveTab)
+				@levelTab(p.Level.ID, "hud", "HUD", p.ActiveTab)
+				@levelTab(p.Level.ID, "automations", "Automations", p.ActiveTab)
+				@levelTab(p.Level.ID, "settings", "Settings", p.ActiveTab)
+			</nav>
+
+			<div class="bx-level-editor__pane">
+				switch p.ActiveTab {
+					case "entities":
+						@levelEntitiesTabStub(p)
+					case "hud":
+						@levelHUDTabStub(p)
+					case "automations":
+						@levelAutomationsTabStub(p)
+					case "settings":
+						@levelSettingsTab(p)
+					default:
+						@levelGeometryTab(p)
+				}
+			</div>
+		</section>
+	}
+}
+
+templ levelTab(levelID int64, tab, label, active string) {
+	<a
+		role="tab"
+		aria-selected?={ tab == active }
+		class={ levelTabClass(tab, active) }
+		href={ templ.URL(fmt.Sprintf("/design/levels/%d?tab=%s", levelID, tab)) }
+	>
+		{ label }
+	</a>
+}
+
+func levelTabClass(tab, active string) string {
+	if tab == active {
+		return "bx-tabstrip__tab bx-tabstrip__tab--active"
+	}
+	return "bx-tabstrip__tab"
+}
+
+// Geometry tab: jump-link to the existing mapmaker. The mapmaker is
+// where tile painting / lighting / locking / sample / constraints
+// happen — those are MAP concerns, shared by every level that
+// references the same map.
+templ levelGeometryTab(p LevelEditorProps) {
+	<div class="bx-stack">
+		<p class="bx-small bx-muted">
+			Geometry — tile placements, lighting, locks, and procedural settings — lives on the
+			<strong>map</strong> this level references. One map can back many levels.
+		</p>
+		<a
+			class="bx-btn bx-btn--primary"
+			href={ templ.URL(fmt.Sprintf("/design/maps/%d", p.Level.MapID)) }
+		>
+			Open map editor →
+		</a>
+	</div>
+}
+
+// Entities tab stub: placement editor placeholder + list link.
+templ levelEntitiesTabStub(p LevelEditorProps) {
+	<div class="bx-stack">
+		<p class="bx-muted">
+			{ fmt.Sprintf("%d non-tile entity placement%s on this level.", p.PlacementCount, pluralS(p.PlacementCount)) }
+		</p>
+		<p class="bx-small bx-muted">
+			NPCs, doors, spawn points, region triggers, and any other non-tile entities live here.
+			Phase 2 follow-up: a Pixi-canvas placement editor with drag-and-drop. The placement API
+			(<code>POST /design/levels/&lcub;id&rcub;/entities</code>) is wired and accepts JSON or form data.
+		</p>
+	</div>
+}
+
+templ levelHUDTabStub(p LevelEditorProps) {
+	<div class="bx-stack">
+		<p class="bx-small bx-muted">
+			Per-level HUD layout. The HUD editor (anchors + widgets, drag-to-reorder) is a follow-up.
+		</p>
+		<a class="bx-btn" href={ templ.URL(fmt.Sprintf("/design/levels/%d/hud", p.Level.ID)) }>
+			Open HUD editor →
+		</a>
+	</div>
+}
+
+templ levelAutomationsTabStub(p LevelEditorProps) {
+	<div class="bx-stack">
+		<p class="bx-small bx-muted">
+			Level-scoped automations and shared <em>action groups</em> ("common events"). The full
+			editor is a follow-up; the action-group repo is wired and queryable per level.
+		</p>
+	</div>
+}
+
+// Settings tab — instancing, persistence, spectator policy, public flag.
+templ levelSettingsTab(p LevelEditorProps) {
+	<div class="bx-stack">
+		<form
+			class="bx-stack"
+			hx-post={ fmt.Sprintf("/design/levels/%d/public-toggle", p.Level.ID) }
+			hx-swap="none"
+		>
+			<label class="bx-row" style="gap: var(--bx-s2);">
+				<input type="checkbox" name="public" value="1" class="bx-checkbox"
+					if p.Level.Public {
+						checked
+					}
+				/>
+				<span>Public</span>
+			</label>
+			<button type="submit" class="bx-btn bx-btn--small">Save</button>
+		</form>
+
+		<dl class="bx-defs bx-small">
+			<dt>Instancing</dt><dd>{ p.Level.InstancingMode }</dd>
+			<dt>Persistence</dt><dd>{ p.Level.PersistenceMode }</dd>
+			<dt>Spectator policy</dt><dd>{ p.Level.SpectatorPolicy }</dd>
+		</dl>
+		<p class="bx-small bx-muted">
+			Inline editors for instancing, persistence, and spectator policy are a follow-up.
+			The fields are persisted via <code>levels.Service</code> and round-trip on level export.
+		</p>
+	</div>
+}

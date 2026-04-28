@@ -1,15 +1,18 @@
 package designer
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
 
 	"boxland/server/internal/assets"
-	"boxland/server/internal/characters"
 	"boxland/server/internal/entities"
+	"boxland/server/internal/levels"
 	mapsservice "boxland/server/internal/maps"
+	"boxland/server/internal/tilemaps"
+	"boxland/server/internal/worlds"
 	"boxland/server/views"
 )
 
@@ -24,6 +27,11 @@ const themeCookieName = "bx_theme"
 // list view. Six is enough to be useful at a glance and small enough
 // to keep the chrome quiet.
 const treeItemsPerSection = 6
+
+// treeItemsPerSubSection bounds nested entity-class / library-kind
+// sub-sections. Smaller than the top-level cap so the column doesn't
+// scroll on a project with a healthy mix of kinds.
+const treeItemsPerSubSection = 4
 
 // BuildChrome populates the layout props that every shell-bearing
 // surface needs: theme, designer, project counts + draft badge, and the
@@ -41,45 +49,28 @@ func BuildChrome(r *http.Request, d Deps) views.LayoutProps {
 		Project:  views.ProjectInfo{Name: "my world"},
 	}
 
-	// Asset list (also populates count + first 6 sample items)
-	if d.Assets != nil {
-		items, err := d.Assets.List(ctx, assets.ListOpts{Limit: 200})
+	// ---- Worlds + Levels + Maps (the canonical hierarchy) -------------
+
+	if d.Worlds != nil {
+		ws, err := d.Worlds.List(ctx, worlds.ListOpts{Limit: 200})
 		if err != nil {
-			slog.Warn("chrome: list assets", "err", err)
+			slog.Warn("chrome: list worlds", "err", err)
 		} else {
-			out.Project.AssetCount = len(items)
-			out.Tree.Assets = makeAssetSection(items)
+			out.Project.WorldCount = len(ws)
+			out.Tree.Worlds = makeWorldSection(ws)
 		}
 	}
 
-	// Entity types
-	if d.Entities != nil {
-		items, err := d.Entities.List(ctx, entities.ListOpts{Limit: 200})
+	if d.Levels != nil {
+		lvs, err := d.Levels.List(ctx, levels.ListOpts{Limit: 200})
 		if err != nil {
-			slog.Warn("chrome: list entities", "err", err)
+			slog.Warn("chrome: list levels", "err", err)
 		} else {
-			out.Project.EntityCount = len(items)
-			out.Tree.Entities = makeEntitySection(items)
-		}
-
-		// Edge sockets and tile groups are "small" lists. The tree
-		// shows them but doesn't break them out by name in chrome
-		// counts (kept for the tree section only).
-		if sockets, err := d.Entities.ListSockets(ctx); err == nil {
-			out.Project.SocketCount = len(sockets)
-			out.Tree.Sockets = makeSocketSection(sockets)
-		} else {
-			slog.Warn("chrome: list sockets", "err", err)
-		}
-		if groups, err := d.Entities.ListTileGroups(ctx); err == nil {
-			out.Project.GroupCount = len(groups)
-			out.Tree.Groups = makeGroupSection(groups)
-		} else {
-			slog.Warn("chrome: list tile groups", "err", err)
+			out.Project.LevelCount = len(lvs)
+			out.Tree.Levels = makeLevelSection(lvs)
 		}
 	}
 
-	// Maps
 	if d.Maps != nil {
 		items, err := d.Maps.List(ctx, "")
 		if err != nil {
@@ -90,20 +81,63 @@ func BuildChrome(r *http.Request, d Deps) views.LayoutProps {
 		}
 	}
 
-	// Characters (NPC templates power the tree section; full counts
-	// also include slots + parts but the tree shows NPC templates as
-	// the most-actionable rollup).
-	if d.Characters != nil {
-		items, err := d.Characters.ListNpcTemplates(ctx)
-		if err != nil {
-			slog.Warn("chrome: list npc templates", "err", err)
+	// ---- Entities (split by class) -----------------------------------
+
+	if d.Entities != nil {
+		// One ListByClass call per class. N+1 by class is fine — there
+		// are exactly four classes by construction. Each is bounded by
+		// treeItemsPerSubSection.
+		out.Tree.TileEntities = makeEntitySectionByClass(ctx, d.Entities, entities.ClassTile, "/design/entities/tiles")
+		out.Tree.NPCEntities = makeEntitySectionByClass(ctx, d.Entities, entities.ClassNPC, "/design/entities/npcs")
+		out.Tree.PCEntities = makeEntitySectionByClass(ctx, d.Entities, entities.ClassPC, "/design/entities/pcs")
+		out.Tree.LogicEntities = makeEntitySectionByClass(ctx, d.Entities, entities.ClassLogic, "/design/entities/logic")
+		out.Project.TileEntityCount = out.Tree.TileEntities.Total
+		out.Project.NPCEntityCount = out.Tree.NPCEntities.Total
+		out.Project.PCEntityCount = out.Tree.PCEntities.Total
+		out.Project.LogicEntityCount = out.Tree.LogicEntities.Total
+		out.Project.EntityCount =
+			out.Project.TileEntityCount + out.Project.NPCEntityCount +
+				out.Project.PCEntityCount + out.Project.LogicEntityCount
+	}
+
+	// ---- Library kinds -----------------------------------------------
+
+	if d.Assets != nil {
+		// Sprites
+		if items, err := d.Assets.List(ctx, assets.ListOpts{Kind: assets.KindSprite, Limit: 200}); err != nil {
+			slog.Warn("chrome: list sprites", "err", err)
 		} else {
-			out.Project.CharacterCount = len(items)
-			out.Tree.Characters = makeCharacterSection(items)
+			out.Project.SpriteCount = len(items)
+			out.Tree.Sprites = makeAssetSection(items, "sprite", "/design/library/sprites")
+		}
+		// Audio
+		if items, err := d.Assets.List(ctx, assets.ListOpts{Kind: assets.KindAudio, Limit: 200}); err != nil {
+			slog.Warn("chrome: list audio", "err", err)
+		} else {
+			out.Project.AudioCount = len(items)
+			out.Tree.Audio = makeAssetSection(items, "audio", "/design/library/audio")
+		}
+		// UI panels
+		if items, err := d.Assets.List(ctx, assets.ListOpts{Kind: assets.KindUIPanel, Limit: 200}); err != nil {
+			slog.Warn("chrome: list ui panels", "err", err)
+		} else {
+			out.Project.UIPanelCount = len(items)
+			out.Tree.UIPanels = makeAssetSection(items, "ui_panel", "/design/library/ui-panels")
 		}
 	}
 
-	// Pending drafts badge
+	if d.Tilemaps != nil {
+		tms, err := d.Tilemaps.List(ctx, tilemaps.ListOpts{Limit: 200})
+		if err != nil {
+			slog.Warn("chrome: list tilemaps", "err", err)
+		} else {
+			out.Project.TilemapCount = len(tms)
+			out.Tree.Tilemaps = makeTilemapSection(tms)
+		}
+	}
+
+	// ---- Drafts + update badge ---------------------------------------
+
 	if d.PublishPipeline != nil {
 		if n, err := d.PublishPipeline.CountDrafts(ctx); err == nil {
 			out.Project.DraftCount = n
@@ -112,9 +146,6 @@ func BuildChrome(r *http.Request, d Deps) views.LayoutProps {
 		}
 	}
 
-	// Update pill. Cached-only read — the TLI is the only place
-	// that refreshes the GitHub probe, so a designer hitting the
-	// page 100x in a session never spends a quota call.
 	if d.Updates != nil {
 		if s := d.Updates.Cached(); s != nil && s.HasUpdate {
 			out.UpdateBadge = &views.UpdateBadge{
@@ -148,40 +179,62 @@ func readThemeCookie(r *http.Request) string {
 
 // ---- per-kind tree builders ----
 
-func makeAssetSection(items []assets.Asset) views.IndexSection {
+func makeAssetSection(items []assets.Asset, kindLabel, listHref string) views.IndexSection {
 	out := views.IndexSection{Total: len(items)}
 	for _, a := range items {
-		if len(out.Items) >= treeItemsPerSection {
+		if len(out.Items) >= treeItemsPerSubSection {
 			break
 		}
 		out.Items = append(out.Items, views.IndexItem{
 			ID:   a.ID,
 			Name: a.Name,
 			Meta: kindMeta(string(a.Kind)),
-			Href: fmt.Sprintf("/design/assets#%d", a.ID), // anchor-scrolls to the asset card
+			Href: fmt.Sprintf("%s#%d", listHref, a.ID),
 		})
 	}
 	return out
 }
 
-func makeEntitySection(items []entities.EntityType) views.IndexSection {
+func makeTilemapSection(items []tilemaps.Tilemap) views.IndexSection {
+	out := views.IndexSection{Total: len(items)}
+	for _, tm := range items {
+		if len(out.Items) >= treeItemsPerSubSection {
+			break
+		}
+		out.Items = append(out.Items, views.IndexItem{
+			ID:   tm.ID,
+			Name: tm.Name,
+			Meta: fmt.Sprintf("%d×%d", tm.Cols, tm.Rows),
+			Href: fmt.Sprintf("/design/tilemaps/%d", tm.ID),
+		})
+	}
+	return out
+}
+
+func makeEntitySectionByClass(ctx context.Context, esvc *entities.Service, class entities.Class, listHref string) views.IndexSection {
+	items, err := esvc.ListByClass(ctx, class, entities.ListOpts{Limit: 200})
+	if err != nil {
+		slog.Warn("chrome: list entities by class", "class", class, "err", err)
+		return views.IndexSection{}
+	}
 	out := views.IndexSection{Total: len(items)}
 	for _, e := range items {
-		if len(out.Items) >= treeItemsPerSection {
+		if len(out.Items) >= treeItemsPerSubSection {
 			break
 		}
 		warn := ""
-		if e.SpriteAssetID == nil {
+		if class != entities.ClassLogic && e.SpriteAssetID == nil {
 			warn = "no sprite assigned"
 		}
 		out.Items = append(out.Items, views.IndexItem{
 			ID:   e.ID,
 			Name: e.Name,
-			Meta: entityMeta(e),
+			Meta: entityMetaCompact(e),
 			Warn: warn,
 			Href: fmt.Sprintf("/design/entities/%d", e.ID),
 		})
 	}
+	_ = listHref // reserved; sub-section already wires its ListHref
 	return out
 }
 
@@ -201,53 +254,41 @@ func makeMapSection(items []mapsservice.Map) views.IndexSection {
 	return out
 }
 
-func makeSocketSection(items []entities.EdgeSocketType) views.IndexSection {
+func makeWorldSection(items []worlds.World) views.IndexSection {
 	out := views.IndexSection{Total: len(items)}
-	for _, s := range items {
-		if len(out.Items) >= treeItemsPerSection {
-			break
-		}
-		out.Items = append(out.Items, views.IndexItem{
-			ID:   s.ID,
-			Name: s.Name,
-			Href: "/design/sockets",
-		})
-	}
-	return out
-}
-
-func makeGroupSection(items []entities.TileGroup) views.IndexSection {
-	out := views.IndexSection{Total: len(items)}
-	for _, g := range items {
-		if len(out.Items) >= treeItemsPerSection {
-			break
-		}
-		out.Items = append(out.Items, views.IndexItem{
-			ID:   g.ID,
-			Name: g.Name,
-			Meta: fmt.Sprintf("%d×%d", g.Width, g.Height),
-			Href: fmt.Sprintf("/design/tile-groups/%d", g.ID),
-		})
-	}
-	return out
-}
-
-func makeCharacterSection(items []characters.NpcTemplate) views.IndexSection {
-	out := views.IndexSection{Total: len(items)}
-	for _, n := range items {
+	for _, w := range items {
 		if len(out.Items) >= treeItemsPerSection {
 			break
 		}
 		warn := ""
-		if n.ActiveBakeID == nil {
-			warn = "no bake yet"
+		if w.StartLevelID == nil {
+			warn = "no start level"
 		}
 		out.Items = append(out.Items, views.IndexItem{
-			ID:   n.ID,
-			Name: n.Name,
-			Meta: "npc",
+			ID:   w.ID,
+			Name: w.Name,
 			Warn: warn,
-			Href: fmt.Sprintf("/design/characters/npc-templates/%d", n.ID),
+			Href: fmt.Sprintf("/design/worlds/%d", w.ID),
+		})
+	}
+	return out
+}
+
+func makeLevelSection(items []levels.Level) views.IndexSection {
+	out := views.IndexSection{Total: len(items)}
+	for _, lv := range items {
+		if len(out.Items) >= treeItemsPerSection {
+			break
+		}
+		meta := ""
+		if lv.Public {
+			meta = "public"
+		}
+		out.Items = append(out.Items, views.IndexItem{
+			ID:   lv.ID,
+			Name: lv.Name,
+			Meta: meta,
+			Href: fmt.Sprintf("/design/levels/%d", lv.ID),
 		})
 	}
 	return out
@@ -259,35 +300,52 @@ func kindMeta(kind string) string {
 	switch kind {
 	case "sprite":
 		return "spr"
-	case "tile":
-		return "til"
+	case "sprite_animated":
+		return "anim"
 	case "audio":
 		return "aud"
+	case "ui_panel":
+		return "9-slice"
 	default:
 		return ""
 	}
 }
 
-func entityMeta(e entities.EntityType) string {
-	for _, t := range e.Tags {
-		switch t {
-		case "tile", "npc", "item", "trigger":
-			return t
+// entityMetaCompact returns the small chip on a tree row. We don't
+// repeat the class name (the tree section already calls it out); we
+// surface the most useful per-entity hint instead — an atlas index
+// for tile entities, a tag for npcs, a recipe presence for pcs, a
+// tag for logic.
+func entityMetaCompact(e entities.EntityType) string {
+	switch e.EntityClass {
+	case entities.ClassTile:
+		if e.CellCol != nil && e.CellRow != nil {
+			return fmt.Sprintf("r%dc%d", *e.CellRow, *e.CellCol)
 		}
+		return "tile"
+	case entities.ClassNPC:
+		if e.RecipeID == nil {
+			return "no recipe"
+		}
+		return "npc"
+	case entities.ClassPC:
+		return "pc"
+	default:
+		if len(e.Tags) > 0 {
+			return e.Tags[0]
+		}
+		return "logic"
 	}
-	if len(e.Tags) > 0 {
-		return e.Tags[0]
-	}
-	return "ent"
 }
 
 func mapMeta(m mapsservice.Map) string {
 	if m.Mode == "procedural" {
 		return "proc"
 	}
-	// Compact "64²" if square, else "64×96"
 	if m.Width == m.Height {
 		return strconv.FormatInt(int64(m.Width), 10) + "²"
 	}
 	return fmt.Sprintf("%d×%d", m.Width, m.Height)
 }
+
+

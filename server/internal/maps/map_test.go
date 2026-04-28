@@ -287,12 +287,11 @@ func TestMapHandler_PublishUpdatesRow(t *testing.T) {
 		Name: "old-map-name", Width: 8, Height: 8, CreatedBy: designerID,
 	})
 
+	seed := int64(42)
 	draft := maps.MapDraft{
-		Name:            "new-map-name",
-		Public:          true,
-		InstancingMode:  "per_user",
-		PersistenceMode: "transient",
-		SpectatorPolicy: "private",
+		Name: "new-map-name",
+		Mode: "procedural",
+		Seed: &seed,
 	}
 	body, _ := json.Marshal(draft)
 	if _, err := pool.Exec(ctx,
@@ -311,9 +310,7 @@ func TestMapHandler_PublishUpdatesRow(t *testing.T) {
 	}
 
 	got, _ := svc.FindByID(ctx, live.ID)
-	if got.Name != "new-map-name" || !got.Public ||
-		got.InstancingMode != "per_user" || got.PersistenceMode != "transient" ||
-		got.SpectatorPolicy != "private" {
+	if got.Name != "new-map-name" || got.Mode != "procedural" || got.Seed == nil || *got.Seed != 42 {
 		t.Errorf("draft did not apply: %+v", got)
 	}
 }
@@ -325,11 +322,11 @@ func TestMapHandler_RejectsBadEnum(t *testing.T) {
 	svc := maps.New(pool)
 	h := maps.NewHandler(svc)
 
-	body, _ := json.Marshal(maps.MapDraft{Name: "x", InstancingMode: "weird"})
+	body, _ := json.Marshal(maps.MapDraft{Name: "x", Mode: "weird"})
 	if err := h.Validate(context.Background(), artifact.DraftRow{
 		ArtifactKind: artifact.KindMap,
 		DraftJSON:    body,
 	}); err == nil {
-		t.Error("expected validation error for bogus instancing_mode")
+		t.Error("expected validation error for bogus mode")
 	}
 }

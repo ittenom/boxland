@@ -1,6 +1,6 @@
 // Boxland — Redis Streams WAL.
 //
-// One stream per (map_id, instance_id), keyed wal:map:{map}:{instance}.
+// One stream per (level_id, instance_id), keyed wal:level:{level}:{instance}.
 // Each entry is a FlatBuffers-encoded Mutation. The single writer for a
 // given instance is the goroutine that owns its tick loop; readers are
 // the recovery boot path and (later) spectator/replay tooling.
@@ -9,7 +9,7 @@
 // (default 20 = ~2s at 10Hz). Flush:
 //   1. Collects every WAL entry since the last flushed (tick, seq).
 //   2. Encodes a fresh MapState blob from the in-memory world.
-//   3. Upserts (map_state) + XTRIM MINID the stream to last-flushed in
+//   3. Upserts (level_state) + XTRIM MINID the stream to last-flushed in
 //      a single coordinated step. Postgres tx + Redis trim are not in
 //      one atomic transaction; we tolerate the brief overlap (a crash
 //      between Postgres commit and XTRIM means recovery replays already-
@@ -45,7 +45,7 @@ var ErrWALFull = errors.New("persist: WAL near MAXLEN with unflushed entries")
 // WAL is the per-instance write-ahead log.
 type WAL struct {
 	cli         rueidis.Client
-	mapID       uint32
+	levelID     uint32
 	instanceID  string
 	streamKey   string
 
@@ -55,13 +55,13 @@ type WAL struct {
 	flushFailing bool
 }
 
-// NewWAL constructs a WAL bound to (mapID, instanceID).
-func NewWAL(cli rueidis.Client, mapID uint32, instanceID string) *WAL {
+// NewWAL constructs a WAL bound to (levelID, instanceID).
+func NewWAL(cli rueidis.Client, levelID uint32, instanceID string) *WAL {
 	return &WAL{
 		cli:        cli,
-		mapID:      mapID,
+		levelID:    levelID,
 		instanceID: instanceID,
-		streamKey:  fmt.Sprintf("wal:map:%d:%s", mapID, instanceID),
+		streamKey:  fmt.Sprintf("wal:level:%d:%s", levelID, instanceID),
 	}
 }
 

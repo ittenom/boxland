@@ -144,7 +144,7 @@ func TestSmoke_DesignerToPlayerEndToEnd(t *testing.T) {
 	// --- 3. Map ---
 	mapsSvc := maps.New(pool)
 	m, err := mapsSvc.Create(ctx, maps.CreateInput{
-		Name: "smoke-map", Width: 64, Height: 64, Public: true, CreatedBy: d.ID,
+		Name: "smoke-map", Width: 64, Height: 64, CreatedBy: d.ID,
 	})
 	if err != nil {
 		t.Fatalf("create map: %v", err)

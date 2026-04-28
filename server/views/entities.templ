@@ -17,6 +17,11 @@ type EntitiesListProps struct {
 	// what's active so the trim is never invisible to the user.
 	ActiveFilter string
 
+	// ActiveClass scopes the list to one entity class
+	// (tile|npc|pc|logic). Empty = all classes (the overview page).
+	// Set by the per-class routes (/design/entities/{tiles|npcs|...}).
+	ActiveClass string
+
 	// ModalSlot is an optional pre-rendered modal that gets injected
 	// into #modal-host on first paint. Used when a deep link to an
 	// entity (full-page navigation, new tab, bookmark, or an

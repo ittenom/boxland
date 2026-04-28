@@ -6,14 +6,14 @@ import (
 	"fmt"
 )
 
-// ActionGroup is one row from map_action_groups, decoded.
+// ActionGroup is one row from level_action_groups, decoded.
 //
 // Indie-RPG research §P1 #10 ("common events"). Designers define a
 // reusable action chain once and call it from many automations via the
 // call_action_group action.
 type ActionGroup struct {
 	ID      int64
-	MapID   int64
+	LevelID int64
 	Name    string
 	Actions []ActionNode
 }
@@ -43,7 +43,7 @@ var (
 // CompiledActionGroup index. It performs three publish-time checks
 // designers benefit from seeing BEFORE the realm goes live:
 //
-//   1. Duplicate names -- the (map_id, name) UNIQUE constraint catches
+//   1. Duplicate names -- the (level_id, name) UNIQUE constraint catches
 //      this at the DB layer too, but we want a typed error before the
 //      INSERT fires.
 //   2. Unknown call targets -- a call_action_group action whose `name`

@@ -40,6 +40,7 @@ import (
 	"boxland/server/internal/folders"
 	"boxland/server/internal/httpserver"
 	"boxland/server/internal/hud"
+	"boxland/server/internal/levels"
 	"boxland/server/internal/logging"
 	mapsservice "boxland/server/internal/maps"
 	"boxland/server/internal/persistence"
@@ -47,9 +48,11 @@ import (
 	"boxland/server/internal/publishing/artifact"
 	"boxland/server/internal/settings"
 	"boxland/server/internal/sim/runtime"
+	"boxland/server/internal/tilemaps"
 	"boxland/server/internal/tli"
 	"boxland/server/internal/updater"
 	bversion "boxland/server/internal/version"
+	"boxland/server/internal/worlds"
 	"boxland/server/internal/ws"
 )
 
@@ -803,6 +806,9 @@ func runServe() error {
 	componentRegistry := components.Default()
 	entitySvc := entities.New(pgPool, componentRegistry)
 	mapsSvc := mapsservice.New(pgPool)
+	tilemapsSvc := tilemaps.New(pgPool, assetSvc, entitySvc)
+	levelsSvc := levels.New(pgPool)
+	worldsSvc := worlds.New(pgPool)
 	foldersSvc := folders.New(pgPool)
 	settingsSvc := settings.New(pgPool)
 	charactersSvc := characters.New(pgPool)
@@ -890,8 +896,9 @@ func runServe() error {
 	wsDispatcher := ws.NewDispatcher()
 	ws.RegisterDefaultVerbs(wsDispatcher)
 	authoringDeps := ws.AuthoringDeps{
-		MapsService: mapsSvc,
-		Instances:   instanceMgr,
+		MapsService:   mapsSvc,
+		LevelsService: levelsSvc,
+		Instances:     instanceMgr,
 	}
 	ws.RegisterAuthoringVerbs(wsDispatcher, authoringDeps)
 	ws.RegisterSpectatorVerb(wsDispatcher, authoringDeps)
@@ -909,7 +916,10 @@ func runServe() error {
 		Entities:           entitySvc,
 		Components:         componentRegistry,
 		Folders:            foldersSvc,
+		Tilemaps:           tilemapsSvc,
 		Maps:               mapsSvc,
+		Levels:             levelsSvc,
+		Worlds:             worldsSvc,
 		Importers:          importerRegistry,
 		BakeJob:            bakeJob,
 		PublishPipeline:    publishPipeline,
@@ -934,6 +944,7 @@ func runServe() error {
 	playerWebDeps := playerweb.Deps{
 		Auth:          playerAuthSvc,
 		Maps:          mapsSvc,
+		Levels:        levelsSvc,
 		Settings:      settingsSvc,
 		HUD:           hudRepo,
 		Assets:        assetSvc, // /play/asset-catalog reads from this
@@ -1009,7 +1020,7 @@ func runServe() error {
 		}
 		if err := mi.Persister.Flush(shutdownCtx, mi.PersistFlushInputs()); err != nil {
 			slog.Warn("graceful shutdown: persister flush",
-				"map_id", mi.MapID, "instance_id", mi.InstanceID, "err", err)
+				"level_id", mi.LevelID, "instance_id", mi.InstanceID, "err", err)
 		}
 	}
 	slog.Info("boxland stopped")

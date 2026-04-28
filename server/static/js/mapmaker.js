@@ -493,11 +493,11 @@
 			const map = { b: "brush", r: "rect", f: "fill", i: "eyedrop", e: "eraser", l: "lock", s: "sample" };
 			if (map[k] && !mod && !e.altKey) { setTool(state, map[k]); e.preventDefault(); return; }
 			if (k === "t" && !mod && !e.altKey) { cycleRotation(state); e.preventDefault(); return; }
-			if (k === "h" && !mod && !e.altKey) {
-				const host = document.querySelector("[data-bx-mapmaker-canvas]");
-				const mapId = host && host.getAttribute("data-map-id");
-				if (mapId) { window.location.href = "/design/maps/" + mapId + "/hud"; e.preventDefault(); }
-			}
+			// H used to jump to the per-map HUD editor, but HUD lives
+			// on LEVELs in the holistic redesign; a map can back many
+			// levels (each with its own HUD), so a map-scoped HUD
+			// hotkey isn't unambiguous. Designers reach the HUD from
+			// the level editor's HUD tab.
 		});
 
 		function floodFill(state, sx, sy, w, h) {

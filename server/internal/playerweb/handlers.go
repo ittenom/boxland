@@ -1,6 +1,7 @@
 package playerweb
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"boxland/server/internal/auth/player"
 	"boxland/server/internal/characters"
 	"boxland/server/internal/hud"
+	"boxland/server/internal/levels"
 	"boxland/server/internal/maps"
 	"boxland/server/internal/persistence"
 	"boxland/server/internal/settings"
@@ -26,11 +28,12 @@ import (
 // Deps shape; nil-pointer access at runtime indicates a wiring bug in
 // cmd/boxland/main.go.
 type Deps struct {
-	Auth          *player.Service
-	Maps          *maps.Service
-	Settings      *settings.Service
-	HUD           *hud.Repo // per-realm HUD layouts (read-only on the player surface)
-	Assets        *assets.Service             // sprite catalog + animations for the renderer
+	Auth   *player.Service
+	Maps   *maps.Service
+	Levels *levels.Service // public LEVELs are what players join (not raw maps)
+	Settings *settings.Service
+	HUD    *hud.Repo // per-realm HUD layouts (read-only on the player surface)
+	Assets *assets.Service             // sprite catalog + animations for the renderer
 	ObjectStore   *persistence.ObjectStore    // public URLs for the asset catalog endpoint
 	Characters    *characters.Service         // player character creator + catalog
 	SecureCookies bool      // true in prod; false in dev so http://localhost works
@@ -158,10 +161,30 @@ func getMaps(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p := PlayerFromContext(r.Context())
 		search := strings.TrimSpace(r.URL.Query().Get("q"))
-		items, err := d.Maps.ListPublic(r.Context(), search)
+		// Per the holistic redesign, players pick LEVELs (a level
+		// references a map for geometry; HUD/instancing/public live
+		// on the level). The handler still renders through the
+		// PlayMapsPage view for compat with Phase 1b — Phase 2
+		// rebrands the page as "play levels" and uses level cards.
+		// For now we look up the levels' backing maps so the existing
+		// view template can stay unchanged.
+		lvls, err := d.Levels.List(r.Context(), levels.ListOpts{
+			OnlyPublic: true,
+			Search:     search,
+		})
 		if err != nil {
-			http.Error(w, "list maps: "+err.Error(), http.StatusInternalServerError)
+			http.Error(w, "list levels: "+err.Error(), http.StatusInternalServerError)
 			return
+		}
+		// Resolve each level's backing map. Single round-trip per
+		// level; tiny N for v1. Replace with a join in Phase 2.
+		items := make([]maps.Map, 0, len(lvls))
+		for _, lv := range lvls {
+			m, err := d.Maps.FindByID(r.Context(), lv.MapID)
+			if err != nil || m == nil {
+				continue
+			}
+			items = append(items, *m)
 		}
 		render(w, r, views.PlayMapsPage(views.PlayMapsProps{
 			Player:     displayName(p),
@@ -190,10 +213,17 @@ func getGame(d Deps) http.HandlerFunc {
 			http.Error(w, "find map: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		// Only public maps are reachable from the picker; reject direct
-		// URL access to private maps so curious players can't discover
-		// names by id-bumping.
-		if !m.Public {
+		// "Public" lives on LEVELs in the redesigned schema. For
+		// Phase 1b: gate on "is there ANY public level backing this
+		// map?" so id-bumping still can't enumerate non-public maps.
+		// Phase 2 reshapes the route to /play/level/{id} and the
+		// public check becomes trivial.
+		hasPublic, err := mapHasPublicLevel(r.Context(), d.Levels, m.ID)
+		if err != nil {
+			http.Error(w, "level lookup: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !hasPublic {
 			http.NotFound(w, r)
 			return
 		}
@@ -237,7 +267,8 @@ func getMapHUD(d Deps) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
-		if !m.Public {
+		hasPublic, err := mapHasPublicLevel(r.Context(), d.Levels, m.ID)
+		if err != nil || !hasPublic {
 			http.NotFound(w, r)
 			return
 		}
@@ -372,4 +403,25 @@ func render(w http.ResponseWriter, r *http.Request, c templ.Component) {
 	if err := c.Render(r.Context(), w); err != nil {
 		slog.Error("playerweb render", "err", err)
 	}
+}
+
+// mapHasPublicLevel returns true when at least one public level uses
+// `mapID` as its backing geometry. Phase 1b shim — the proper fix is
+// to drop the /play/maps/{id} URL space entirely and route to
+// /play/level/{id} (Phase 2). Until then, this preserves the original
+// "id-bumping can't enumerate non-public maps" guarantee.
+func mapHasPublicLevel(ctx context.Context, lsvc *levels.Service, mapID int64) (bool, error) {
+	if lsvc == nil {
+		return false, nil
+	}
+	out, err := lsvc.List(ctx, levels.ListOpts{OnlyPublic: true, Limit: 1024})
+	if err != nil {
+		return false, err
+	}
+	for _, lv := range out {
+		if lv.MapID == mapID {
+			return true, nil
+		}
+	}
+	return false, nil
 }

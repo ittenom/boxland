@@ -227,7 +227,7 @@ func TestMaterializeProcedural_PersistsTilesAndUpdatesSeed(t *testing.T) {
 	svc := maps.New(pool)
 	m, err := svc.Create(context.Background(), maps.CreateInput{
 		Name: "world", Width: 6, Height: 6, CreatedBy: designerID,
-		Mode: "procedural", PersistenceMode: "persistent",
+		Mode: "procedural",
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -291,22 +291,10 @@ func TestMaterializeProcedural_RejectsAuthoredMaps(t *testing.T) {
 	}
 }
 
-func TestMaterializeProcedural_RejectsTransientMaps(t *testing.T) {
-	pool := openTestPool(t)
-	defer pool.Close()
-	designerID, _ := resetDB(t, pool)
-	svc := maps.New(pool)
-	m, _ := svc.Create(context.Background(), maps.CreateInput{
-		Name: "transient", Width: 4, Height: 4, CreatedBy: designerID,
-		Mode: "procedural", PersistenceMode: "transient",
-	})
-	_, err := svc.MaterializeProcedural(context.Background(), maps.MaterializeProceduralInput{
-		MapID: m.ID, Seed: 1,
-	})
-	if !errors.Is(err, maps.ErrNotPersistent) {
-		t.Fatalf("expected ErrNotPersistent, got %v", err)
-	}
-}
+// (TestMaterializeProcedural_RejectsTransientMaps removed: persistence_mode
+// no longer lives on maps. It moved to LEVELs in the holistic redesign;
+// materialization always writes to map_tiles, which is the canonical
+// authored geometry.)
 
 func TestProceduralPreview_DeterministicForSameSeed(t *testing.T) {
 	pool := openTestPool(t)

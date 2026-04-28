@@ -160,11 +160,11 @@ func TestUpload_KindOverride(t *testing.T) {
 
 	res, err := svc.Upload(context.Background(),
 		makeUploadRequest(t, "wall.png", body, "image/png"),
-		store, designerID, assets.KindTile)
+		store, designerID, assets.KindSpriteAnimated)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Asset.Kind != assets.KindTile {
+	if res.Asset.Kind != assets.KindSpriteAnimated {
 		t.Errorf("override should win; got %q", res.Asset.Kind)
 	}
 }
@@ -237,11 +237,14 @@ func TestUpload_AutoDetectsMultiCellPNGAsTileSheet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Upload: %v", err)
 	}
-	if res.Asset.Kind != assets.KindTile {
-		t.Fatalf("auto-detected kind = %q, want tile", res.Asset.Kind)
+	if res.Asset.Kind != assets.KindSpriteAnimated {
+		t.Fatalf("auto-detected kind = %q, want sprite_animated", res.Asset.Kind)
 	}
-	if len(res.TileCells) != 2 {
-		t.Fatalf("TileCells len = %d, want 2", len(res.TileCells))
+	if !res.TilemapEligible {
+		t.Fatalf("multi-cell PNG should be flagged as TilemapEligible")
+	}
+	if len(res.TilemapCells) != 2 {
+		t.Fatalf("TilemapCells len = %d, want 2", len(res.TilemapCells))
 	}
 	if !strings.Contains(string(res.Asset.MetadataJSON), `"non_empty_count"`) {
 		t.Errorf("tile metadata missing non_empty_count: %s", res.Asset.MetadataJSON)

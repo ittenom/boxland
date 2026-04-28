@@ -1,7 +1,7 @@
 // Package hud is the per-realm player-facing HUD: typed layout schema,
 // widget catalog, binding-ref parser, and the publish-time validator.
 //
-// One Layout per realm. Lives on maps.hud_layout_json (migration 0031).
+// One Layout per realm. Lives on levels.hud_layout_json (migration 0031).
 // The Pixi-side renderer at web/src/render/hud.ts consumes the same
 // layout shape (sent as a one-shot HudLayoutFrame on JoinMap).
 //

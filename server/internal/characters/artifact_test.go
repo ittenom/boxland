@@ -310,7 +310,10 @@ func TestNpcTemplateHandler_PublishUpdatesLiveRow(t *testing.T) {
 		}
 		var name string
 		var tags []string
-		if err := tx.QueryRow(ctx, `SELECT name, tags FROM npc_templates WHERE id = $1`, row.ID).Scan(&name, &tags); err != nil {
+		if err := tx.QueryRow(ctx,
+			`SELECT name, tags FROM entity_types WHERE id = $1 AND entity_class = 'npc'`,
+			row.ID,
+		).Scan(&name, &tags); err != nil {
 			t.Fatalf("readback: %v", err)
 		}
 		if name != "Goblin (chief)" {

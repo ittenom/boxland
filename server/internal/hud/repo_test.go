@@ -9,6 +9,7 @@ import (
 
 	authdesigner "boxland/server/internal/auth/designer"
 	"boxland/server/internal/hud"
+	"boxland/server/internal/levels"
 	"boxland/server/internal/maps"
 	"boxland/server/internal/persistence/testdb"
 )
@@ -19,7 +20,10 @@ func openPool(t *testing.T) *pgxpool.Pool {
 	return testdb.New(t)
 }
 
-func seed(t *testing.T, pool *pgxpool.Pool, name string) (designerID, mapID int64) {
+// seed returns (designerID, levelID). The hud.Repo now reads/writes the
+// levels.hud_layout_json column, so callers need a real level row, not
+// just a map id.
+func seed(t *testing.T, pool *pgxpool.Pool, name string) (designerID, levelID int64) {
 	t.Helper()
 	auth := authdesigner.New(pool)
 	d, err := auth.CreateDesigner(context.Background(), name+"@x.com", "p", authdesigner.RoleEditor)
@@ -33,16 +37,22 @@ func seed(t *testing.T, pool *pgxpool.Pool, name string) (designerID, mapID int6
 	if err != nil {
 		t.Fatalf("create map: %v", err)
 	}
-	return d.ID, m.ID
+	lv, err := levels.New(pool).Create(context.Background(), levels.CreateInput{
+		Name: "hud-test-level-" + name, MapID: m.ID, CreatedBy: d.ID,
+	})
+	if err != nil {
+		t.Fatalf("create level: %v", err)
+	}
+	return d.ID, lv.ID
 }
 
 func TestRepo_GetEmpty_ReturnsCanonicalEmpty(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
 
-	designerID, mapID := seed(t, pool, "empty")
+	designerID, levelID := seed(t, pool, "empty")
 	repo := &hud.Repo{Pool: pool}
-	got, err := repo.Get(context.Background(), mapID, designerID)
+	got, err := repo.Get(context.Background(), levelID, designerID)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -58,18 +68,18 @@ func TestRepo_Mutate_AddsAndPersists(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
 
-	designerID, mapID := seed(t, pool, "mutate")
+	designerID, levelID := seed(t, pool, "mutate")
 	repo := &hud.Repo{Pool: pool}
 	reg := hud.DefaultRegistry()
 
-	if _, err := repo.Mutate(context.Background(), mapID, designerID, func(l *hud.Layout) error {
+	if _, err := repo.Mutate(context.Background(), levelID, designerID, func(l *hud.Layout) error {
 		_, err := l.AddWidget(hud.AnchorBottomLeft, hud.WidgetMiniClock, reg)
 		return err
 	}); err != nil {
 		t.Fatalf("mutate: %v", err)
 	}
 	// Re-load and confirm the widget landed.
-	got, err := repo.Get(context.Background(), mapID, designerID)
+	got, err := repo.Get(context.Background(), levelID, designerID)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -86,22 +96,22 @@ func TestRepo_TenantIsolation(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
 
-	dA, mapA := seed(t, pool, "alice")
-	dB, mapB := seed(t, pool, "bob")
-	_ = mapB
+	dA, levelA := seed(t, pool, "alice")
+	dB, levelB := seed(t, pool, "bob")
+	_ = levelB
 
 	repo := &hud.Repo{Pool: pool}
 	reg := hud.DefaultRegistry()
 
-	// Alice mutates her own map (allowed).
-	if _, err := repo.Mutate(context.Background(), mapA, dA, func(l *hud.Layout) error {
+	// Alice mutates her own level (allowed).
+	if _, err := repo.Mutate(context.Background(), levelA, dA, func(l *hud.Layout) error {
 		_, err := l.AddWidget(hud.AnchorTopLeft, hud.WidgetMiniClock, reg)
 		return err
 	}); err != nil {
 		t.Fatalf("alice mutate: %v", err)
 	}
-	// Bob tries to mutate Alice's map (denied).
-	_, err := repo.Mutate(context.Background(), mapA, dB, func(l *hud.Layout) error {
+	// Bob tries to mutate Alice's level (denied).
+	_, err := repo.Mutate(context.Background(), levelA, dB, func(l *hud.Layout) error {
 		return nil
 	})
 	if !errors.Is(err, hud.ErrNotFound) {
@@ -109,7 +119,7 @@ func TestRepo_TenantIsolation(t *testing.T) {
 	}
 	// Bob can read the public-player path (no owner filter), but NOT the
 	// designer Get (which scopes by created_by).
-	if _, err := repo.Get(context.Background(), mapA, dB); !errors.Is(err, hud.ErrNotFound) {
+	if _, err := repo.Get(context.Background(), levelA, dB); !errors.Is(err, hud.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound on cross-tenant Get, got %v", err)
 	}
 }

@@ -12,12 +12,12 @@ import (
 	"boxland/server/internal/sim/ecs"
 )
 
-// Persister coordinates Postgres + WAL for one map instance. Owns the
+// Persister coordinates Postgres + WAL for one level instance. Owns the
 // flush + recovery flow.
 type Persister struct {
 	pool       *pgxpool.Pool
 	wal        *WAL
-	mapID      uint32
+	levelID    uint32
 	instanceID string
 
 	lastFlushedTick uint64
@@ -25,18 +25,18 @@ type Persister struct {
 }
 
 // NewPersister binds the database + WAL.
-func NewPersister(pool *pgxpool.Pool, wal *WAL, mapID uint32, instanceID string) *Persister {
+func NewPersister(pool *pgxpool.Pool, wal *WAL, levelID uint32, instanceID string) *Persister {
 	return &Persister{
 		pool:          pool,
 		wal:           wal,
-		mapID:         mapID,
+		levelID:       levelID,
 		instanceID:    instanceID,
 		lastFlushedID: "0-0",
 	}
 }
 
 // Flush serializes the world into a MapState blob, upserts it into
-// map_state, and trims the WAL up to the flushed tick. Marks the WAL
+// level_state, and trims the WAL up to the flushed tick. Marks the WAL
 // "failing" on Postgres errors so subsequent Appends honor backpressure.
 //
 // Inputs are passed in (rather than the persister holding world refs)
@@ -66,15 +66,15 @@ func (p *Persister) Flush(ctx context.Context, in EncodeInputs) error {
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO map_state (map_id, instance_id, state_blob_fb, last_flushed_tick, updated_at)
+		INSERT INTO level_state (level_id, instance_id, state_blob_fb, last_flushed_tick, updated_at)
 		VALUES ($1, $2, $3, $4, now())
-		ON CONFLICT (map_id, instance_id) DO UPDATE
+		ON CONFLICT (level_id, instance_id) DO UPDATE
 		SET state_blob_fb = EXCLUDED.state_blob_fb,
 		    last_flushed_tick = EXCLUDED.last_flushed_tick,
 		    updated_at = now()
-	`, p.mapID, p.instanceID, blob, in.Tick); err != nil {
+	`, p.levelID, p.instanceID, blob, in.Tick); err != nil {
 		p.wal.MarkFlushFailed()
-		return fmt.Errorf("upsert map_state: %w", err)
+		return fmt.Errorf("upsert level_state: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		p.wal.MarkFlushFailed()
@@ -97,7 +97,7 @@ func (p *Persister) Flush(ctx context.Context, in EncodeInputs) error {
 	p.lastFlushedTick = in.Tick
 	p.wal.MarkFlushSucceeded()
 	slog.Info("wal flush",
-		"map_id", p.mapID,
+		"level_id", p.levelID,
 		"instance_id", p.instanceID,
 		"from_tick", priorTick,
 		"to_tick", in.Tick,
@@ -114,17 +114,17 @@ func (p *Persister) LastFlushedTick() uint64 { return p.lastFlushedTick }
 // telemetry and the current tick the runtime should resume from.
 //
 // Steps:
-//   1. SELECT state_blob_fb, last_flushed_tick FROM map_state WHERE ...
+//   1. SELECT state_blob_fb, last_flushed_tick FROM level_state WHERE ...
 //   2. Decode + ApplyMapState into the supplied world.
 //   3. XRANGE the WAL from "0-0" forward; replay every Mutation whose
 //      .Tick > last_flushed_tick into the world via the supplied applier.
 //
-// Returns ErrNoSnapshot if the (map_id, instance_id) has never been
+// Returns ErrNoSnapshot if the (level_id, instance_id) has never been
 // flushed; the caller can decide whether that's an empty fresh start
-// (default) or a hard error (e.g. for a known-existed map).
+// (default) or a hard error (e.g. for a known-existed level).
 type Applier func(m Mutation) error
 
-// ErrNoSnapshot is returned by Recover when no map_state row exists.
+// ErrNoSnapshot is returned by Recover when no level_state row exists.
 var ErrNoSnapshot = errors.New("persist: no snapshot to recover")
 
 // RecoveryResult bundles the outputs of one recovery pass.
@@ -134,18 +134,18 @@ type RecoveryResult struct {
 }
 
 // Recover restores the world for a single instance:
-//   1. Loads map_state.state_blob_fb + last_flushed_tick from Postgres.
+//   1. Loads level_state.state_blob_fb + last_flushed_tick from Postgres.
 //   2. Decodes + ApplyMapState(world, ms) -- entities + tiles re-spawn.
 //   3. XRANGE the WAL forward; replays every Mutation whose .Tick exceeds
 //      last_flushed_tick into the supplied applier.
 //
-// Returns ErrNoSnapshot if no map_state row exists; the caller decides
+// Returns ErrNoSnapshot if no level_state row exists; the caller decides
 // whether that's a fresh-start (default) or a hard error.
 func Recover(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	wal *WAL,
-	mapID uint32,
+	levelID uint32,
 	instanceID string,
 	world *ecs.World,
 	applyMutation Applier,
@@ -153,19 +153,19 @@ func Recover(
 	var blob []byte
 	var lastFlushedTick uint64
 	err := pool.QueryRow(ctx,
-		`SELECT state_blob_fb, last_flushed_tick FROM map_state WHERE map_id = $1 AND instance_id = $2`,
-		mapID, instanceID,
+		`SELECT state_blob_fb, last_flushed_tick FROM level_state WHERE level_id = $1 AND instance_id = $2`,
+		levelID, instanceID,
 	).Scan(&blob, &lastFlushedTick)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return RecoveryResult{}, ErrNoSnapshot
 		}
-		return RecoveryResult{}, fmt.Errorf("read map_state: %w", err)
+		return RecoveryResult{}, fmt.Errorf("read level_state: %w", err)
 	}
 
 	ms, err := DecodeMapState(blob)
 	if err != nil {
-		return RecoveryResult{}, fmt.Errorf("decode map_state: %w", err)
+		return RecoveryResult{}, fmt.Errorf("decode level_state: %w", err)
 	}
 	ApplyMapState(world, ms)
 

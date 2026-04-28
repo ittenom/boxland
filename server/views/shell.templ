@@ -32,19 +32,19 @@ templ ShellHome(p ShellProps) {
 	@Layout(p.Layout) {
 		<div class="bx-work__strip">
 			<span class="bx-work__chip">
-				<strong>{ formatIntPad(p.Layout.Project.AssetCount) }</strong> assets
+				<strong>{ formatIntPad(p.Layout.Project.WorldCount) }</strong> worlds
 			</span>
 			<span class="bx-work__chip">
-				<strong>{ formatIntPad(p.Layout.Project.EntityCount) }</strong> entities
+				<strong>{ formatIntPad(p.Layout.Project.LevelCount) }</strong> levels
 			</span>
 			<span class="bx-work__chip">
 				<strong>{ formatIntPad(p.Layout.Project.MapCount) }</strong> maps
 			</span>
 			<span class="bx-work__chip">
-				<strong>{ formatIntPad(p.Layout.Project.SocketCount) }</strong> sockets
+				<strong>{ formatIntPad(p.Layout.Project.EntityCount) }</strong> entities
 			</span>
 			<span class="bx-work__chip">
-				<strong>{ formatIntPad(p.Layout.Project.GroupCount) }</strong> tile groups
+				<strong>{ formatIntPad(p.Layout.Project.TilemapCount) }</strong> tilemaps
 			</span>
 		</div>
 
@@ -120,15 +120,21 @@ templ ShellHome(p ShellProps) {
 				</section>
 			}
 
-			// The five-step quick-jump grid. Implicit pipeline.
+			// Build steps follow the canonical hierarchy: Library →
+			// Tilemaps → Maps → Entities → Levels → Worlds → Sandbox →
+			// Push. The first card jumps to the Library; the last is
+			// the publish modal hand-off.
 			<section>
 				<h3 data-copy-slot="home.steps">Build steps</h3>
 				<div class="bx-grid bx-grid--auto">
-					@stepCard("asset",  "1", "Assets",      "Upload sprites, tiles, and audio.",   p.Layout.Project.AssetCount,  "/design/assets")
-					@stepCard("entity", "2", "Entities",    "Define behavior and components.",     p.Layout.Project.EntityCount, "/design/entities")
-					@stepCard("map",    "3", "Maps",        "Lay out the world.",                  p.Layout.Project.MapCount,    "/design/maps")
-					@stepCard("kind",   "4", "Sandbox",     "Test against drafts.",                0,                            "/design/sandbox")
-					@stepCard("draft",  "5", "Push to live","Promote drafts to live.",             p.Layout.Project.DraftCount,  "")
+					@stepCard("asset",   "1", "Library",     "Upload sprites, audio, and UI panels.", libraryTotal(p.Layout.Project),    "/design/library")
+					@stepCard("tilemap", "2", "Tilemaps",    "Slice tile sheets into tiles.",         p.Layout.Project.TilemapCount,     "/design/tilemaps")
+					@stepCard("map",     "3", "Maps",        "Paint geometry with tiles.",            p.Layout.Project.MapCount,         "/design/maps")
+					@stepCard("entity",  "4", "Entities",    "Define NPCs, PCs, and game logic.",     p.Layout.Project.EntityCount,      "/design/entities")
+					@stepCard("level",   "5", "Levels",      "Place entities into a map.",            p.Layout.Project.LevelCount,       "/design/levels")
+					@stepCard("world",   "6", "Worlds",      "Connect levels into a campaign.",       p.Layout.Project.WorldCount,       "/design/worlds")
+					@stepCard("kind",    "7", "Sandbox",     "Test against drafts.",                  0,                                 "/design/sandbox")
+					@stepCard("draft",   "8", "Push to live","Promote drafts to live.",               p.Layout.Project.DraftCount,       "")
 				</div>
 			</section>
 

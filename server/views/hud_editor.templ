@@ -9,11 +9,12 @@ import (
 	"boxland/server/internal/maps"
 )
 
-// HUDEditorProps drives the per-realm HUD editor page
-// (/design/maps/{id}/hud). Server-rendered shell + HTMX for every
-// mutation; the live preview iframe-loads the play-game page in a
-// throwaway sandbox-style harness so designers see the actual Pixi
-// HUD render rather than a DOM mock.
+// HUDEditorProps drives the per-level HUD editor page
+// (/design/levels/{id}/hud). Per the holistic redesign, HUD lives on
+// LEVELs (one HUD per level deployment of a map). Server-rendered
+// shell + HTMX for every mutation; the live preview iframe-loads the
+// play-game page in a throwaway sandbox-style harness so designers
+// see the actual Pixi HUD render rather than a DOM mock.
 type HUDEditorProps struct {
 	Layout         LayoutProps
 	Map            maps.Map
@@ -111,7 +112,7 @@ templ HUDAnchorCell(p HUDEditorProps, a hud.Anchor) {
 				for _, kind := range p.WidgetKinds {
 					<li>
 						<button type="button" class="bx-btn bx-btn--ghost bx-btn--small bx-btn--block"
-							hx-post={ fmt.Sprintf("/design/maps/%d/hud/widgets?anchor=%s&type=%s", p.Map.ID, a, kind) }
+							hx-post={ fmt.Sprintf("/design/levels/%d/hud/widgets?anchor=%s&type=%s", p.Map.ID, a, kind) }
 							hx-target={ "#hud-anchor-" + string(a) }
 							hx-swap="outerHTML"
 						>
@@ -128,7 +129,7 @@ templ HUDAnchorCell(p HUDEditorProps, a hud.Anchor) {
 templ HUDWidgetChip(mapID int64, a hud.Anchor, w hud.Widget) {
 	<li class="bx-hud-editor__chip" data-bx-hud-widget data-bx-hud-anchor={ string(a) } data-bx-hud-order={ fmt.Sprintf("%d", w.Order) }>
 		<button type="button" class="bx-hud-editor__chip-label"
-			hx-get={ fmt.Sprintf("/design/maps/%d/hud/widgets/%s/%d", mapID, a, w.Order) }
+			hx-get={ fmt.Sprintf("/design/levels/%d/hud/widgets/%s/%d", mapID, a, w.Order) }
 			hx-target="#hud-inspector"
 			hx-swap="innerHTML"
 		>
@@ -137,17 +138,17 @@ templ HUDWidgetChip(mapID int64, a hud.Anchor, w hud.Widget) {
 		</button>
 		<div class="bx-row">
 			<button type="button" class="bx-btn bx-btn--ghost bx-btn--small" title="Move up"
-				hx-post={ fmt.Sprintf("/design/maps/%d/hud/widgets/%s/%d/move?dir=-1", mapID, a, w.Order) }
+				hx-post={ fmt.Sprintf("/design/levels/%d/hud/widgets/%s/%d/move?dir=-1", mapID, a, w.Order) }
 				hx-target={ "#hud-anchor-" + string(a) }
 				hx-swap="outerHTML"
 			>↑</button>
 			<button type="button" class="bx-btn bx-btn--ghost bx-btn--small" title="Move down"
-				hx-post={ fmt.Sprintf("/design/maps/%d/hud/widgets/%s/%d/move?dir=1", mapID, a, w.Order) }
+				hx-post={ fmt.Sprintf("/design/levels/%d/hud/widgets/%s/%d/move?dir=1", mapID, a, w.Order) }
 				hx-target={ "#hud-anchor-" + string(a) }
 				hx-swap="outerHTML"
 			>↓</button>
 			<button type="button" class="bx-btn bx-btn--ghost bx-btn--small" title="Delete"
-				hx-delete={ fmt.Sprintf("/design/maps/%d/hud/widgets/%s/%d", mapID, a, w.Order) }
+				hx-delete={ fmt.Sprintf("/design/levels/%d/hud/widgets/%s/%d", mapID, a, w.Order) }
 				hx-target={ "#hud-anchor-" + string(a) }
 				hx-swap="outerHTML"
 				hx-confirm="Delete this widget?"
@@ -183,7 +184,7 @@ templ HUDWidgetForm(p HUDWidgetFormProps) {
 			<span class="bx-small bx-muted">{ string(p.Anchor) } · #{ fmt.Sprintf("%d", p.Order) }</span>
 		</header>
 		<form
-			hx-post={ fmt.Sprintf("/design/maps/%d/hud/widgets/%s/%d", p.MapID, p.Anchor, p.Order) }
+			hx-post={ fmt.Sprintf("/design/levels/%d/hud/widgets/%s/%d", p.MapID, p.Anchor, p.Order) }
 			hx-target={ "#hud-anchor-" + string(p.Anchor) }
 			hx-swap="outerHTML"
 			class="bx-stack bx-form"

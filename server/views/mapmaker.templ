@@ -67,15 +67,15 @@ templ MapmakerPage(p MapmakerProps) {
 					<span class="bx-mono bx-small bx-muted">
 						{ fmt.Sprintf("%d × %d · %s", p.Map.Width, p.Map.Height, p.Map.Mode) }
 					</span>
-					@MapPublicBadge(MapPublicBadgeProps{ MapID: p.Map.ID, Public: p.Map.Public })
+					// "Public" + spectator policy live on the LEVEL now.
+					// The badge moves to the level editor's header in
+					// the holistic redesign.
 				</div>
 				<div class="bx-row">
-					<a
-						href={ templ.URL(fmt.Sprintf("/design/maps/%d/hud", p.Map.ID)) }
-						class="bx-btn bx-btn--ghost bx-btn--small"
-						title="Edit the player-facing HUD for this realm (H)"
-						data-copy-slot="mapmaker.hud"
-					>♡ HUD</a>
+					// HUD moved to LEVEL — open it from the level
+					// editor's HUD tab. A map can back multiple
+					// levels (each with its own HUD), so a
+					// map-scoped HUD link wouldn't be unambiguous.
 					<button
 						type="button"
 						class="bx-btn bx-btn--ghost bx-btn--small"
@@ -404,19 +404,17 @@ templ MapmakerProceduralPanel(p MapmakerProps) {
 				>Clear</button>
 			</div>
 
-			if p.Map.PersistenceMode == "persistent" {
-				<button
-					type="button"
-					class="bx-btn bx-btn--push bx-btn--small"
-					data-bx-proc-commit
-					title="Persist the previewed layout to map_tiles. Locked cells are preserved."
-					data-copy-slot="mapmaker.proc.commit"
-				>Commit to map</button>
-			} else {
-				<p class="bx-small bx-muted" data-copy-slot="mapmaker.proc.transient">
-					Transient map — regenerates from the seed every refresh window.
-				</p>
-			}
+			// "Commit to map" persists the previewed procedural layout
+			// into map_tiles. Persistence mode (transient vs.
+			// persistent) is now a LEVEL concern; the map itself is
+			// always persistent geometry. The commit flow is unchanged.
+			<button
+				type="button"
+				class="bx-btn bx-btn--push bx-btn--small"
+				data-bx-proc-commit
+				title="Persist the previewed layout to map_tiles. Locked cells are preserved."
+				data-copy-slot="mapmaker.proc.commit"
+			>Commit to map</button>
 
 			<div
 				class="bx-row"
@@ -478,64 +476,11 @@ func defaultTileLayerIDAttr(p MapmakerProps) string {
 	return ""
 }
 
-// MapPublicBadgeProps drives the public/private toggle badge in the
-// Mapmaker header. Click → POST /design/maps/{id}/public-toggle →
-// the server flips the column and returns this same badge with the
-// new state, so the next click re-fires the endpoint without any
-// extra wiring.
-type MapPublicBadgeProps struct {
-	MapID  int64
-	Public bool
-}
-
-templ MapPublicBadge(p MapPublicBadgeProps) {
-	<button
-		type="button"
-		id={ fmt.Sprintf("map-public-badge-%d", p.MapID) }
-		class={ mapPublicBadgeClass(p.Public) }
-		hx-post={ fmt.Sprintf("/design/maps/%d/public-toggle", p.MapID) }
-		hx-target="this"
-		hx-swap="outerHTML"
-		hx-confirm={ mapPublicConfirm(p.Public) }
-		title={ mapPublicTitle(p.Public) }
-		data-bx-public-badge
-		data-public={ mapPublicAttr(p.Public) }
-	>
-		if p.Public {
-			public · click to make private
-		} else {
-			private · click to make public
-		}
-	</button>
-}
-
-func mapPublicBadgeClass(public bool) string {
-	if public {
-		return "bx-badge bx-badge--success bx-public-badge"
-	}
-	return "bx-badge bx-public-badge"
-}
-
-func mapPublicTitle(public bool) string {
-	if public {
-		return "Players can find this on /play/maps. Click to make it private (sandbox-only)."
-	}
-	return "Sandbox-only. Click to publish to /play/maps."
-}
-
-func mapPublicConfirm(public bool) string {
-	if public {
-		return "Make this map private? Players currently in the lobby will lose access on next refresh."
-	}
-	return "Publish this map? Players will see it at /play/maps immediately."
-}
-
-func mapPublicAttr(public bool) string {
-	if public {
-		return "1"
-	}
-	return "0"
-}
+// MapPublicBadge moved to LEVEL in the holistic redesign — the level
+// editor's settings tab owns the public toggle now. The badge struct
+// + helpers were removed; if/when the level editor wants a clickable
+// badge in its header, the same shape can be re-introduced under
+// `LevelPublicBadge`.
 
 // proceduralInitialSeed returns the persisted seed, or 1 as a sensible
 // non-zero default so the first preview produces something deterministic.
@@ -660,11 +605,8 @@ templ MapSettingsModal(p MapSettingsProps) {
 				<div class="bx-row" style="gap: var(--bx-s2);">
 					<span class="bx-dot bx-dot--map"></span>
 					<h2 style="margin:0;" data-copy-slot="mapmaker.settings.title">Map settings</h2>
-					if p.Map.Public {
-						<span class="bx-badge bx-badge--success">public</span>
-					} else {
-						<span class="bx-badge">private</span>
-					}
+					// Public/private is a LEVEL concern; that badge
+					// moved to the level editor's header.
 				</div>
 				<button
 					type="button"

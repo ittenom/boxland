@@ -69,7 +69,7 @@ func (j *BakeJob) BakeForAsset(ctx context.Context, assetID int64) ([]BakeResult
 	if err != nil {
 		return nil, err
 	}
-	if asset.Kind != KindSprite && asset.Kind != KindTile {
+	if asset.Kind != KindSprite && asset.Kind != KindSpriteAnimated {
 		return nil, fmt.Errorf("bake: kind %q has no palette variants", asset.Kind)
 	}
 

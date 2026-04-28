@@ -128,11 +128,8 @@ templ MapCard(m maps.Map) {
 				<span class="bx-mono">{ fmt.Sprintf("%d × %d", m.Width, m.Height) }</span>
 				<span>·</span>
 				<span class={ "bx-badge bx-badge--" + mapBadge(m.Mode) }>{ m.Mode }</span>
-				if m.Public {
-					<span class="bx-badge bx-badge--success">public</span>
-				} else {
-					<span class="bx-badge">private</span>
-				}
+				// Public / private moved to LEVEL — see the levels list
+				// page for the matching badge.
 			</div>
 			<div class="bx-map-card__actions">
 				<a class="bx-btn bx-btn--small" href={ templ.URL(fmt.Sprintf("/design/maps/%d", m.ID)) }>

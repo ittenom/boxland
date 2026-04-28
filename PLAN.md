@@ -4,6 +4,20 @@
 
 This plan is structured as **lists of work items, no estimates, no phasing**. You are the project manager — sequence and prioritize as you wish. Each section is independent enough to be picked up by a future spec or dev cycle.
 
+> **Holistic redesign update (current).** The IDE's object model has been reshaped around six canonical kinds, all of which are now first-class:
+>
+> - **SPRITE** — single 32×32 image (asset.kind = `sprite`).
+> - **SPRITE_ANIMATED** — multi-frame strip (asset.kind = `sprite_animated`); also the backing PNG of every tilemap and every character bake.
+> - **TILEMAP** — a sliced sheet with per-cell tile entities and a derived adjacency graph (own table: `tilemaps`).
+> - **ENTITY** — broad parent class with four subtypes via `entity_types.entity_class`: `tile`, `npc`, `pc`, `logic`.
+> - **MAP** — pure tile geometry (slimmed: width/height/mode/seed only).
+> - **LEVEL** — a MAP + non-tile entity placements + HUD + instancing/persistence/spectator policy + level-scoped action groups (own table: `levels`). One MAP can back many LEVELs.
+> - **WORLD** — a graph of LEVELs connected by transition entities (own table: `worlds`). Optional — a level can exist without a world.
+>
+> Schema collapsed from a 43-migration chain into a single `0001_init.up.sql` (single-tenant, no production deployments to step through). New top-level routes: `/design/worlds`, `/design/levels`, `/design/tilemaps`, `/design/library`, `/design/entities/{tiles|npcs|pcs|logic}`. New zip kinds: `.boxtilemap.zip`, `.boxlevel.zip`, `.boxworld.zip` (format_version=2). Sandbox launches are level-scoped. The character generator is now an editor mode of the NPC/PC entity editor (no more `npc_templates` table). HUD lives on LEVELs; the per-map HUD URL space is gone.
+>
+> Sections 2 ("Repository layout") and 8 ("Database schema") below were written before the redesign and now show the *historical* shape; the **current** shape is reflected in `server/migrations/0001_init.up.sql` and the Go service surfaces under `internal/{tilemaps,levels,worlds}/`. Sections 4 and 5 still describe the right *concerns* (CRUD, publish pipeline, tools UX) — only the names have shifted.
+
 ---
 
 ## 1. Architecture & technology decisions (locked)
@@ -85,6 +99,11 @@ Even though iOS is deferred, the v1 build must satisfy these so that adding iOS 
 
 ## 2. Repository layout
 
+> **Post-holistic-redesign shape (current).** New packages added since the
+> original sketch are flagged below. Removed: `internal/sockets` (folded
+> into the tilemap viewer's "Edge sockets" tab; the table + service
+> stayed under `internal/entities/edge_sockets.go`).
+
 ```
 boxland/
 ├── server/                  # Go monolith (single binary, multiple subcommands)
@@ -98,13 +117,23 @@ boxland/
 │   │   ├── auth/            # designer auth + player auth (separate realms)
 │   │   ├── assets/          # upload, parsing, CDN, palette bake (uses Repo[T])
 │   │   ├── entities/        # entity-type CRUD, components catalog (uses Repo[T])
-│   │   ├── maps/            # authored & procedural map storage; chunked WFC engine (uses Repo[T])
+│   │   ├── characters/      # character generator: recipes, parts, bakes, slots, talent trees, stat sets
+│   │   ├── tilemaps/        # NEW (redesign): tilemap row + sliced cells + adjacency
+│   │   ├── maps/            # authored & procedural map geometry (slimmed in redesign — tile placements + lighting + procedural pipeline only)
+│   │   ├── levels/          # NEW (redesign): map + entity placements + HUD + instancing settings
+│   │   ├── worlds/          # NEW (redesign): graph of levels (campaign packaging)
+│   │   ├── folders/         # NEW (redesign): six-root IDE folder filesystem (sprite / tilemap / audio / ui_panel / level / world)
+│   │   ├── exporter/        # .boxasset / .boxassets / .boxtilemap / .boxmap / .boxlevel / .boxworld zip writers
+│   │   ├── importer/        # round-trip apply for every export kind
+│   │   ├── automations/     # AST + per-level shared action groups
+│   │   ├── flags/           # per-level switches + variables (no-code event scratch)
+│   │   ├── hud/             # per-level HUD layout (was per-map; moved in redesign)
 │   │   ├── persistence/     # sqlc-generated hot-path queries; Repo[T] generic; Redis live-state; Streams WAL; tick-batched flush
 │   │   ├── publishing/      # generic Artifact[T] pipeline: drafts → live promotion, structured diff, palette bake invocation, hot-swap broadcast
 │   │   └── configurable/    # Configurable[T] descriptor framework (drives the generic form renderer)
 │   ├── views/               # Templ .templ files; includes the generic form-renderer partial
 │   ├── static/              # compiled CSS, fonts, JS bundles
-│   ├── migrations/          # plain SQL files (golang-migrate)
+│   ├── migrations/          # 0001_init.up.sql — single canonical schema (squashed in redesign)
 │   ├── queries/             # .sql files for sqlc
 │   ├── sqlc.yaml
 │   └── go.mod

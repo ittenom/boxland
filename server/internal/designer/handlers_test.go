@@ -60,7 +60,7 @@ func TestMapmakerPage_RendersAtlasAwarePalette(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, _ := assetSvc.Create(ctx, assets.CreateInput{
-		Kind: assets.KindTile, Name: "town", ContentAddressedPath: "assets/town.png",
+		Kind: assets.KindSpriteAnimated, Name: "town", ContentAddressedPath: "assets/town.png",
 		OriginalFormat: "png", MetadataJSON: md, CreatedBy: d.ID,
 	})
 	et, _ := entitySvc.Create(ctx, entities.CreateInput{

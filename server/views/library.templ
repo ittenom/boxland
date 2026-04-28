@@ -1,0 +1,189 @@
+package views
+
+import (
+	"fmt"
+
+	"boxland/server/internal/assets"
+	"boxland/server/internal/tilemaps"
+)
+
+// library.templ — IDE-style Library shell. Hosts a tabstrip across
+// the four content kinds (Sprites, Tilemaps, Audio, UI panels) and
+// renders the active tab inline. Each tab's grid is rendered by the
+// existing asset / tilemap views; this shell just supplies the
+// chrome.
+
+type LibraryTab string
+
+const (
+	LibraryTabSprites  LibraryTab = "sprites"
+	LibraryTabTilemaps LibraryTab = "tilemaps"
+	LibraryTabAudio    LibraryTab = "audio"
+	LibraryTabUIPanels LibraryTab = "ui-panels"
+)
+
+type LibraryProps struct {
+	Layout LayoutProps
+	Active LibraryTab
+
+	// Counts per tab — drive the badges on the tabstrip.
+	Counts map[LibraryTab]int
+
+	// Body content for the active tab. Each tab type has its own
+	// shape; we union them via separate fields and render whichever
+	// matches Active.
+	Sprites  []assets.Asset
+	Tilemaps []tilemaps.Tilemap
+	Audio    []assets.Asset
+	UIPanels []assets.Asset
+
+	// PublicURL resolves a content-addressed path to a CDN URL for
+	// thumbnail rendering. Same shape as the asset grid views use.
+	PublicURL func(string) string
+
+	// TilemapAssetURLs maps tilemap_id → backing PNG URL.
+	TilemapAssetURLs map[int64]string
+}
+
+templ LibraryPage(p LibraryProps) {
+	@Layout(p.Layout) {
+		<div class="bx-work__body bx-stack">
+			<header class="bx-row bx-row--apart">
+				<div>
+					<h1 data-copy-slot="library.title">Library</h1>
+					<p class="bx-muted bx-small" data-copy-slot="library.lede">
+						Sprites, tilemaps, audio, and UI panels — the raw materials your levels and entities reference.
+					</p>
+				</div>
+				<div class="bx-row" style="gap: var(--bx-s2);">
+					<button
+						type="button"
+						class="bx-btn bx-btn--primary"
+						hx-get="/design/assets/upload"
+						hx-target="#modal-host"
+						hx-swap="innerHTML"
+						data-copy-slot="library.upload"
+					>+ Upload</button>
+				</div>
+			</header>
+
+			<nav class="bx-tabstrip" role="tablist" aria-label="Library tabs">
+				@libraryTab(p, LibraryTabSprites, "Sprites")
+				@libraryTab(p, LibraryTabTilemaps, "Tilemaps")
+				@libraryTab(p, LibraryTabAudio, "Audio")
+				@libraryTab(p, LibraryTabUIPanels, "UI panels")
+			</nav>
+
+			<div class="bx-library__pane">
+				switch p.Active {
+					case LibraryTabSprites:
+						@libraryAssetsGrid(p.Sprites, p.PublicURL, "sprite")
+					case LibraryTabTilemaps:
+						@libraryTilemapsGrid(p.Tilemaps, p.TilemapAssetURLs)
+					case LibraryTabAudio:
+						@libraryAssetsGrid(p.Audio, p.PublicURL, "audio")
+					case LibraryTabUIPanels:
+						@libraryAssetsGrid(p.UIPanels, p.PublicURL, "ui_panel")
+				}
+			</div>
+		</div>
+		<div id="modal-host"></div>
+	}
+}
+
+templ libraryTab(p LibraryProps, tab LibraryTab, label string) {
+	<a
+		role="tab"
+		aria-selected?={ tab == p.Active }
+		class={ libraryTabClass(tab, p.Active) }
+		href={ templ.URL("/design/library/" + string(tab)) }
+	>
+		{ label }
+		<span class="bx-tree__count bx-tree__count--small">
+			{ fmt.Sprintf("%d", p.Counts[tab]) }
+		</span>
+	</a>
+}
+
+func libraryTabClass(tab, active LibraryTab) string {
+	if tab == active {
+		return "bx-tabstrip__tab bx-tabstrip__tab--active"
+	}
+	return "bx-tabstrip__tab"
+}
+
+// libraryAssetsGrid renders a generic asset grid for one kind. We
+// don't reuse AssetCard from assets.templ because the Library shell
+// wants a more compact card layout (no usage badges, smaller
+// thumbnails); future Phase 3 cleanup may unify these.
+templ libraryAssetsGrid(items []assets.Asset, publicURL func(string) string, kind string) {
+	if len(items) == 0 {
+		<div class="bx-panel bx-stack-tight">
+			<p class="bx-muted">No { libraryEmptyLabel(kind) } yet.</p>
+			<p class="bx-small bx-muted">
+				Click <strong>+ Upload</strong> in the header to add some.
+			</p>
+		</div>
+	} else {
+		<div class="bx-grid bx-grid--auto">
+			for _, a := range items {
+				<a
+					class="bx-card"
+					style={ libraryAssetCardStyle(kind) }
+					href={ templ.URL(fmt.Sprintf("/design/assets/%d", a.ID)) }
+				>
+					<div class="bx-card__thumb bx-pixel">
+						if isImageKind(kind) && publicURL != nil {
+							<img
+								src={ publicURL(a.ContentAddressedPath) }
+								alt={ a.Name }
+								style="image-rendering: pixelated; max-width: 100%; max-height: 96px;"
+							/>
+						} else {
+							<span class={ "bx-dot bx-dot--" + kind } style="width:24px; height:24px;"></span>
+						}
+					</div>
+					<div class="bx-card__title">{ a.Name }</div>
+					<div class="bx-card__meta bx-small bx-muted">{ a.OriginalFormat }</div>
+				</a>
+			}
+		</div>
+	}
+}
+
+templ libraryTilemapsGrid(items []tilemaps.Tilemap, urls map[int64]string) {
+	if len(items) == 0 {
+		<div class="bx-panel bx-stack-tight">
+			<p class="bx-muted">No tilemaps yet.</p>
+			<p class="bx-small bx-muted">
+				Upload a 32×N grid PNG; Boxland will slice it into one tile entity per non-empty cell.
+			</p>
+		</div>
+	} else {
+		<div class="bx-grid bx-grid--auto">
+			for _, tm := range items {
+				@tilemapCard(tm, urls[tm.ID])
+			}
+		</div>
+	}
+}
+
+func libraryEmptyLabel(kind string) string {
+	switch kind {
+	case "sprite":
+		return "sprites"
+	case "audio":
+		return "audio clips"
+	case "ui_panel":
+		return "UI panels"
+	}
+	return "items"
+}
+
+func libraryAssetCardStyle(kind string) string {
+	return "border-left: 3px solid var(--bx-kind-" + kind + ");"
+}
+
+func isImageKind(kind string) bool {
+	return kind == "sprite" || kind == "ui_panel"
+}

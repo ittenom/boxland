@@ -461,12 +461,16 @@ func humanKindLabel(kr folders.KindRoot) string {
 	switch kr {
 	case folders.KindSprite:
 		return "Sprites"
-	case folders.KindTile:
-		return "Tiles"
+	case folders.KindTilemap:
+		return "Tilemaps"
 	case folders.KindAudio:
 		return "Audio"
 	case folders.KindUIPanel:
 		return "UI"
+	case folders.KindLevel:
+		return "Levels"
+	case folders.KindWorld:
+		return "Worlds"
 	}
 	return string(kr)
 }

@@ -173,5 +173,43 @@
 	"shell.lede":                "Your design console. Build with assets, entities, and maps; test in the sandbox; push to live.",
 	"shell.logout":              "Log out",
 
+	"$comment-redesign": "Holistic-redesign surfaces. Worlds, levels, tilemaps, and the Library shell each got their own copy namespace. The strings below are placeholder English; the design team will rewrite them in brand voice.",
+
+	"worlds.title":              "Worlds",
+	"worlds.lede":                "A world is a graph of levels connected by transition entities.",
+	"worlds.empty":              "No worlds yet.",
+	"worlds.new":                "+ World",
+	"worlds.new.title":          "New world",
+	"worlds.new.help":           "Levels can be wired into the world after creation.",
+	"worlds.new.submit":         "Create world",
+
+	"levels.title":              "Levels",
+	"levels.lede":                "A level pairs a map (geometry) with entity placements, HUD, and instancing settings.",
+	"levels.empty":              "No levels yet.",
+	"levels.new":                "+ Level",
+	"levels.new.title":          "New level",
+	"levels.new.submit":         "Create level",
+	"levels.tabs.geometry":      "Geometry",
+	"levels.tabs.entities":      "Entities",
+	"levels.tabs.hud":           "HUD",
+	"levels.tabs.automations":   "Automations",
+	"levels.tabs.settings":      "Settings",
+
+	"tilemaps.title":            "Tilemaps",
+	"tilemaps.lede":              "A tilemap is a sheet of tile sprites with adjacency baked in by the source layout.",
+	"tilemaps.empty":            "No tilemaps yet.",
+	"tilemaps.upload":           "+ Upload tilemap",
+	"tilemap.viewer.title":      "Tilemap viewer",
+	"tilemap.viewer.adjacency-toggle": "Show adjacency overlay",
+
+	"library.title":             "Library",
+	"library.lede":               "Sprites, tilemaps, audio, and UI panels — the raw materials your levels and entities reference.",
+	"library.upload":            "+ Upload",
+
+	"entities.tiles.title":      "Tiles",
+	"entities.npcs.title":       "NPCs",
+	"entities.pcs.title":        "Player characters",
+	"entities.logic.title":      "Logic",
+
 	"$voice": "Short. Friendly. Plain-prose. No all-caps. No em-dashes inside button labels. Verbs in titles when actionable. Help text adds context, not duplication."
 }

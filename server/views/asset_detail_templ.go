@@ -317,7 +317,7 @@ func assetDetailPreview(p AssetDetailProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-		} else if p.Asset.Kind == assets.KindTile && p.PublicURL != nil {
+		} else if p.Asset.Kind == assets.KindSpriteAnimated && p.PublicURL != nil {
 			templ_7745c5c3_Err = tileAtlasPreview(p).Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err

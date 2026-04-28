@@ -4,16 +4,48 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strconv"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/rueidis"
 
+	authdesigner "boxland/server/internal/auth/designer"
 	"boxland/server/internal/entities/components"
+	"boxland/server/internal/levels"
+	"boxland/server/internal/maps"
 	"boxland/server/internal/persistence/testdb"
 	"boxland/server/internal/sim/ecs"
 	"boxland/server/internal/sim/persist"
 )
+
+func itoa(i int64) string { return strconv.FormatInt(i, 10) }
+
+// seedLevel creates a designer + map + level so level_state rows have a
+// real FK target. Returns the level's row id (NOT a constant 99/88 — the
+// ids are sequence-assigned by Postgres).
+func seedLevel(t *testing.T, pool *pgxpool.Pool, name string) int64 {
+	t.Helper()
+	auth := authdesigner.New(pool)
+	d, err := auth.CreateDesigner(context.Background(), "wal-"+name+"@x.com", "p", authdesigner.RoleEditor)
+	if err != nil {
+		t.Fatalf("create designer: %v", err)
+	}
+	mapsSvc := maps.New(pool)
+	m, err := mapsSvc.Create(context.Background(), maps.CreateInput{
+		Name: "wal-map-" + name, Width: 16, Height: 16, CreatedBy: d.ID,
+	})
+	if err != nil {
+		t.Fatalf("create map: %v", err)
+	}
+	lv, err := levels.New(pool).Create(context.Background(), levels.CreateInput{
+		Name: "wal-level-" + name, MapID: m.ID, CreatedBy: d.ID,
+	})
+	if err != nil {
+		t.Fatalf("create level: %v", err)
+	}
+	return lv.ID
+}
 
 // openTestPool returns an isolated, freshly-migrated DB. testdb.New wires its own t.Cleanup that drops the database when the test ends.
 func openTestPool(t *testing.T) *pgxpool.Pool {
@@ -177,13 +209,17 @@ func TestWAL_BackpressureRefusesWhenFlushFailingAndNearMax(t *testing.T) {
 	}
 }
 
-func TestPersister_FlushUpsertsMapStateAndTrimsWAL(t *testing.T) {
+func TestPersister_FlushUpsertsLevelStateAndTrimsWAL(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
 	cli := openTestRedis(t)
 	defer cli.Close()
 
-	wal := persist.NewWAL(cli, 99, "live:99:test-flush")
+	levelID := seedLevel(t, pool, "flush")
+	levelID32 := uint32(levelID)
+	instanceID := "live:" + itoa(levelID) + ":test-flush"
+
+	wal := persist.NewWAL(cli, levelID32, instanceID)
 	resetWALStream(t, cli, wal.StreamKey())
 
 	w := ecs.NewWorld()
@@ -198,9 +234,9 @@ func TestPersister_FlushUpsertsMapStateAndTrimsWAL(t *testing.T) {
 		_ = wal.Append(ctx, persist.Mutation{Tick: uint64(i + 1), Seq: 0})
 	}
 
-	p := persist.NewPersister(pool, wal, 99, "live:99:test-flush")
+	p := persist.NewPersister(pool, wal, levelID32, instanceID)
 	err := p.Flush(ctx, persist.EncodeInputs{
-		MapID: 99, InstanceID: "live:99:test-flush", Tick: 200, Stores: stores,
+		LevelID: levelID32, InstanceID: instanceID, Tick: 200, Stores: stores,
 	})
 	if err != nil {
 		t.Fatalf("Flush: %v", err)
@@ -212,8 +248,8 @@ func TestPersister_FlushUpsertsMapStateAndTrimsWAL(t *testing.T) {
 	// Postgres row exists.
 	var rowTick uint64
 	if err := pool.QueryRow(ctx,
-		`SELECT last_flushed_tick FROM map_state WHERE map_id = $1 AND instance_id = $2`,
-		99, "live:99:test-flush",
+		`SELECT last_flushed_tick FROM level_state WHERE level_id = $1 AND instance_id = $2`,
+		levelID, instanceID,
 	).Scan(&rowTick); err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +287,11 @@ func TestRecover_ReplaysWALAfterSnapshot(t *testing.T) {
 	cli := openTestRedis(t)
 	defer cli.Close()
 
-	wal := persist.NewWAL(cli, 88, "live:88:rec")
+	levelID := seedLevel(t, pool, "rec")
+	levelID32 := uint32(levelID)
+	instanceID := "live:" + itoa(levelID) + ":rec"
+
+	wal := persist.NewWAL(cli, levelID32, instanceID)
 	resetWALStream(t, cli, wal.StreamKey())
 	ctx := context.Background()
 
@@ -260,9 +300,9 @@ func TestRecover_ReplaysWALAfterSnapshot(t *testing.T) {
 	srcStores := src.Stores()
 	se := src.Spawn()
 	srcStores.Position.Set(se, components.Position{X: 100, Y: 200})
-	p := persist.NewPersister(pool, wal, 88, "live:88:rec")
+	p := persist.NewPersister(pool, wal, levelID32, instanceID)
 	if err := p.Flush(ctx, persist.EncodeInputs{
-		MapID: 88, InstanceID: "live:88:rec", Tick: 50, Stores: srcStores,
+		LevelID: levelID32, InstanceID: instanceID, Tick: 50, Stores: srcStores,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +315,7 @@ func TestRecover_ReplaysWALAfterSnapshot(t *testing.T) {
 	// Recover into a fresh world, counting replayed mutations via the applier.
 	dst := ecs.NewWorld()
 	replayCount := 0
-	res, err := persist.Recover(ctx, pool, wal, 88, "live:88:rec", dst,
+	res, err := persist.Recover(ctx, pool, wal, levelID32, instanceID, dst,
 		func(m persist.Mutation) error {
 			replayCount++
 			return nil

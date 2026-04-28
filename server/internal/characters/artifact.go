@@ -572,36 +572,31 @@ func (h *NpcTemplateHandler) Validate(_ context.Context, d artifact.DraftRow) er
 func (h *NpcTemplateHandler) Publish(ctx context.Context, tx pgx.Tx, d artifact.DraftRow) (artifact.PublishResult, error) {
 	var nd NpcTemplateDraft
 	if err := json.Unmarshal(d.DraftJSON, &nd); err != nil {
-		return artifact.PublishResult{}, fmt.Errorf("npc_template draft: bad json: %w", err)
+		return artifact.PublishResult{}, fmt.Errorf("npc draft: bad json: %w", err)
 	}
 	prev, err := h.loadPrev(ctx, tx, d.ArtifactID)
 	if err != nil {
 		return artifact.PublishResult{}, err
 	}
 
-	// Bake-on-publish (Phase 2). If the draft has a recipe attached and
-	// the bake deps are wired, we materialize the recipe + run the
-	// composer + upsert the asset row + persist the bake row, all
-	// inside this publish tx. The bake's asset_id then becomes the
-	// template's active_bake_id.
+	// Bake-on-publish. If the draft has a recipe attached and the bake
+	// deps are wired, we materialize the recipe + run the composer +
+	// upsert the asset row + persist the bake row, all inside this
+	// publish tx. The bake's asset_id becomes the NPC's
+	// sprite_asset_id; the bake's row id becomes active_bake_id.
 	bakeID := nd.ActiveBakeID
 	bakedAssetID := (*int64)(nil)
 	if nd.RecipeID != nil && h.Svc != nil && h.Svc.Store != nil && h.Svc.Assets != nil {
 		recipe, err := LoadBakeRecipe(ctx, tx, *nd.RecipeID)
 		if err != nil {
-			return artifact.PublishResult{}, fmt.Errorf("npc_template publish: load recipe: %w", err)
+			return artifact.PublishResult{}, fmt.Errorf("npc publish: load recipe: %w", err)
 		}
-		// Phase 3 cross-validation: if the recipe references a stat set
-		// or talent trees, resolve them inside the publish tx and reject
-		// the publish on bad allocations / prereqs / mutex / budget
-		// violations. Bake is the expensive step; failing fast here
-		// saves the designer a wait when their recipe is malformed.
 		if err := validateRecipeStatsAndTalents(ctx, tx, recipe); err != nil {
-			return artifact.PublishResult{}, fmt.Errorf("npc_template publish: recipe validation: %w", err)
+			return artifact.PublishResult{}, fmt.Errorf("npc publish: recipe validation: %w", err)
 		}
 		out, err := RunBake(ctx, tx, BakeDeps{Store: h.Svc.Store, Assets: h.Svc.Assets}, recipe, *nd.RecipeID)
 		if err != nil {
-			return artifact.PublishResult{}, fmt.Errorf("npc_template publish: bake: %w", err)
+			return artifact.PublishResult{}, fmt.Errorf("npc publish: bake: %w", err)
 		}
 		id := out.BakeID
 		bakeID = &id
@@ -609,112 +604,51 @@ func (h *NpcTemplateHandler) Publish(ctx context.Context, tx pgx.Tx, d artifact.
 		bakedAssetID = &assetID
 	}
 
-	// Auto-mint the entity_type only when neither the draft nor the
-	// existing live row pins one. Re-publishes of an already-linked
-	// template skip the mint and just push the fresh bake's
-	// sprite_asset_id onto the existing entity_type. Using prev (the
-	// in-tx live row) as the source of truth keeps republishes
-	// idempotent — designers shouldn't see a fresh entity_type on
-	// every save.
-	entityTypeID := nd.EntityTypeID
-	if entityTypeID == nil {
-		entityTypeID = prev.EntityTypeID
-	}
-	if entityTypeID == nil && bakedAssetID != nil {
-		newID, err := autoMintEntityType(ctx, tx, nd.Name, *bakedAssetID, d.CreatedBy)
-		if err != nil {
-			return artifact.PublishResult{}, fmt.Errorf("npc_template publish: auto-mint entity type: %w", err)
-		}
-		entityTypeID = &newID
-	} else if entityTypeID != nil && bakedAssetID != nil {
-		// Existing entity_type: keep its sprite_asset_id pointed at the
-		// fresh bake so spawned NPCs render the new look.
-		if _, err := tx.Exec(ctx, `
-			UPDATE entity_types SET sprite_asset_id = $1, updated_at = now() WHERE id = $2
-		`, *bakedAssetID, *entityTypeID); err != nil {
-			return artifact.PublishResult{}, fmt.Errorf("update entity_type sprite_asset_id: %w", err)
-		}
-	}
-
+	// Per the holistic redesign, the NPC template IS the entity_type.
+	// d.ArtifactID is both the draft's artifact id and the
+	// entity_types row id. No auto-mint dance, no separate template
+	// table to keep in sync.
 	tags := valOrEmpty(nd.Tags)
-	if _, err := tx.Exec(ctx, `
-		UPDATE npc_templates SET
-			name = $2, tags = $3, recipe_id = $4, active_bake_id = $5,
-			entity_type_id = $6, updated_at = now()
-		WHERE id = $1
-	`, d.ArtifactID, nd.Name, tags, nd.RecipeID, bakeID, entityTypeID); err != nil {
-		return artifact.PublishResult{}, fmt.Errorf("apply npc_template update: %w", err)
+	if bakedAssetID != nil {
+		if _, err := tx.Exec(ctx, `
+			UPDATE entity_types SET
+				name = $2, tags = $3, recipe_id = $4, active_bake_id = $5,
+				sprite_asset_id = $6, updated_at = now()
+			WHERE id = $1 AND entity_class = 'npc'
+		`, d.ArtifactID, nd.Name, tags, nd.RecipeID, bakeID, *bakedAssetID); err != nil {
+			return artifact.PublishResult{}, fmt.Errorf("apply npc update: %w", err)
+		}
+	} else {
+		if _, err := tx.Exec(ctx, `
+			UPDATE entity_types SET
+				name = $2, tags = $3, recipe_id = $4, active_bake_id = $5,
+				updated_at = now()
+			WHERE id = $1 AND entity_class = 'npc'
+		`, d.ArtifactID, nd.Name, tags, nd.RecipeID, bakeID); err != nil {
+			return artifact.PublishResult{}, fmt.Errorf("apply npc update: %w", err)
+		}
 	}
 
-	// Diff is computed against the *draft* shape, not the bake-derived
-	// fields, so designer edits look clean in the publish modal.
 	return artifact.PublishResult{Op: artifact.OpUpdated, Diff: configurable.DiffJSON(prev, nd)}, nil
-}
-
-// autoMintEntityType inserts a fresh entity_types row using the NPC
-// template's name. If the name is already taken we pick a unique
-// suffix BEFORE the INSERT (rather than relying on exception recovery
-// in the publish tx — once a unique violation fires inside pgx the
-// whole tx is aborted, so a retry loop would need savepoints. Picking
-// the name up front sidesteps the problem entirely).
-func autoMintEntityType(ctx context.Context, tx pgx.Tx, name string, spriteAssetID, createdBy int64) (int64, error) {
-	finalName, err := pickFreeEntityTypeName(ctx, tx, name)
-	if err != nil {
-		return 0, fmt.Errorf("pick free name: %w", err)
-	}
-	var id int64
-	err = tx.QueryRow(ctx, `
-		INSERT INTO entity_types
-			(name, sprite_asset_id, collider_w, collider_h,
-			 collider_anchor_x, collider_anchor_y, default_collision_mask,
-			 tags, created_by)
-		VALUES ($1, $2, 16, 16, 8, 16, 1, ARRAY['npc','character']::text[], $3)
-		RETURNING id
-	`, finalName, spriteAssetID, createdBy).Scan(&id)
-	if err != nil {
-		return 0, err
-	}
-	return id, nil
-}
-
-// pickFreeEntityTypeName probes for a name that doesn't collide with
-// any existing entity_types row inside the supplied tx. Tries the bare
-// name first, then suffixes " (npc)", " (npc 2)", ..., " (npc 19)".
-// Stops at 20 attempts; returns an error if the namespace is somehow
-// fully populated.
-func pickFreeEntityTypeName(ctx context.Context, tx pgx.Tx, baseName string) (string, error) {
-	candidates := make([]string, 0, 20)
-	candidates = append(candidates, baseName)
-	candidates = append(candidates, baseName+" (npc)")
-	for i := 2; i <= 18; i++ {
-		candidates = append(candidates, fmt.Sprintf("%s (npc %d)", baseName, i))
-	}
-	for _, c := range candidates {
-		var exists bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM entity_types WHERE name = $1)`, c).Scan(&exists); err != nil {
-			return "", err
-		}
-		if !exists {
-			return c, nil
-		}
-	}
-	return "", fmt.Errorf("auto-mint entity_type %q: 20 candidate names all taken", baseName)
 }
 
 func (h *NpcTemplateHandler) loadPrev(ctx context.Context, tx pgx.Tx, id int64) (NpcTemplateDraft, error) {
 	var p NpcTemplateDraft
 	err := tx.QueryRow(ctx, `
-		SELECT name, tags, recipe_id, active_bake_id, entity_type_id
-		FROM npc_templates WHERE id = $1
-	`, id).Scan(&p.Name, &p.Tags, &p.RecipeID, &p.ActiveBakeID, &p.EntityTypeID)
+		SELECT name, tags, recipe_id, active_bake_id
+		FROM entity_types WHERE id = $1 AND entity_class = 'npc'
+	`, id).Scan(&p.Name, &p.Tags, &p.RecipeID, &p.ActiveBakeID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return p, fmt.Errorf("npc_template %d: %w", id, ErrNpcTemplateNotFound)
+			return p, fmt.Errorf("npc %d: %w", id, ErrNpcTemplateNotFound)
 		}
 		return p, err
 	}
 	if p.Tags == nil {
 		p.Tags = []string{}
 	}
+	// EntityTypeID is the same as the row id in the new model.
+	rid := id
+	p.EntityTypeID = &rid
 	return p, nil
 }

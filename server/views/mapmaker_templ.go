@@ -122,54 +122,33 @@ func MapmakerPage(p MapmakerProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "</span>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "</span></div><div class=\"bx-row\"><button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" hx-get=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = MapPublicBadge(MapPublicBadgeProps{MapID: p.Map.ID, Public: p.Map.Public}).Render(ctx, templ_7745c5c3_Buffer)
+			var templ_7745c5c3_Var5 string
+			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("/design/maps/%d/settings", p.Map.ID))
 			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "</div><div class=\"bx-row\"><a href=\"")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			var templ_7745c5c3_Var5 templ.SafeURL
-			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinURLErrs(templ.URL(fmt.Sprintf("/design/maps/%d/hud", p.Map.ID)))
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 74, Col: 68}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 82, Col: 64}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "\" class=\"bx-btn bx-btn--ghost bx-btn--small\" title=\"Edit the player-facing HUD for this realm (H)\" data-copy-slot=\"mapmaker.hud\">♡ HUD</a> <button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" hx-get=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "\" hx-target=\"#modal-host\" hx-swap=\"innerHTML\" title=\"Edit map settings (visibility, instancing, persistence)\" data-copy-slot=\"mapmaker.settings\">⚙ Settings</button> <a href=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			var templ_7745c5c3_Var6 string
-			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("/design/maps/%d/settings", p.Map.ID))
+			var templ_7745c5c3_Var6 templ.SafeURL
+			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinURLErrs(templ.URL(fmt.Sprintf("/design/maps/%d/export", p.Map.ID)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 82, Col: 64}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 89, Col: 71}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "\" hx-target=\"#modal-host\" hx-swap=\"innerHTML\" title=\"Edit map settings (visibility, instancing, persistence)\" data-copy-slot=\"mapmaker.settings\">⚙ Settings</button> <a href=\"")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			var templ_7745c5c3_Var7 templ.SafeURL
-			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinURLErrs(templ.URL(fmt.Sprintf("/design/maps/%d/export", p.Map.ID)))
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 89, Col: 71}
-			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "\" class=\"bx-btn bx-btn--ghost bx-btn--small bx-row\" style=\"gap: 6px;\" download title=\"Save this map as a re-importable .boxmap.zip (Ctrl/Cmd+Shift+S)\" data-bx-export-map data-copy-slot=\"mapmaker.export\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "\" class=\"bx-btn bx-btn--ghost bx-btn--small bx-row\" style=\"gap: 6px;\" download title=\"Save this map as a re-importable .boxmap.zip (Ctrl/Cmd+Shift+S)\" data-bx-export-map data-copy-slot=\"mapmaker.export\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -177,20 +156,20 @@ func MapmakerPage(p MapmakerProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "<span>Export</span></a> <a href=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "<span>Export</span></a> <a href=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			var templ_7745c5c3_Var8 templ.SafeURL
-			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinURLErrs(templ.URL(fmt.Sprintf("/design/sandbox/launch/%d", p.Map.ID)))
+			var templ_7745c5c3_Var7 templ.SafeURL
+			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinURLErrs(templ.URL(fmt.Sprintf("/design/sandbox/launch/%d", p.Map.ID)))
 			if templ_7745c5c3_Err != nil {
 				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 101, Col: 74}
 			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "\" class=\"bx-btn bx-btn--primary bx-btn--small\" title=\"Launch this map in Sandbox\" data-copy-slot=\"mapmaker.test\">▶ Test in Sandbox</a> <button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" data-bx-action=\"mapmaker-zoom-out\" data-copy-slot=\"mapmaker.zoomout\">−</button> <button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" data-bx-action=\"mapmaker-zoom-in\" data-copy-slot=\"mapmaker.zoomin\">+</button></div></header><div class=\"bx-mapmaker__layout\"><aside class=\"bx-mapmaker__sidebar bx-stack-tight\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "\" class=\"bx-btn bx-btn--primary bx-btn--small\" title=\"Launch this map in Sandbox\" data-copy-slot=\"mapmaker.test\">▶ Test in Sandbox</a> <button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" data-bx-action=\"mapmaker-zoom-out\" data-copy-slot=\"mapmaker.zoomout\">−</button> <button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" data-bx-action=\"mapmaker-zoom-in\" data-copy-slot=\"mapmaker.zoomin\">+</button></div></header><div class=\"bx-mapmaker__layout\"><aside class=\"bx-mapmaker__sidebar bx-stack-tight\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -198,72 +177,72 @@ func MapmakerPage(p MapmakerProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "</aside><main class=\"bx-mapmaker__canvas-wrap\"><canvas id=\"mapmaker-canvas\" class=\"bx-mapmaker__canvas\" data-bx-mapmaker-canvas data-map-id=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "</aside><main class=\"bx-mapmaker__canvas-wrap\"><canvas id=\"mapmaker-canvas\" class=\"bx-mapmaker__canvas\" data-bx-mapmaker-canvas data-map-id=\"")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var8 string
+			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", p.Map.ID))
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 121, Col: 47}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "\" data-map-w=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var9 string
-			templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", p.Map.ID))
+			templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", p.Map.Width))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 121, Col: 47}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 122, Col: 49}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "\" data-map-w=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "\" data-map-h=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var10 string
-			templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", p.Map.Width))
+			templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", p.Map.Height))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 122, Col: 49}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 123, Col: 50}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "\" data-map-h=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "\" data-default-layer-id=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var11 string
-			templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", p.Map.Height))
+			templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", defaultLayerID(p.Layers)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 123, Col: 50}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 124, Col: 73}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "\" data-default-layer-id=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "\"></canvas><div class=\"bx-mapmaker__statusbar\"><span data-bx-mapmaker-status=\"cursor\">(–, –)</span> <span class=\"bx-muted\">·</span> <span data-bx-mapmaker-status=\"tool\">brush</span> <span class=\"bx-muted\">·</span> <span data-bx-mapmaker-status=\"layer\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var12 string
-			templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", defaultLayerID(p.Layers)))
+			templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(defaultLayerName(p.Layers))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 124, Col: 73}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 131, Col: 72}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "\"></canvas><div class=\"bx-mapmaker__statusbar\"><span data-bx-mapmaker-status=\"cursor\">(–, –)</span> <span class=\"bx-muted\">·</span> <span data-bx-mapmaker-status=\"tool\">brush</span> <span class=\"bx-muted\">·</span> <span data-bx-mapmaker-status=\"layer\">")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			var templ_7745c5c3_Var13 string
-			templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(defaultLayerName(p.Layers))
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 131, Col: 72}
-			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "</span> <span class=\"bx-muted\">·</span> <span data-bx-mapmaker-status=\"dirty\" class=\"bx-small bx-muted\"></span></div></main><aside class=\"bx-mapmaker__inspector bx-stack-tight\" id=\"mapmaker-inspector\"><h3 class=\"bx-panel__title\" data-copy-slot=\"mapmaker.inspector.title\">Inspector</h3><p class=\"bx-muted bx-small\" data-copy-slot=\"mapmaker.inspector.empty\">Click a tile to edit its per-cell overrides.</p></aside></div></section><div id=\"modal-host\"></div><script src=\"/static/js/mapmaker.js\" defer></script>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "</span> <span class=\"bx-muted\">·</span> <span data-bx-mapmaker-status=\"dirty\" class=\"bx-small bx-muted\"></span></div></main><aside class=\"bx-mapmaker__inspector bx-stack-tight\" id=\"mapmaker-inspector\"><h3 class=\"bx-panel__title\" data-copy-slot=\"mapmaker.inspector.title\">Inspector</h3><p class=\"bx-muted bx-small\" data-copy-slot=\"mapmaker.inspector.empty\">Click a tile to edit its per-cell overrides.</p></aside></div></section><div id=\"modal-host\"></div><script src=\"/static/js/mapmaker.js\" defer></script>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -315,82 +294,82 @@ func LayerYSortChip(l maps.Layer) templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
-		templ_7745c5c3_Var14 := templ.GetChildren(ctx)
-		if templ_7745c5c3_Var14 == nil {
-			templ_7745c5c3_Var14 = templ.NopComponent
+		templ_7745c5c3_Var13 := templ.GetChildren(ctx)
+		if templ_7745c5c3_Var13 == nil {
+			templ_7745c5c3_Var13 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		var templ_7745c5c3_Var15 = []any{ysortChipClass(l.YSortEntities)}
-		templ_7745c5c3_Err = templ.RenderCSSItems(ctx, templ_7745c5c3_Buffer, templ_7745c5c3_Var15...)
+		var templ_7745c5c3_Var14 = []any{ysortChipClass(l.YSortEntities)}
+		templ_7745c5c3_Err = templ.RenderCSSItems(ctx, templ_7745c5c3_Buffer, templ_7745c5c3_Var14...)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "<button type=\"button\" id=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "<button type=\"button\" id=\"")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		var templ_7745c5c3_Var15 string
+		templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("layer-ysort-%d", l.ID))
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 176, Col: 42}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "\" class=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var16 string
-		templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("layer-ysort-%d", l.ID))
+		templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(templ.CSSClasses(templ_7745c5c3_Var14).String())
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 176, Col: 42}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 1, Col: 0}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "\" class=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "\" hx-post=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var17 string
-		templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(templ.CSSClasses(templ_7745c5c3_Var15).String())
+		templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("/design/maps/%d/layers/%d/y-sort?on=%t", l.MapID, l.ID, !l.YSortEntities))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 1, Col: 0}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 178, Col: 98}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "\" hx-post=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "\" hx-target=\"this\" hx-swap=\"outerHTML\" title=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var18 string
-		templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("/design/maps/%d/layers/%d/y-sort?on=%t", l.MapID, l.ID, !l.YSortEntities))
+		templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(ysortChipTitle(l.YSortEntities))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 178, Col: 98}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 181, Col: 41}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "\" hx-target=\"this\" hx-swap=\"outerHTML\" title=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "\" aria-pressed=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var19 string
-		templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(ysortChipTitle(l.YSortEntities))
+		templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(ysortAttr(l.YSortEntities))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 181, Col: 41}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 182, Col: 43}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "\" aria-pressed=\"")
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		var templ_7745c5c3_Var20 string
-		templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(ysortAttr(l.YSortEntities))
-		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 182, Col: 43}
-		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "\">y-sort</button>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "\">y-sort</button>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -436,12 +415,12 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
-		templ_7745c5c3_Var21 := templ.GetChildren(ctx)
-		if templ_7745c5c3_Var21 == nil {
-			templ_7745c5c3_Var21 = templ.NopComponent
+		templ_7745c5c3_Var20 := templ.GetChildren(ctx)
+		if templ_7745c5c3_Var20 == nil {
+			templ_7745c5c3_Var20 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "<section class=\"bx-panel\" data-bx-toolbar style=\"padding: var(--bx-s2);\"><h3 class=\"bx-panel__title\" data-copy-slot=\"mapmaker.tools.title\">Tools</h3><div class=\"bx-mapmaker__tools\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "<section class=\"bx-panel\" data-bx-toolbar style=\"padding: var(--bx-s2);\"><h3 class=\"bx-panel__title\" data-copy-slot=\"mapmaker.tools.title\">Tools</h3><div class=\"bx-mapmaker__tools\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -470,7 +449,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, " ")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, " ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -479,118 +458,118 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "<button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" data-bx-rotate-tile title=\"Rotate tile (T)\">⟳ 0°</button> <button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" data-bx-history-undo disabled title=\"Nothing to undo (Ctrl+Z)\" aria-label=\"Undo\">↶ Undo</button> <button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" data-bx-history-redo disabled title=\"Nothing to redo (Ctrl+Shift+Z)\" aria-label=\"Redo\">↷ Redo</button></div></section><section class=\"bx-panel\" data-bx-layers style=\"padding: var(--bx-s2);\"><h3 class=\"bx-panel__title\" data-copy-slot=\"mapmaker.layers.title\">Layers</h3><ul class=\"bx-list bx-mapmaker__layers\" role=\"listbox\" aria-label=\"Layers\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "<button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" data-bx-rotate-tile title=\"Rotate tile (T)\">⟳ 0°</button> <button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" data-bx-history-undo disabled title=\"Nothing to undo (Ctrl+Z)\" aria-label=\"Undo\">↶ Undo</button> <button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" data-bx-history-redo disabled title=\"Nothing to redo (Ctrl+Shift+Z)\" aria-label=\"Redo\">↷ Redo</button></div></section><section class=\"bx-panel\" data-bx-layers style=\"padding: var(--bx-s2);\"><h3 class=\"bx-panel__title\" data-copy-slot=\"mapmaker.layers.title\">Layers</h3><ul class=\"bx-list bx-mapmaker__layers\" role=\"listbox\" aria-label=\"Layers\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		for i, l := range p.Layers {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "<li data-bx-layer-id=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "<li data-bx-layer-id=\"")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var21 string
+			templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", l.ID))
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 248, Col: 47}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "\" data-bx-layer-name=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var22 string
-			templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", l.ID))
+			templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(l.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 248, Col: 47}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 249, Col: 32}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "\" data-bx-layer-name=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "\" data-bx-layer-kind=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var23 string
-			templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(l.Name)
+			templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(l.Kind)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 249, Col: 32}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 250, Col: 32}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "\" data-bx-layer-kind=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "\" data-bx-layer-y-sort=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var24 string
-			templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(l.Kind)
+			templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(ysortAttr(l.YSortEntities))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 250, Col: 32}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 251, Col: 54}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 28, "\" data-bx-layer-y-sort=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "\"")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			if i == 0 {
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 28, " aria-selected=\"true\"")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+			} else {
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 29, " aria-selected=\"false\"")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 30, " title=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var25 string
-			templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(ysortAttr(l.YSortEntities))
+			templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(l.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 251, Col: 54}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 253, Col: 19}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 29, "\"")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			if i == 0 {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 30, " aria-selected=\"true\"")
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-			} else {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 31, " aria-selected=\"false\"")
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 32, " title=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 31, "\"><span>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var26 string
 			templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(l.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 253, Col: 19}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 255, Col: 19}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 33, "\"><span>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 32, "</span> <span class=\"bx-badge\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var27 string
-			templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(l.Name)
+			templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(l.Kind)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 255, Col: 19}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 256, Col: 36}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 34, "</span> <span class=\"bx-badge\">")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			var templ_7745c5c3_Var28 string
-			templ_7745c5c3_Var28, templ_7745c5c3_Err = templ.JoinStringErrs(l.Kind)
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 256, Col: 36}
-			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var28))
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 35, "</span> ")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 33, "</span> ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -600,45 +579,45 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 36, "</li>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 34, "</li>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 37, "</ul></section><section class=\"bx-panel\" data-bx-palette style=\"padding: var(--bx-s2);\"><h3 class=\"bx-panel__title\" data-copy-slot=\"mapmaker.palette.title\">Palette</h3>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 35, "</ul></section><section class=\"bx-panel\" data-bx-palette style=\"padding: var(--bx-s2);\"><h3 class=\"bx-panel__title\" data-copy-slot=\"mapmaker.palette.title\">Palette</h3>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		if p.EntityDraftCount > 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 38, "<button type=\"button\" class=\"bx-toast bx-toast--warn bx-small\" style=\"width: 100%; text-align: left; cursor: pointer; padding: var(--bx-s1) var(--bx-s2);\" hx-get=\"/design/publish/preview\" hx-target=\"#publish-modal-host\" hx-swap=\"innerHTML\" title=\"Open Push to Live to apply your staged entity changes\" data-copy-slot=\"mapmaker.palette.staged\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 36, "<button type=\"button\" class=\"bx-toast bx-toast--warn bx-small\" style=\"width: 100%; text-align: left; cursor: pointer; padding: var(--bx-s1) var(--bx-s2);\" hx-get=\"/design/publish/preview\" hx-target=\"#publish-modal-host\" hx-swap=\"innerHTML\" title=\"Open Push to Live to apply your staged entity changes\" data-copy-slot=\"mapmaker.palette.staged\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			var templ_7745c5c3_Var29 string
-			templ_7745c5c3_Var29, templ_7745c5c3_Err = templ.JoinStringErrs(stagedChipLabel(p.EntityDraftCount))
+			var templ_7745c5c3_Var28 string
+			templ_7745c5c3_Var28, templ_7745c5c3_Err = templ.JoinStringErrs(stagedChipLabel(p.EntityDraftCount))
 			if templ_7745c5c3_Err != nil {
 				return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 278, Col: 41}
 			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var29))
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var28))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 39, " — push to apply</button>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 37, " — push to apply</button>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 40, "<div class=\"bx-row\" style=\"gap: var(--bx-s1); margin: var(--bx-s2) 0;\"><input type=\"search\" placeholder=\"Filter palette\" class=\"bx-input bx-small\" style=\"flex:1; min-width: 0;\" data-bx-palette-filter aria-label=\"Filter palette by name\"> <a href=\"/design/assets\" class=\"bx-btn bx-btn--small bx-btn--primary\" title=\"Upload a tile sheet — it slices into paintable cells automatically\" data-copy-slot=\"mapmaker.palette.upload\">↑ Upload sheet</a> <button type=\"button\" class=\"bx-btn bx-btn--small bx-btn--ghost\" hx-get=\"/design/picker/assets?tags=sprite&target_id=mapmaker-add-tile&target_label=mapmaker-add-tile-label\" hx-target=\"#modal-host\" hx-swap=\"innerHTML\" title=\"Pick a single-sprite asset to make paintable. (Tile sheets are sliced automatically on upload.)\" data-copy-slot=\"mapmaker.palette.add\">+ Sprite</button><input type=\"hidden\" id=\"mapmaker-add-tile\" data-bx-mapmaker-add-tile> <span id=\"mapmaker-add-tile-label\" hidden></span></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 38, "<div class=\"bx-row\" style=\"gap: var(--bx-s1); margin: var(--bx-s2) 0;\"><input type=\"search\" placeholder=\"Filter palette\" class=\"bx-input bx-small\" style=\"flex:1; min-width: 0;\" data-bx-palette-filter aria-label=\"Filter palette by name\"> <a href=\"/design/assets\" class=\"bx-btn bx-btn--small bx-btn--primary\" title=\"Upload a tile sheet — it slices into paintable cells automatically\" data-copy-slot=\"mapmaker.palette.upload\">↑ Upload sheet</a> <button type=\"button\" class=\"bx-btn bx-btn--small bx-btn--ghost\" hx-get=\"/design/picker/assets?tags=sprite&target_id=mapmaker-add-tile&target_label=mapmaker-add-tile-label\" hx-target=\"#modal-host\" hx-swap=\"innerHTML\" title=\"Pick a single-sprite asset to make paintable. (Tile sheets are sliced automatically on upload.)\" data-copy-slot=\"mapmaker.palette.add\">+ Sprite</button><input type=\"hidden\" id=\"mapmaker-add-tile\" data-bx-mapmaker-add-tile> <span id=\"mapmaker-add-tile-label\" hidden></span></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		if len(p.PaletteEntityTypes) == 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 41, "<p class=\"bx-small bx-muted\" data-copy-slot=\"mapmaker.palette.empty\" data-bx-palette-empty>No tiles yet. <strong>↑ Upload sheet</strong> to drop in a 32×32 tile atlas — Boxland slices each cell into a paintable tile automatically.</p>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 39, "<p class=\"bx-small bx-muted\" data-copy-slot=\"mapmaker.palette.empty\" data-bx-palette-empty>No tiles yet. <strong>↑ Upload sheet</strong> to drop in a 32×32 tile atlas — Boxland slices each cell into a paintable tile automatically.</p>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 42, "<ol class=\"bx-mapmaker__palette\" role=\"listbox\" aria-label=\"Tile palette\" data-bx-palette-tree>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 40, "<ol class=\"bx-mapmaker__palette\" role=\"listbox\" aria-label=\"Tile palette\" data-bx-palette-tree>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -650,7 +629,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 43, "</ol></section>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 41, "</ol></section>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -693,89 +672,74 @@ func MapmakerProceduralPanel(p MapmakerProps) templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
-		templ_7745c5c3_Var30 := templ.GetChildren(ctx)
-		if templ_7745c5c3_Var30 == nil {
-			templ_7745c5c3_Var30 = templ.NopComponent
+		templ_7745c5c3_Var29 := templ.GetChildren(ctx)
+		if templ_7745c5c3_Var29 == nil {
+			templ_7745c5c3_Var29 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 44, "<script src=\"/static/js/mapmaker-procedural.js\" defer></script><section class=\"bx-panel\" data-bx-procedural data-map-id=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 42, "<script src=\"/static/js/mapmaker-procedural.js\" defer></script><section class=\"bx-panel\" data-bx-procedural data-map-id=\"")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		var templ_7745c5c3_Var30 string
+		templ_7745c5c3_Var30, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", p.Map.ID))
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 356, Col: 43}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var30))
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 43, "\" data-bx-default-layer-id=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var31 string
-		templ_7745c5c3_Var31, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", p.Map.ID))
+		templ_7745c5c3_Var31, templ_7745c5c3_Err = templ.JoinStringErrs(defaultTileLayerIDAttr(p))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 356, Col: 43}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 357, Col: 54}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var31))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 45, "\" data-bx-default-layer-id=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 44, "\" style=\"padding: var(--bx-s2);\"><h3 class=\"bx-panel__title\" data-copy-slot=\"mapmaker.proc.title\">Procedural</h3><p class=\"bx-small bx-muted\" data-copy-slot=\"mapmaker.proc.help\">Paint a few tiles to set the style, then Generate. Use the Sample tool to pick a specific area.</p><div class=\"bx-stack-tight\" style=\"margin-top: var(--bx-s2);\"><label class=\"bx-row\" style=\"gap: 8px;\"><span class=\"bx-small\">Seed</span> <input type=\"number\" class=\"bx-input bx-small\" data-bx-proc-seed value=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var32 string
-		templ_7745c5c3_Var32, templ_7745c5c3_Err = templ.JoinStringErrs(defaultTileLayerIDAttr(p))
+		templ_7745c5c3_Var32, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", proceduralInitialSeed(p.Map)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 357, Col: 54}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 372, Col: 60}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var32))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 46, "\" style=\"padding: var(--bx-s2);\"><h3 class=\"bx-panel__title\" data-copy-slot=\"mapmaker.proc.title\">Procedural</h3><p class=\"bx-small bx-muted\" data-copy-slot=\"mapmaker.proc.help\">Paint a few tiles to set the style, then Generate. Use the Sample tool to pick a specific area.</p><div class=\"bx-stack-tight\" style=\"margin-top: var(--bx-s2);\"><label class=\"bx-row\" style=\"gap: 8px;\"><span class=\"bx-small\">Seed</span> <input type=\"number\" class=\"bx-input bx-small\" data-bx-proc-seed value=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 45, "\" min=\"0\" style=\"width: 140px; font-variant-numeric: tabular-nums;\"></label> <label class=\"bx-row\" style=\"gap: 8px;\"><input type=\"checkbox\" data-bx-proc-locked class=\"bx-checkbox\"> <span class=\"bx-small\" data-copy-slot=\"mapmaker.proc.lock\">Lock seed</span></label><div class=\"bx-row\"><button type=\"button\" class=\"bx-btn bx-btn--primary bx-btn--small\" data-bx-proc-generate title=\"Generate (G)\" data-copy-slot=\"mapmaker.proc.generate\">Generate</button> <button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" data-bx-proc-reroll title=\"Pick a new random seed and generate (R+Shift)\" data-copy-slot=\"mapmaker.proc.reroll\">Reroll</button> <button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" data-bx-proc-clear title=\"Hide the procedural ghost overlay\" data-copy-slot=\"mapmaker.proc.clear\">Clear</button></div><button type=\"button\" class=\"bx-btn bx-btn--push bx-btn--small\" data-bx-proc-commit title=\"Persist the previewed layout to map_tiles. Locked cells are preserved.\" data-copy-slot=\"mapmaker.proc.commit\">Commit to map</button><div class=\"bx-row\" style=\"gap: var(--bx-s1); align-items: center; padding: 6px 8px; border:1px dashed var(--bx-line, rgba(255,255,255,0.12)); border-radius: 4px;\" data-bx-sample-summary><span style=\"background: #FFDD4A; width:10px; height:10px; border-radius:2px;\"></span> <span class=\"bx-small\" data-bx-sample-label>No sample — using painted tiles, or sockets if blank.</span> <button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" data-bx-sample-clear title=\"Remove the explicit sample so generation auto-picks from painted tiles.\" data-copy-slot=\"mapmaker.proc.sample.clear\">Clear sample</button></div><div class=\"bx-row\" style=\"gap: var(--bx-s1); align-items: center;\"><span class=\"bx-dot\" style=\"background: var(--bx-warn, #f5b800); width:10px;height:10px;border-radius:2px;\"></span> <span class=\"bx-small bx-muted\" data-bx-locked-count>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var33 string
-		templ_7745c5c3_Var33, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", proceduralInitialSeed(p.Map)))
+		templ_7745c5c3_Var33, templ_7745c5c3_Err = templ.JoinStringErrs(lockedCountLabel(p.LockedCellCount))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 372, Col: 60}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 438, Col: 42}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var33))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 47, "\" min=\"0\" style=\"width: 140px; font-variant-numeric: tabular-nums;\"></label> <label class=\"bx-row\" style=\"gap: 8px;\"><input type=\"checkbox\" data-bx-proc-locked class=\"bx-checkbox\"> <span class=\"bx-small\" data-copy-slot=\"mapmaker.proc.lock\">Lock seed</span></label><div class=\"bx-row\"><button type=\"button\" class=\"bx-btn bx-btn--primary bx-btn--small\" data-bx-proc-generate title=\"Generate (G)\" data-copy-slot=\"mapmaker.proc.generate\">Generate</button> <button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" data-bx-proc-reroll title=\"Pick a new random seed and generate (R+Shift)\" data-copy-slot=\"mapmaker.proc.reroll\">Reroll</button> <button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" data-bx-proc-clear title=\"Hide the procedural ghost overlay\" data-copy-slot=\"mapmaker.proc.clear\">Clear</button></div>")
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		if p.Map.PersistenceMode == "persistent" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 48, "<button type=\"button\" class=\"bx-btn bx-btn--push bx-btn--small\" data-bx-proc-commit title=\"Persist the previewed layout to map_tiles. Locked cells are preserved.\" data-copy-slot=\"mapmaker.proc.commit\">Commit to map</button>")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 49, "<p class=\"bx-small bx-muted\" data-copy-slot=\"mapmaker.proc.transient\">Transient map — regenerates from the seed every refresh window.</p>")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 50, "<div class=\"bx-row\" style=\"gap: var(--bx-s1); align-items: center; padding: 6px 8px; border:1px dashed var(--bx-line, rgba(255,255,255,0.12)); border-radius: 4px;\" data-bx-sample-summary><span style=\"background: #FFDD4A; width:10px; height:10px; border-radius:2px;\"></span> <span class=\"bx-small\" data-bx-sample-label>No sample — using painted tiles, or sockets if blank.</span> <button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" data-bx-sample-clear title=\"Remove the explicit sample so generation auto-picks from painted tiles.\" data-copy-slot=\"mapmaker.proc.sample.clear\">Clear sample</button></div><div class=\"bx-row\" style=\"gap: var(--bx-s1); align-items: center;\"><span class=\"bx-dot\" style=\"background: var(--bx-warn, #f5b800); width:10px;height:10px;border-radius:2px;\"></span> <span class=\"bx-small bx-muted\" data-bx-locked-count>")
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		var templ_7745c5c3_Var34 string
-		templ_7745c5c3_Var34, templ_7745c5c3_Err = templ.JoinStringErrs(lockedCountLabel(p.LockedCellCount))
-		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 440, Col: 42}
-		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var34))
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 51, "</span> ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 46, "</span> ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		if p.LockedCellCount > 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 52, "<button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" data-bx-locks-clear title=\"Remove every lock on this map\" data-copy-slot=\"mapmaker.proc.locks.clear\">Clear all</button>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 47, "<button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" data-bx-locks-clear title=\"Remove every lock on this map\" data-copy-slot=\"mapmaker.proc.locks.clear\">Clear all</button>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 53, "</div><p class=\"bx-small bx-muted\" data-bx-proc-status aria-live=\"polite\"></p><p class=\"bx-small\" data-bx-proc-error role=\"alert\" style=\"color: var(--bx-danger); display: none;\"></p></div></section>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 48, "</div><p class=\"bx-small bx-muted\" data-bx-proc-status aria-live=\"polite\"></p><p class=\"bx-small\" data-bx-proc-error role=\"alert\" style=\"color: var(--bx-danger); display: none;\"></p></div></section>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -805,170 +769,11 @@ func defaultTileLayerIDAttr(p MapmakerProps) string {
 	return ""
 }
 
-// MapPublicBadgeProps drives the public/private toggle badge in the
-// Mapmaker header. Click → POST /design/maps/{id}/public-toggle →
-// the server flips the column and returns this same badge with the
-// new state, so the next click re-fires the endpoint without any
-// extra wiring.
-type MapPublicBadgeProps struct {
-	MapID  int64
-	Public bool
-}
-
-func MapPublicBadge(p MapPublicBadgeProps) templ.Component {
-	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
-		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
-		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
-			return templ_7745c5c3_CtxErr
-		}
-		templ_7745c5c3_Buffer, templ_7745c5c3_IsBuffer := templruntime.GetBuffer(templ_7745c5c3_W)
-		if !templ_7745c5c3_IsBuffer {
-			defer func() {
-				templ_7745c5c3_BufErr := templruntime.ReleaseBuffer(templ_7745c5c3_Buffer)
-				if templ_7745c5c3_Err == nil {
-					templ_7745c5c3_Err = templ_7745c5c3_BufErr
-				}
-			}()
-		}
-		ctx = templ.InitializeContext(ctx)
-		templ_7745c5c3_Var35 := templ.GetChildren(ctx)
-		if templ_7745c5c3_Var35 == nil {
-			templ_7745c5c3_Var35 = templ.NopComponent
-		}
-		ctx = templ.ClearChildren(ctx)
-		var templ_7745c5c3_Var36 = []any{mapPublicBadgeClass(p.Public)}
-		templ_7745c5c3_Err = templ.RenderCSSItems(ctx, templ_7745c5c3_Buffer, templ_7745c5c3_Var36...)
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 54, "<button type=\"button\" id=\"")
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		var templ_7745c5c3_Var37 string
-		templ_7745c5c3_Var37, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("map-public-badge-%d", p.MapID))
-		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 494, Col: 50}
-		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var37))
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 55, "\" class=\"")
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		var templ_7745c5c3_Var38 string
-		templ_7745c5c3_Var38, templ_7745c5c3_Err = templ.JoinStringErrs(templ.CSSClasses(templ_7745c5c3_Var36).String())
-		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 1, Col: 0}
-		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var38))
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 56, "\" hx-post=\"")
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		var templ_7745c5c3_Var39 string
-		templ_7745c5c3_Var39, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("/design/maps/%d/public-toggle", p.MapID))
-		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 496, Col: 65}
-		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var39))
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 57, "\" hx-target=\"this\" hx-swap=\"outerHTML\" hx-confirm=\"")
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		var templ_7745c5c3_Var40 string
-		templ_7745c5c3_Var40, templ_7745c5c3_Err = templ.JoinStringErrs(mapPublicConfirm(p.Public))
-		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 499, Col: 41}
-		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var40))
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 58, "\" title=\"")
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		var templ_7745c5c3_Var41 string
-		templ_7745c5c3_Var41, templ_7745c5c3_Err = templ.JoinStringErrs(mapPublicTitle(p.Public))
-		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 500, Col: 34}
-		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var41))
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 59, "\" data-bx-public-badge data-public=\"")
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		var templ_7745c5c3_Var42 string
-		templ_7745c5c3_Var42, templ_7745c5c3_Err = templ.JoinStringErrs(mapPublicAttr(p.Public))
-		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 502, Col: 39}
-		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var42))
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 60, "\">")
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		if p.Public {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 61, "public · click to make private")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 62, "private · click to make public")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 63, "</button>")
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		return nil
-	})
-}
-
-func mapPublicBadgeClass(public bool) string {
-	if public {
-		return "bx-badge bx-badge--success bx-public-badge"
-	}
-	return "bx-badge bx-public-badge"
-}
-
-func mapPublicTitle(public bool) string {
-	if public {
-		return "Players can find this on /play/maps. Click to make it private (sandbox-only)."
-	}
-	return "Sandbox-only. Click to publish to /play/maps."
-}
-
-func mapPublicConfirm(public bool) string {
-	if public {
-		return "Make this map private? Players currently in the lobby will lose access on next refresh."
-	}
-	return "Publish this map? Players will see it at /play/maps immediately."
-}
-
-func mapPublicAttr(public bool) string {
-	if public {
-		return "1"
-	}
-	return "0"
-}
+// MapPublicBadge moved to LEVEL in the holistic redesign — the level
+// editor's settings tab owns the public toggle now. The badge struct
+// + helpers were removed; if/when the level editor wants a clickable
+// badge in its header, the same shape can be re-introduced under
+// `LevelPublicBadge`.
 
 // proceduralInitialSeed returns the persisted seed, or 1 as a sensible
 // non-zero default so the first preview produces something deterministic.
@@ -1080,64 +885,64 @@ func toolButton(id, hotkey, label string) templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
-		templ_7745c5c3_Var43 := templ.GetChildren(ctx)
-		if templ_7745c5c3_Var43 == nil {
-			templ_7745c5c3_Var43 = templ.NopComponent
+		templ_7745c5c3_Var34 := templ.GetChildren(ctx)
+		if templ_7745c5c3_Var34 == nil {
+			templ_7745c5c3_Var34 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 64, "<button type=\"button\" class=\"bx-btn\" data-bx-tool=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 49, "<button type=\"button\" class=\"bx-btn\" data-bx-tool=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		var templ_7745c5c3_Var44 string
-		templ_7745c5c3_Var44, templ_7745c5c3_Err = templ.JoinStringErrs(id)
+		var templ_7745c5c3_Var35 string
+		templ_7745c5c3_Var35, templ_7745c5c3_Err = templ.JoinStringErrs(id)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 638, Col: 19}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 583, Col: 19}
 		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var44))
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 65, "\" title=\"")
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var35))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		var templ_7745c5c3_Var45 string
-		templ_7745c5c3_Var45, templ_7745c5c3_Err = templ.JoinStringErrs(label + " (" + hotkey + ")")
-		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 639, Col: 37}
-		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var45))
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 50, "\" title=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 66, "\">")
+		var templ_7745c5c3_Var36 string
+		templ_7745c5c3_Var36, templ_7745c5c3_Err = templ.JoinStringErrs(label + " (" + hotkey + ")")
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 584, Col: 37}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var36))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		var templ_7745c5c3_Var46 string
-		templ_7745c5c3_Var46, templ_7745c5c3_Err = templ.JoinStringErrs(label)
-		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 641, Col: 9}
-		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var46))
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 51, "\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 67, " <kbd class=\"bx-small bx-muted\" style=\"margin-left: 6px;\">")
+		var templ_7745c5c3_Var37 string
+		templ_7745c5c3_Var37, templ_7745c5c3_Err = templ.JoinStringErrs(label)
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 586, Col: 9}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var37))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		var templ_7745c5c3_Var47 string
-		templ_7745c5c3_Var47, templ_7745c5c3_Err = templ.JoinStringErrs(hotkey)
-		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 642, Col: 67}
-		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var47))
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 52, " <kbd class=\"bx-small bx-muted\" style=\"margin-left: 6px;\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 68, "</kbd></button>")
+		var templ_7745c5c3_Var38 string
+		templ_7745c5c3_Var38, templ_7745c5c3_Err = templ.JoinStringErrs(hotkey)
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `mapmaker.templ`, Line: 587, Col: 67}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var38))
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 53, "</kbd></button>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1171,27 +976,12 @@ func MapSettingsModal(p MapSettingsProps) templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
-		templ_7745c5c3_Var48 := templ.GetChildren(ctx)
-		if templ_7745c5c3_Var48 == nil {
-			templ_7745c5c3_Var48 = templ.NopComponent
+		templ_7745c5c3_Var39 := templ.GetChildren(ctx)
+		if templ_7745c5c3_Var39 == nil {
+			templ_7745c5c3_Var39 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 69, "<div class=\"bx-modal-backdrop\" data-bx-dismissible role=\"dialog\" aria-modal=\"true\"><div class=\"bx-modal\" style=\"width: min(560px, 95vw);\"><header class=\"bx-modal__header\"><div class=\"bx-row\" style=\"gap: var(--bx-s2);\"><span class=\"bx-dot bx-dot--map\"></span><h2 style=\"margin:0;\" data-copy-slot=\"mapmaker.settings.title\">Map settings</h2>")
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		if p.Map.Public {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 70, "<span class=\"bx-badge bx-badge--success\">public</span>")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 71, "<span class=\"bx-badge\">private</span>")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 72, "</div><button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" hx-on:click=\"this.closest('.bx-modal-backdrop').remove()\" aria-label=\"Close\">Esc</button></header><div class=\"bx-modal__body bx-stack\"><p class=\"bx-small bx-muted\" data-copy-slot=\"mapmaker.settings.lede\">Changes save as a draft. Push to Live to apply them. Tile placements save instantly and don't go through this form.</p>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 54, "<div class=\"bx-modal-backdrop\" data-bx-dismissible role=\"dialog\" aria-modal=\"true\"><div class=\"bx-modal\" style=\"width: min(560px, 95vw);\"><header class=\"bx-modal__header\"><div class=\"bx-row\" style=\"gap: var(--bx-s2);\"><span class=\"bx-dot bx-dot--map\"></span><h2 style=\"margin:0;\" data-copy-slot=\"mapmaker.settings.title\">Map settings</h2></div><button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" hx-on:click=\"this.closest('.bx-modal-backdrop').remove()\" aria-label=\"Close\">Esc</button></header><div class=\"bx-modal__body bx-stack\"><p class=\"bx-small bx-muted\" data-copy-slot=\"mapmaker.settings.lede\">Changes save as a draft. Push to Live to apply them. Tile placements save instantly and don't go through this form.</p>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1205,7 +995,7 @@ func MapSettingsModal(p MapSettingsProps) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 73, "<div id=\"map-settings-status\" aria-live=\"polite\"></div></div></div></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 55, "<div id=\"map-settings-status\" aria-live=\"polite\"></div></div></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

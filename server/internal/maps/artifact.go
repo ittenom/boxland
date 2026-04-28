@@ -12,80 +12,45 @@ import (
 	"boxland/server/internal/publishing/artifact"
 )
 
-// MapDraft is the editable surface of a map artifact: the metadata
-// fields the designer can change between publishes. Tile placements +
-// lighting cells flow through their own per-stroke endpoints (PlaceTiles
-// etc) rather than the draft path because they're high-frequency edits.
+// MapDraft is the editable surface of a map artifact: name, mode, and
+// procedural seed. Tile placements + lighting cells flow through their
+// own per-stroke endpoints (PlaceTiles etc.) rather than the draft path
+// because they're high-frequency edits.
+//
+// Per the holistic redesign, public/instancing/persistence/spectator
+// settings live on a LEVEL, not on a MAP — see the levels package's
+// LevelDraft for those fields.
 type MapDraft struct {
-	Name                 string  `json:"name"`
-	Public               bool    `json:"public"`
-	InstancingMode       string  `json:"instancing_mode"`
-	PersistenceMode      string  `json:"persistence_mode"`
-	RefreshWindowSeconds *int32  `json:"refresh_window_seconds,omitempty"`
-	SpectatorPolicy      string  `json:"spectator_policy"`
-	Seed                 *int64  `json:"seed,omitempty"`
+	Name string `json:"name"`
+	Mode string `json:"mode"`
+	Seed *int64 `json:"seed,omitempty"`
 }
 
-// Validate enforces invariants at the draft layer; SQL CHECK constraints
-// catch the same things server-side.
+// Validate enforces invariants at the draft layer; SQL CHECK
+// constraints catch the same things server-side.
 func (d MapDraft) Validate() error {
 	if d.Name == "" {
 		return errors.New("map draft: name is required")
 	}
-	if d.InstancingMode != "" {
-		switch d.InstancingMode {
-		case "shared", "per_user", "per_party":
+	if d.Mode != "" {
+		switch d.Mode {
+		case "authored", "procedural":
 		default:
-			return fmt.Errorf("map draft: instancing_mode %q invalid", d.InstancingMode)
-		}
-	}
-	if d.PersistenceMode != "" {
-		switch d.PersistenceMode {
-		case "persistent", "transient":
-		default:
-			return fmt.Errorf("map draft: persistence_mode %q invalid", d.PersistenceMode)
-		}
-	}
-	if d.SpectatorPolicy != "" {
-		switch d.SpectatorPolicy {
-		case "public", "private", "invite":
-		default:
-			return fmt.Errorf("map draft: spectator_policy %q invalid", d.SpectatorPolicy)
+			return fmt.Errorf("map draft: mode %q invalid", d.Mode)
 		}
 	}
 	return nil
 }
 
-// Descriptor drives the generic form renderer (PLAN.md task #33).
+// Descriptor drives the generic form renderer.
 func (MapDraft) Descriptor() []configurable.FieldDescriptor {
 	return []configurable.FieldDescriptor{
 		{Key: "name", Label: "Name", Kind: configurable.KindString, Required: true, MaxLen: 128},
-		{Key: "public", Label: "Public", Kind: configurable.KindBool},
 		{
-			Key: "instancing_mode", Label: "Instancing", Kind: configurable.KindEnum,
+			Key: "mode", Label: "Mode", Kind: configurable.KindEnum,
 			Options: []configurable.EnumOption{
-				{Value: "shared", Label: "Shared (one instance, everyone joins it)"},
-				{Value: "per_user", Label: "Per user"},
-				{Value: "per_party", Label: "Per party"},
-			},
-		},
-		{
-			Key: "persistence_mode", Label: "Persistence", Kind: configurable.KindEnum,
-			Options: []configurable.EnumOption{
-				{Value: "persistent", Label: "Persistent"},
-				{Value: "transient", Label: "Transient (resets per refresh window)"},
-			},
-		},
-		{
-			Key: "refresh_window_seconds", Label: "Refresh window (seconds)", Kind: configurable.KindInt,
-			Help: "For transient maps: how often to regenerate. Ignored for persistent maps.",
-		},
-		{
-			Key: "spectator_policy", Label: "Spectator policy", Kind: configurable.KindEnum,
-			Options: []configurable.EnumOption{
-				{Value: "public", Label: "Public (any authenticated player)"},
-				{Value: "private", Label: "Private (designer realm only)"},
-				{Value: "invite", Label: "Invite only"},
+				{Value: "authored", Label: "Authored (paint by hand)"},
+				{Value: "procedural", Label: "Procedural (generated from samples + constraints)"},
 			},
 		},
 		{
@@ -124,18 +89,9 @@ func (h *Handler) Publish(ctx context.Context, tx pgx.Tx, draft artifact.DraftRo
 	}
 
 	if _, err := tx.Exec(ctx, `
-		UPDATE maps SET
-			name = $2,
-			public = $3,
-			instancing_mode = $4,
-			persistence_mode = $5,
-			refresh_window_seconds = $6,
-			spectator_policy = $7,
-			seed = $8,
-			updated_at = now()
+		UPDATE maps SET name = $2, mode = $3, seed = $4, updated_at = now()
 		WHERE id = $1
-	`, draft.ArtifactID, d.Name, d.Public, d.InstancingMode, d.PersistenceMode,
-		d.RefreshWindowSeconds, d.SpectatorPolicy, d.Seed,
+	`, draft.ArtifactID, d.Name, d.Mode, d.Seed,
 	); err != nil {
 		return artifact.PublishResult{}, fmt.Errorf("apply map update: %w", err)
 	}
@@ -147,13 +103,8 @@ func (h *Handler) Publish(ctx context.Context, tx pgx.Tx, draft artifact.DraftRo
 func (h *Handler) loadPrev(ctx context.Context, tx pgx.Tx, id int64) (MapDraft, error) {
 	var d MapDraft
 	err := tx.QueryRow(ctx, `
-		SELECT name, public, instancing_mode, persistence_mode,
-		       refresh_window_seconds, spectator_policy, seed
-		FROM maps WHERE id = $1
-	`, id).Scan(
-		&d.Name, &d.Public, &d.InstancingMode, &d.PersistenceMode,
-		&d.RefreshWindowSeconds, &d.SpectatorPolicy, &d.Seed,
-	)
+		SELECT name, mode, seed FROM maps WHERE id = $1
+	`, id).Scan(&d.Name, &d.Mode, &d.Seed)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return d, fmt.Errorf("map %d: %w", id, ErrMapNotFound)

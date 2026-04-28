@@ -34,7 +34,7 @@
 | `S` | Sample tool (procedural maps only). |
 | `Ctrl/Cmd + Z` | Undo the last paint / rect / fill / erase / lock stroke. |
 | `Ctrl/Cmd + Shift + Z` *or* `Ctrl/Cmd + Y` | Redo. |
-| `H` | Open the per-realm HUD editor (`/design/maps/{id}/hud`). |
+| (HUD moved) | The HUD editor lives on a LEVEL (one HUD per level deployment of a map). Open it from the level editor's HUD tab. The old `H` hotkey was removed because a map can back many levels. |
 | `Space` (hold) | Pan camera. |
 | `+` / `-` | Zoom (always integer-scale). |
 
@@ -76,6 +76,44 @@ the contents pane.
 | `/` | Focus the search input. |
 | `N` | New entity type. |
 | `D` | Duplicate selected. |
+
+The Entity Manager has class-scoped sub-pages: `/design/entities/tiles`,
+`/design/entities/npcs`, `/design/entities/pcs`, `/design/entities/logic`.
+The same hotkeys work on each.
+
+## Library
+
+The Library replaces the old top-level Asset Manager as the home for
+sprites, tilemaps, audio, and UI panels. It's a tabstrip — the per-tab
+hotkeys from the Asset Manager (search, upload, F2 rename, drag-and-drop,
+etc.) are unchanged inside each tab.
+
+| Key | Action |
+|---|---|
+| `1` – `4` | Jump to the Sprites / Tilemaps / Audio / UI panels tab. |
+| (per-tab) | Inherit the Asset Manager hotkeys above. |
+
+## Worlds & Levels
+
+| Key | Action |
+|---|---|
+| `Cmd/Ctrl + N` | New world (on `/design/worlds`) or new level (on `/design/levels`). |
+| `1` – `5` | (Level editor) Switch tab: Geometry / Entities / HUD / Automations / Settings. |
+| `Esc` | Close the modal or jump back to the parent list. |
+
+The level editor's Geometry tab links to the existing Mapmaker — the
+mapmaker hotkeys above apply once you cross over.
+
+## Tilemap viewer
+
+`/design/tilemaps/{id}` shows the source sheet with hover-cells and the
+optional adjacency overlay.
+
+| Key | Action |
+|---|---|
+| `A` | Toggle the adjacency overlay. |
+| `R` | Inline-rename the hovered cell's tile entity. |
+| `Esc` | Back to the tilemap list. |
 
 ## Sandbox
 

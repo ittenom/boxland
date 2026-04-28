@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"boxland/server/internal/levels"
 	"boxland/server/internal/maps"
 	"boxland/server/internal/proto"
 	"boxland/server/internal/sim/runtime"
@@ -25,8 +26,9 @@ var ErrJoinSandboxRealm = errors.New("join_map: sandbox instance requires design
 // access to the InstanceManager so it can attach the connection's AOI
 // Subscription to the right MapInstance grid.
 type AuthoringDeps struct {
-	MapsService *maps.Service
-	Instances   *runtime.InstanceManager
+	MapsService   *maps.Service
+	LevelsService *levels.Service
+	Instances     *runtime.InstanceManager
 }
 
 // RegisterAuthoringVerbs wires the designer-only authoring opcodes

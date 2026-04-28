@@ -19,18 +19,29 @@ import (
 )
 
 // Kind discriminates asset types. Mirrors the assets.kind CHECK constraint.
+//
+// Per the holistic redesign, what used to be `KindTile` (a "tilemap PNG")
+// is now `KindSpriteAnimated` — a multi-frame 32×32 strip. The structured
+// "this is a tilemap" object lives in the separate `tilemaps` table and
+// references this asset as its backing PNG. So an asset row never carries
+// adjacency info; it's always either a single image, an animated strip,
+// an audio clip, or a 9-slice panel PNG.
 type Kind string
 
 const (
-	KindSprite  Kind = "sprite"
-	KindTile    Kind = "tile"
-	KindAudio   Kind = "audio"
+	// KindSprite is a single 32×32 image — the simplest case.
+	KindSprite Kind = "sprite"
+	// KindSpriteAnimated is a multi-frame 32×32 strip (any number of
+	// rows × cols of cells). Tilemaps reference assets of this kind as
+	// their backing PNG; character bakes also produce this kind.
+	KindSpriteAnimated Kind = "sprite_animated"
+	// KindAudio is a wav/ogg/mp3 audio clip.
+	KindAudio Kind = "audio"
 	// KindUIPanel marks a PNG that is a 9-slice border source for
 	// player-facing chrome (HUD frames, dialog boxes, tooltips). The
 	// bytes are an ordinary PNG; the kind tells the upload pipeline
-	// to skip tile-sheet auto-slicing and tells the previewer to draw
-	// the border at the configured slice. See docs/adding-a-component.md
-	// "Nine-slice panels".
+	// to skip auto-slicing and tells the previewer to draw the border
+	// at the configured slice.
 	KindUIPanel Kind = "ui_panel"
 )
 
@@ -392,7 +403,7 @@ func (s *Service) EnsureDominantColors(
 		SELECT id, content_addressed_path
 		FROM assets
 		WHERE dominant_color IS NULL
-		  AND kind IN ('sprite','tile','ui_panel')
+		  AND kind IN ('sprite','sprite_animated','ui_panel')
 		ORDER BY id ASC
 		LIMIT $1
 	`, limit)

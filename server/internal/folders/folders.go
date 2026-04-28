@@ -1,17 +1,19 @@
-// Package folders owns the asset-folder filesystem: tree CRUD, sort
-// modes, asset moves, and the recursive-CTE tree fetcher that powers
-// the IDE-style sidebar in Asset Manager and the Mapmaker palette.
+// Package folders owns the IDE filesystem: folder CRUD, sort modes,
+// the recursive-CTE tree fetcher that powers the IDE-style sidebar,
+// and bulk-move helpers for moving items into folders.
 //
-// Design points (also in migration 0043):
+// Design points (also in 0001_init.up.sql):
 //
-//   - Four "virtual" top-level roots — sprite / tile / audio / ui_panel.
-//     They are NOT real rows; a folder's `kind_root` says which root
-//     it belongs to. An asset's folder_id IS NULL means "lives in the
-//     kind root."
+//   - Six "virtual" top-level roots: sprite / tilemap / audio / ui_panel
+//     for the asset library, plus level / world for the level/world
+//     trees. Roots are NOT real rows — a folder's `kind_root` says
+//     which root it belongs to; an item with folder_id NULL lives in
+//     the kind root itself.
 //
-//   - Folder delete cascades to child folders but spares assets:
-//     assets.folder_id is `ON DELETE SET NULL`. Designers do not lose
-//     work by deleting a folder.
+//   - Folder delete cascades to child folders but spares contents:
+//     assets/tilemaps/levels/worlds.folder_id are all
+//     `ON DELETE SET NULL`. Designers do not lose work by deleting a
+//     folder.
 //
 //   - Cycle prevention on Move uses a recursive-CTE membership check
 //     (one query, indexed on parent_id). No application-side ancestor
@@ -19,6 +21,10 @@
 //
 //   - Tree fetch is one indexed query per kind_root. The shape returned
 //     is a flat slice; the view layer builds the tree.
+//
+// Note on naming: the table is still called `asset_folders` for
+// migration economy; semantically it's "folders." Most call sites read
+// fine.
 package folders
 
 import (
@@ -33,28 +39,55 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// KindRoot is the four valid top-level kinds a folder can belong to.
-// String values mirror assets.Kind so the FK side of decisions stays
-// trivially readable.
+// KindRoot is the six valid top-level kinds a folder can belong to.
+// String values mirror the kind discriminators on the back-reference
+// tables (assets.kind / tilemaps / levels / worlds) so the FK side of
+// decisions stays trivially readable.
 type KindRoot string
 
 const (
+	// Asset library roots — back-reference is `assets.folder_id`.
 	KindSprite  KindRoot = "sprite"
-	KindTile    KindRoot = "tile"
 	KindAudio   KindRoot = "audio"
 	KindUIPanel KindRoot = "ui_panel"
+	// Tilemap library root — back-reference is `tilemaps.folder_id`.
+	// Tilemaps are first-class objects (with their own table) rather
+	// than asset rows; their backing PNGs are stored as
+	// `assets.kind = 'sprite_animated'` and don't get filed
+	// independently.
+	KindTilemap KindRoot = "tilemap"
+	// Object roots — back-reference is `<table>.folder_id`.
+	KindLevel KindRoot = "level"
+	KindWorld KindRoot = "world"
 )
 
-// AllKindRoots returns the four virtual roots in their canonical order.
-// Used by the rail renderer + tests.
+// AllKindRoots returns the six virtual roots in canonical order. Used
+// by the rail renderer + tests.
 func AllKindRoots() []KindRoot {
-	return []KindRoot{KindSprite, KindTile, KindAudio, KindUIPanel}
+	return []KindRoot{KindSprite, KindTilemap, KindAudio, KindUIPanel, KindLevel, KindWorld}
+}
+
+// AssetKindRoots returns the kind_roots whose contents live in the
+// `assets` table (back-referenced by `assets.folder_id`).
+func AssetKindRoots() []KindRoot {
+	return []KindRoot{KindSprite, KindAudio, KindUIPanel}
 }
 
 // Valid reports whether s names a real kind root.
 func (k KindRoot) Valid() bool {
 	switch k {
-	case KindSprite, KindTile, KindAudio, KindUIPanel:
+	case KindSprite, KindTilemap, KindAudio, KindUIPanel, KindLevel, KindWorld:
+		return true
+	}
+	return false
+}
+
+// IsAssetKind reports whether folders of this root contain `assets`
+// rows (vs. tilemaps/levels/worlds rows). The folder service's
+// MoveAssets helper rejects moves into non-asset folders.
+func (k KindRoot) IsAssetKind() bool {
+	switch k {
+	case KindSprite, KindAudio, KindUIPanel:
 		return true
 	}
 	return false
@@ -84,17 +117,20 @@ func (m SortMode) Valid() bool {
 // AvailableSortModes returns the sort modes that make sense for one
 // kind_root. The UI uses this to hide irrelevant options.
 //
-//   - color is image-only (sprite / tile / ui_panel).
+//   - color is image-only (sprite / tilemap / ui_panel).
 //   - length is audio-only (length comes from metadata.duration_ms).
-//   - type is shown everywhere because every kind has subtypes
-//     (sprites have frame counts; tiles have collision shapes;
-//     audio has format; ui_panel has slice px).
+//   - type is shown for the asset roots (every asset kind has subtypes
+//     — sprites have frame counts, audio has format, ui_panel has
+//     slice px). For level/world roots type is omitted (they have no
+//     useful subtype).
 func AvailableSortModes(kr KindRoot) []SortMode {
 	switch kr {
 	case KindAudio:
 		return []SortMode{SortAlpha, SortDate, SortType, SortLength}
-	case KindSprite, KindTile, KindUIPanel:
+	case KindSprite, KindTilemap, KindUIPanel:
 		return []SortMode{SortAlpha, SortDate, SortType, SortColor}
+	case KindLevel, KindWorld:
+		return []SortMode{SortAlpha, SortDate}
 	}
 	return []SortMode{SortAlpha, SortDate}
 }
@@ -120,6 +156,7 @@ var (
 	ErrInvalidName     = errors.New("folders: name is required")
 	ErrCycle           = errors.New("folders: move would create a cycle")
 	ErrCrossKindMove   = errors.New("folders: cannot move across kind_root")
+	ErrNotAssetKind    = errors.New("folders: target folder is not an asset folder")
 )
 
 // Service is the public CRUD facade. Constructed once at boot and
@@ -157,9 +194,6 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Folder, error) {
 		return nil, fmt.Errorf("%w: %q", ErrInvalidSortMode, in.SortMode)
 	}
 
-	// If ParentID is set, verify it exists AND has the same kind_root.
-	// Cheap one-row select; cheaper than letting the FK fire and then
-	// translating a Postgres error.
 	if in.ParentID != nil {
 		var parentKind KindRoot
 		err := s.Pool.QueryRow(ctx,
@@ -278,7 +312,6 @@ func (s *Service) Move(ctx context.Context, id int64, newParentID *int64) error 
 		if pKind != cur.KindRoot {
 			return fmt.Errorf("%w: %s vs %s", ErrCrossKindMove, pKind, cur.KindRoot)
 		}
-		// Cycle: would the new parent be a descendant of `id`?
 		var cycle bool
 		err = s.Pool.QueryRow(ctx, `
 			WITH RECURSIVE descendants AS (
@@ -312,7 +345,8 @@ func (s *Service) Move(ctx context.Context, id int64, newParentID *int64) error 
 }
 
 // Delete removes a folder. Children cascade (CASCADE on parent_id);
-// assets in the folder bubble up to the kind root via SET NULL.
+// items in the folder bubble up to the kind root via SET NULL on the
+// back-reference columns.
 func (s *Service) Delete(ctx context.Context, id int64) error {
 	tag, err := s.Pool.Exec(ctx, `DELETE FROM asset_folders WHERE id = $1`, id)
 	if err != nil {
@@ -440,7 +474,7 @@ func (s *Service) PathsByID(ctx context.Context, ids []int64) (map[int64]string,
 // creating folders as needed. Returns the leaf folder id (or 0 if
 // `path` is empty, meaning "the kind root itself").
 //
-// Used by the importer when the exported asset envelope carries a
+// Used by the importer when an exported envelope carries a
 // folder_path. Idempotent: re-importing the same export twice doesn't
 // create duplicate folders (case-insensitive name match within parent).
 func (s *Service) EnsurePath(ctx context.Context, kr KindRoot, path string, designerID int64) (int64, error) {
@@ -458,9 +492,6 @@ func (s *Service) EnsurePath(ctx context.Context, kr KindRoot, path string, desi
 		if p == "" {
 			continue
 		}
-		// Look up an existing folder at this level + parent. Use the
-		// case-insensitive index match for ergonomics — designers
-		// shouldn't get parallel "Forest" / "forest" folders.
 		var existingID int64
 		var query string
 		var args []any
@@ -504,10 +535,14 @@ func (s *Service) EnsurePath(ctx context.Context, kr KindRoot, path string, desi
 // MoveAssets bulk-reparents assets to a target folder (or kind root if
 // targetFolderID is nil). One UPDATE; safe to call with thousands of
 // ids. Validates that every asset shares the same kind as the target
-// folder so the UI can't accidentally drop a sprite into a Tiles
+// folder so the UI can't accidentally drop a sprite into an Audio
 // folder.
 //
 // Returns the number of rows actually moved (helpful for toast copy).
+//
+// The target folder must be an asset-kind folder (sprite / audio /
+// ui_panel). To move tilemaps/levels/worlds, use the corresponding
+// service's move helper.
 func (s *Service) MoveAssets(ctx context.Context, assetIDs []int64, targetFolderID *int64) (int64, error) {
 	if len(assetIDs) == 0 {
 		return 0, nil
@@ -517,8 +552,9 @@ func (s *Service) MoveAssets(ctx context.Context, assetIDs []int64, targetFolder
 		if err != nil {
 			return 0, err
 		}
-		// All assets must be of f.KindRoot (the target's kind_root is
-		// exactly what the asset's kind must be).
+		if !f.KindRoot.IsAssetKind() {
+			return 0, fmt.Errorf("%w: target folder kind=%s", ErrNotAssetKind, f.KindRoot)
+		}
 		var bad int
 		err = s.Pool.QueryRow(ctx, `
 			SELECT count(*) FROM assets WHERE id = ANY($1::bigint[]) AND kind <> $2
@@ -536,6 +572,47 @@ func (s *Service) MoveAssets(ctx context.Context, assetIDs []int64, targetFolder
 	`, assetIDs, targetFolderID)
 	if err != nil {
 		return 0, fmt.Errorf("move assets: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+// MoveTilemaps, MoveLevels, MoveWorlds reparent the corresponding
+// object rows into a folder of the matching kind_root. Bulk-safe.
+func (s *Service) MoveTilemaps(ctx context.Context, tilemapIDs []int64, targetFolderID *int64) (int64, error) {
+	return s.moveObjects(ctx, "tilemaps", KindTilemap, tilemapIDs, targetFolderID)
+}
+func (s *Service) MoveLevels(ctx context.Context, levelIDs []int64, targetFolderID *int64) (int64, error) {
+	return s.moveObjects(ctx, "levels", KindLevel, levelIDs, targetFolderID)
+}
+func (s *Service) MoveWorlds(ctx context.Context, worldIDs []int64, targetFolderID *int64) (int64, error) {
+	return s.moveObjects(ctx, "worlds", KindWorld, worldIDs, targetFolderID)
+}
+
+// moveObjects is the shared implementation: validate target is the
+// expected kind_root, then UPDATE folder_id on the named table. The
+// table name is hard-coded per call site so this is not a SQL-injection
+// vector — only the three exported wrappers above can call it.
+func (s *Service) moveObjects(ctx context.Context, table string, expected KindRoot, ids []int64, targetFolderID *int64) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	if targetFolderID != nil {
+		f, err := s.FindByID(ctx, *targetFolderID)
+		if err != nil {
+			return 0, err
+		}
+		if f.KindRoot != expected {
+			return 0, fmt.Errorf("%w: target folder kind=%s, want %s",
+				ErrCrossKindMove, f.KindRoot, expected)
+		}
+	}
+	q := fmt.Sprintf(
+		`UPDATE %s SET folder_id = $2, updated_at = now() WHERE id = ANY($1::bigint[])`,
+		table,
+	)
+	tag, err := s.Pool.Exec(ctx, q, ids, targetFolderID)
+	if err != nil {
+		return 0, fmt.Errorf("move %s: %w", table, err)
 	}
 	return tag.RowsAffected(), nil
 }

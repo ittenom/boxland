@@ -2,20 +2,29 @@ package views
 
 import "fmt"
 
-// AssetsImportModal is the small file-picker that the Asset Manager's
-// "Import" button opens. POSTs the chosen .boxasset / .boxassets /
-// .boxmap zip to /design/assets/import; the response is an
-// ImportSummary fragment that replaces the modal body.
+// ImportModalProps drives the generic import modal. Every importable
+// kind (assets, tilemaps, levels, worlds) renders the same shape with
+// per-kind copy and post URL.
+type ImportModalProps struct {
+	Title    string // "Import worlds"
+	Lede     string // "Drop a .boxworld file here..."
+	PostURL  string // "/design/worlds/import"
+	Accept   string // ".zip,.boxworld,application/zip"
+}
+
+// ImportModal is the small file-picker that every list page's
+// "Import" button opens. POSTs the chosen zip to PostURL; the response
+// is an ImportSummary fragment that replaces the modal body.
 //
 // The form is plain multipart so it works without JavaScript; HTMX is
 // only used to swap the response into #modal-host.
-templ AssetsImportModal() {
+templ ImportModal(p ImportModalProps) {
 	<div class="bx-modal-backdrop" data-bx-dismissible role="dialog" aria-modal="true">
 		<div class="bx-modal" style="width: min(520px, 95vw);">
 			<header class="bx-modal__header">
 				<div class="bx-row" style="gap: var(--bx-s2);">
 					@Icon("save")
-					<h2 style="margin:0;" data-copy-slot="assets.import.title">Import assets</h2>
+					<h2 style="margin:0;">{ p.Title }</h2>
 				</div>
 				<button
 					type="button"
@@ -26,20 +35,18 @@ templ AssetsImportModal() {
 			</header>
 			<form
 				class="bx-modal__body bx-stack"
-				hx-post="/design/assets/import"
+				hx-post={ p.PostURL }
 				hx-encoding="multipart/form-data"
 				hx-target="#modal-host"
 				hx-swap="innerHTML"
 			>
-				<p class="bx-muted bx-small" data-copy-slot="assets.import.lede">
-					Drop a .boxasset, .boxassets, or .boxmap file here. Existing assets with matching content are skipped automatically.
-				</p>
+				<p class="bx-muted bx-small">{ p.Lede }</p>
 				<label class="bx-stack-tight">
 					<span class="bx-small bx-muted">File</span>
 					<input
 						type="file"
 						name="file"
-						accept=".zip,.boxasset,.boxassets,.boxmap,application/zip"
+						accept={ p.Accept }
 						required
 						class="bx-input"
 					/>
@@ -63,26 +70,41 @@ templ AssetsImportModal() {
 				<button
 					type="submit"
 					class="bx-btn bx-btn--primary"
-					hx-post="/design/assets/import"
+					hx-post={ p.PostURL }
 					hx-encoding="multipart/form-data"
 					hx-include="closest .bx-modal form"
 					hx-target="#modal-host"
 					hx-swap="innerHTML"
-					data-copy-slot="assets.import.submit"
 				>Import</button>
 			</footer>
 		</div>
 	</div>
 }
 
+// AssetsImportModal preserves the original entry point (still called
+// from the Library "Import" button + the F2 keyboard hotkey).
+templ AssetsImportModal() {
+	@ImportModal(ImportModalProps{
+		Title:   "Import assets",
+		Lede:    "Drop a .boxasset, .boxassets, or .boxmap file here. Existing assets with matching content are skipped automatically.",
+		PostURL: "/design/assets/import",
+		Accept:  ".zip,.boxasset,.boxassets,.boxmap,application/zip",
+	})
+}
+
 // ImportSummaryProps is the post-import toast: counts + warnings.
+// Counts are added per kind as the redesign's importers ship them.
 type ImportSummaryProps struct {
 	AssetsCreated      int
 	AssetsSkipped      int
 	BlobsUploaded      int
 	EntityTypesCreated int
 	EntityTypesSkipped int
+	TilemapsCreated    int
+	TilemapsSkipped    int
 	MapsCreated        int
+	LevelsCreated      int
+	WorldsCreated      int
 	Warnings           []string
 }
 
@@ -120,8 +142,20 @@ templ ImportSummary(p ImportSummaryProps) {
 					if p.EntityTypesSkipped > 0 {
 						<li class="bx-muted"><strong>{ fmt.Sprintf("%d", p.EntityTypesSkipped) }</strong> entity types skipped</li>
 					}
+					if p.TilemapsCreated > 0 {
+						<li><strong>{ fmt.Sprintf("%d", p.TilemapsCreated) }</strong> tilemaps created</li>
+					}
+					if p.TilemapsSkipped > 0 {
+						<li class="bx-muted"><strong>{ fmt.Sprintf("%d", p.TilemapsSkipped) }</strong> tilemaps skipped</li>
+					}
 					if p.MapsCreated > 0 {
 						<li><strong>{ fmt.Sprintf("%d", p.MapsCreated) }</strong> maps created</li>
+					}
+					if p.LevelsCreated > 0 {
+						<li><strong>{ fmt.Sprintf("%d", p.LevelsCreated) }</strong> levels created</li>
+					}
+					if p.WorldsCreated > 0 {
+						<li><strong>{ fmt.Sprintf("%d", p.WorldsCreated) }</strong> worlds created</li>
 					}
 				</ul>
 				if len(p.Warnings) > 0 {

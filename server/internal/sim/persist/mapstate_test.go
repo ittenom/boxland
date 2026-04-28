@@ -34,7 +34,7 @@ func newWorldWithSampleEntities(t *testing.T) *ecs.World {
 func TestEncodeDecode_Roundtrip(t *testing.T) {
 	w := newWorldWithSampleEntities(t)
 	blob, err := persist.EncodeMapState(persist.EncodeInputs{
-		MapID:      77,
+		LevelID:    77,
 		InstanceID: "live:77:0",
 		Tick:       12345,
 		Stores:     w.Stores(),
@@ -70,7 +70,7 @@ func TestEncodeDecode_Roundtrip(t *testing.T) {
 func TestApplyMapState_RecreatesEntities(t *testing.T) {
 	src := newWorldWithSampleEntities(t)
 	blob, err := persist.EncodeMapState(persist.EncodeInputs{
-		MapID:      1, InstanceID: "i", Tick: 0, Stores: src.Stores(),
+		LevelID:    1, InstanceID: "i", Tick: 0, Stores: src.Stores(),
 	})
 	if err != nil {
 		t.Fatal(err)

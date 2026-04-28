@@ -37,13 +37,30 @@
     if (!e.shiftKey) return;
     if (isTextEditingTarget(e.target)) return;
     const exporters = document.querySelectorAll(
-      "[data-bx-export-map], [data-bx-export-asset], [data-bx-export-all-assets]"
+      "[data-bx-export-map], [data-bx-export-asset], [data-bx-export-all-assets], " +
+      "[data-bx-export-tilemap], [data-bx-export-level], [data-bx-export-world]"
     );
     if (exporters.length === 0) return;
     e.preventDefault();
     // Prefer the most-specific surface: per-asset > per-map > all-assets.
     // The DOM only ever shows one of these at a time on a real page.
     exporters[0].click();
+  });
+
+  // 1c. Number keys 1..N jump to a tabstrip tab when one is on the
+  //     page. Used by the Library shell (1-4) and the Level editor
+  //     (1-5) per docs/hotkeys.md. We trigger a real anchor click so
+  //     the existing href routing handles the navigation; nothing
+  //     special-cases the surfaces here.
+  document.addEventListener("keydown", (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+    if (isTextEditingTarget(e.target)) return;
+    const n = parseInt(e.key, 10);
+    if (!(n >= 1 && n <= 9)) return;
+    const tabs = document.querySelectorAll(".bx-tabstrip__tab");
+    if (tabs.length < n) return;
+    e.preventDefault();
+    tabs[n - 1].click();
   });
 
   // 2. Mark the active nav link with aria-current="page". Re-runs on HTMX

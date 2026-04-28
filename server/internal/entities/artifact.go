@@ -61,7 +61,7 @@ func (EntityTypeDraft) Descriptor() []configurable.FieldDescriptor {
 	return []configurable.FieldDescriptor{
 		{Key: "name", Label: "Name", Kind: configurable.KindString, Required: true, MaxLen: 128},
 		{Key: "sprite_asset_id", Label: "Sprite asset", Kind: configurable.KindAssetRef,
-			RefTags: []string{"sprite", "tile"}},
+			RefTags: []string{"sprite", "sprite_animated"}},
 		{Key: "default_animation_id", Label: "Default animation id", Kind: configurable.KindInt, Min: &zero,
 			Help: "0 (or empty) defers to the first animation on the asset."},
 		{Key: "collider_w", Label: "Collider W (px)", Kind: configurable.KindInt, Min: &zero},

@@ -102,7 +102,7 @@ type OnEnterTileConfig struct {
 
 func (c OnEnterTileConfig) Validate() error { return nil }
 
-// FlagEqualsConfig fires while map_flags[Key] equals the configured
+// FlagEqualsConfig fires while level_flags[Key] equals the configured
 // value. Kind is "bool" or "int"; runtime systems pick the matching
 // field. See indie-RPG research §P1 #9 and the flags package.
 type FlagEqualsConfig struct {
@@ -124,7 +124,7 @@ func (c FlagEqualsConfig) Validate() error {
 	return nil
 }
 
-// FlagThresholdConfig fires while an int map_flag crosses a threshold.
+// FlagThresholdConfig fires while an int level_flag crosses a threshold.
 // Bool flags would be a no-op so we only accept int.
 type FlagThresholdConfig struct {
 	Key   string `json:"key"`
@@ -144,7 +144,7 @@ func (c FlagThresholdConfig) Validate() error {
 	return nil
 }
 
-// OnRealmEnterConfig fires once per (player, map) session when the
+// OnRealmEnterConfig fires once per (player, level) session when the
 // player joins the realm. The "once per session" idempotency lives in
 // the sim runtime; the config carries no fields today.
 type OnRealmEnterConfig struct{}

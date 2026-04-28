@@ -94,6 +94,21 @@
     --bx-kind-group:     #FE9000;
     --bx-kind-character: #FF5E9F; /* jewel pink for character generator artifacts */
 
+    /* Holistic redesign kinds. WORLD / LEVEL stack above MAP in the
+       canonical hierarchy; entity classes mirror the `entity_class`
+       column on entity_types. Library kinds re-use `--bx-kind-asset`
+       hue space with subtle shifts. */
+    --bx-kind-world:     #C480FF; /* royal purple — top-level container */
+    --bx-kind-level:     #80C8FF; /* sky blue — between world + map */
+    --bx-kind-tilemap:   #FFA85A; /* warm amber — sliced sheet */
+    --bx-kind-tile:      #FFDD4A; /* same as asset (tiles are assets in spirit) */
+    --bx-kind-npc:       #FF5E9F; /* same as character */
+    --bx-kind-pc:        #FFB0D5; /* lighter pink — players */
+    --bx-kind-logic:     #b08fff; /* purple — like sockets, abstract */
+    --bx-kind-sprite:    #FFDD4A;
+    --bx-kind-audio:     #5ADBFF;
+    --bx-kind-ui_panel:  #5ADFB0;
+
     /* checker pattern under previews */
     --bx-checker-a: #04162a;
     --bx-checker-b: #082b4d;
@@ -141,6 +156,17 @@
     --bx-kind-socket:    #7a5fcf;
     --bx-kind-group:     #d63a4a;
     --bx-kind-character: #c4337a; /* jewel pink — light theme variant */
+
+    --bx-kind-world:     #6437a0;
+    --bx-kind-level:     #1f6cb0;
+    --bx-kind-tilemap:   #d96b1a;
+    --bx-kind-tile:      #FE9000;
+    --bx-kind-npc:       #c4337a;
+    --bx-kind-pc:        #b86289;
+    --bx-kind-logic:     #7a5fcf;
+    --bx-kind-sprite:    #FE9000;
+    --bx-kind-audio:     #094074;
+    --bx-kind-ui_panel:  #2fa56b;
 
     --bx-checker-a: #ffffff;
     --bx-checker-b: #e4ecf4;
@@ -1030,6 +1056,19 @@ p, li { font-size: 13px; line-height: 1.55; }
 .bx-dot--socket    { background: var(--bx-kind-socket); }
 .bx-dot--group     { background: var(--bx-kind-group); }
 .bx-dot--character { background: var(--bx-kind-character); }
+
+/* Holistic-redesign kinds: top-level container colors (worlds / levels
+ * stack above maps), entity-class colors, library-kind colors. */
+.bx-dot--world    { background: var(--bx-kind-world); }
+.bx-dot--level    { background: var(--bx-kind-level); }
+.bx-dot--tilemap  { background: var(--bx-kind-tilemap); }
+.bx-dot--tile     { background: var(--bx-kind-tile); }
+.bx-dot--npc      { background: var(--bx-kind-npc); }
+.bx-dot--pc       { background: var(--bx-kind-pc); }
+.bx-dot--logic    { background: var(--bx-kind-logic); }
+.bx-dot--sprite   { background: var(--bx-kind-sprite); }
+.bx-dot--audio    { background: var(--bx-kind-audio); }
+.bx-dot--ui_panel { background: var(--bx-kind-ui_panel); }
 
 
 /* -- Command palette ------------------------------------------------- */
@@ -2191,4 +2230,223 @@ body[data-bx-spectator="1"] [data-bx-camera-mode][data-bx-camera-mode="free-cam"
 :root {
     --bx-lock-overlay: rgba(255, 221, 74, 0.55); /* same hue as --bx-accent at 55% */
     --bx-lock-stroke:  #ffd220;
+}
+
+
+/* =====================================================================
+ * 9. Holistic redesign surfaces (Phase 2)
+ *
+ * Top-level pages added by the holistic redesign:
+ *   - Tree sub-sections under Entities + Library group heads
+ *   - Level editor with tabstrip
+ *   - Tilemap viewer (sheet + adjacency overlay)
+ *   - World detail page
+ *
+ * Color palette mirrors the kind dots: world purple → level blue →
+ * map green continues the existing kind hue rotation.
+ * ===================================================================== */
+
+/* Tree sub-sections (nested under Entities/Library group heads). Quieter
+ * than top-level sections: no leading dot, indented list, smaller count. */
+.bx-tree__section--group { /* the parent block that holds the head + nested subs */ }
+
+.bx-tree__sub {
+    margin: 0 0 var(--bx-s1) var(--bx-s2);
+    padding-left: var(--bx-s1);
+    border-left: 1px solid var(--bx-line);
+}
+.bx-tree__sub__head {
+    display: flex; align-items: center; gap: var(--bx-s1);
+    padding: 2px 4px;
+    color: var(--bx-fg-2);
+}
+.bx-tree__sub__head a {
+    color: inherit;
+    text-decoration: none;
+    flex: 1;
+    font-size: 11px;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+}
+.bx-tree__sub__head a:hover { color: var(--bx-accent); }
+.bx-tree__count--small { font-size: 10px; opacity: 0.7; }
+
+.bx-tree__list--sub { padding-left: 8px; }
+.bx-tree__item--sub {
+    padding: 1px 4px;
+    font-size: 11px;
+}
+
+
+/* Tabstrip (used by the level editor; reusable elsewhere). Pixel-style
+ * underline indicator; no gradients or shadows. */
+.bx-tabstrip {
+    display: flex;
+    gap: 0;
+    border-bottom: var(--bx-px) solid var(--bx-line);
+    margin-bottom: var(--bx-s2);
+    padding: 0 var(--bx-s2);
+}
+.bx-tabstrip__tab {
+    padding: 6px var(--bx-s3);
+    color: var(--bx-fg-2);
+    text-decoration: none;
+    border: var(--bx-px) solid transparent;
+    border-bottom: 0;
+    margin-bottom: -1px;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.4;
+    cursor: pointer;
+}
+.bx-tabstrip__tab:hover {
+    color: var(--bx-fg-0);
+    background: var(--bx-bg-2);
+}
+.bx-tabstrip__tab--active {
+    color: var(--bx-fg-0);
+    background: var(--bx-bg-1);
+    border-color: var(--bx-line-2);
+    border-bottom-color: var(--bx-bg-1);
+}
+
+
+/* Level editor shell. Tabstrip + pane; no rail (the layout variant is
+ * "no-rail"). The pane itself fills the remaining work-area height. */
+.bx-level-editor {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+}
+.bx-level-editor__pane {
+    background: var(--bx-bg-1);
+    border: var(--bx-px) solid var(--bx-line);
+    padding: var(--bx-s3);
+    flex: 1;
+    overflow: auto;
+}
+
+
+/* Definition list used by Settings tab (and any similar key/value
+ * surface). Two-column grid, label muted, value foreground. */
+.bx-defs {
+    display: grid;
+    grid-template-columns: 160px 1fr;
+    gap: 4px var(--bx-s2);
+    margin: 0;
+}
+.bx-defs dt {
+    color: var(--bx-fg-2);
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 0.4px;
+    line-height: 1.6;
+}
+.bx-defs dd {
+    margin: 0;
+    color: var(--bx-fg-0);
+    font-family: var(--bx-font);
+    font-size: 12px;
+}
+
+
+/* Card variants. The world / level / tilemap cards on the list pages
+ * all use the existing .bx-card base; the modifiers add a left-border
+ * accent in the matching kind hue so designers can scan the grid by
+ * color. */
+.bx-card--world   { border-left: 3px solid var(--bx-kind-world); }
+.bx-card--level   { border-left: 3px solid var(--bx-kind-level); }
+.bx-card--tilemap { border-left: 3px solid var(--bx-kind-tilemap); }
+.bx-card__thumb {
+    background: var(--bx-bg-2);
+    margin-bottom: var(--bx-s1);
+    display: flex; align-items: center; justify-content: center;
+    min-height: 64px;
+    overflow: hidden;
+}
+
+
+/* Tilemap viewer. Two-column: canvas (the source PNG with cell-hover
+ * overlay) on the left, rail with cells list + adjacency toggle on
+ * the right. */
+.bx-tilemap-viewer { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+.bx-tilemap-viewer__layout {
+    display: grid;
+    grid-template-columns: 1fr 280px;
+    gap: var(--bx-s3);
+    flex: 1;
+    min-height: 0;
+    padding: 0 var(--bx-s2) var(--bx-s2) var(--bx-s2);
+}
+@media (max-width: 900px) {
+    .bx-tilemap-viewer__layout { grid-template-columns: 1fr; }
+}
+.bx-tilemap-viewer__canvas-wrap {
+    position: relative;
+    background: var(--bx-bg-2);
+    border: var(--bx-px) solid var(--bx-line);
+    padding: var(--bx-s2);
+    overflow: auto;
+    min-height: 0;
+}
+.bx-tilemap-viewer__sheet {
+    display: block;
+    /* Integer-scale rendering preserved; the JS layer scales up. */
+}
+.bx-tilemap-viewer__overlay {
+    position: absolute;
+    inset: var(--bx-s2);
+    pointer-events: none;
+}
+.bx-tilemap-viewer__rail {
+    background: var(--bx-bg-1);
+    border: var(--bx-px) solid var(--bx-line);
+    padding: var(--bx-s2);
+    overflow: auto;
+    min-height: 0;
+}
+.bx-tilemap-viewer__cell-link {
+    color: var(--bx-fg-1);
+    text-decoration: none;
+}
+.bx-tilemap-viewer__cell-link:hover { color: var(--bx-accent); }
+
+
+/* World graph (SVG). Levels render as small flat rectangles arranged
+ * in a fixed grid; the start level gets the accent border. */
+.bx-world-graph { width: 100%; }
+.bx-world-graph__svg {
+    width: 100%;
+    height: auto;
+    display: block;
+    background: var(--bx-bg-2);
+    border: var(--bx-px) solid var(--bx-line);
+}
+.bx-world-graph__node rect {
+    fill: var(--bx-bg-1);
+    stroke: var(--bx-kind-level);
+    stroke-width: 2;
+}
+.bx-world-graph__node:hover rect {
+    fill: var(--bx-bg-3);
+}
+.bx-world-graph__node--start rect {
+    stroke: var(--bx-accent);
+    stroke-width: 3;
+}
+.bx-world-graph__title {
+    font-family: var(--bx-font);
+    font-size: 11px;
+    fill: var(--bx-fg-0);
+    font-weight: 600;
+}
+.bx-world-graph__meta {
+    font-family: var(--bx-font);
+    font-size: 10px;
+    fill: var(--bx-fg-3);
+}
+.bx-world-graph__node--start .bx-world-graph__meta {
+    fill: var(--bx-accent);
+    font-weight: 600;
 }

@@ -28,12 +28,15 @@ import (
 	"boxland/server/internal/flags"
 	"boxland/server/internal/folders"
 	"boxland/server/internal/hud"
+	"boxland/server/internal/levels"
 	mapsservice "boxland/server/internal/maps"
 	"boxland/server/internal/maps/wfc"
 	"boxland/server/internal/persistence"
 	"boxland/server/internal/publishing/artifact"
 	"boxland/server/internal/settings"
+	"boxland/server/internal/tilemaps"
 	"boxland/server/internal/updater"
+	"boxland/server/internal/worlds"
 	"boxland/server/views"
 )
 
@@ -50,7 +53,10 @@ type Deps struct {
 	Entities        *entities.Service
 	Components      *components.Registry
 	Folders         *folders.Service
+	Tilemaps        *tilemaps.Service
 	Maps            *mapsservice.Service
+	Levels          *levels.Service
+	Worlds          *worlds.Service
 	Importers       *assets.Registry
 	BakeJob         *assets.BakeJob
 	PublishPipeline *artifact.Pipeline
@@ -232,7 +238,9 @@ func New(d Deps) http.Handler {
 	mux.Handle("DELETE /design/maps/{id}", auth(deleteMap(d)))
 	mux.Handle("GET /design/maps/{id}/settings", auth(getMapSettingsModal(d)))
 	mux.Handle("POST /design/maps/{id}/draft", auth(postMapDraft(d)))
-	mux.Handle("POST /design/maps/{id}/public-toggle", auth(postMapPublicToggle(d)))
+	// "Public" moved to LEVEL in the holistic redesign; the level
+	// editor's settings tab owns the toggle now (see
+	// /design/levels/{id}/public-toggle).
 	mux.Handle("POST /design/maps/{mapID}/layers/{layerID}/y-sort", auth(postMapLayerYSortToggle(d)))
 
 	// Map export / import (mirrors the asset surface — see PLAN.md
@@ -240,16 +248,17 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /design/maps/{id}/export", auth(getMapExport(d)))
 	mux.Handle("POST /design/maps/import", auth(postMapImport(d)))
 
-	// Per-realm HUD editor (PLAN.md research §P1 #7 + Todo 5).
-	// Edits land on maps.hud_layout_json directly (no draft staging
-	// for v1 — same pattern as map_tiles and lighting cells).
-	mux.Handle("GET /design/maps/{id}/hud", auth(getMapHUDPage(d)))
-	mux.Handle("POST /design/maps/{id}/hud/widgets", auth(postHUDWidgetAdd(d)))
-	mux.Handle("GET /design/maps/{id}/hud/widgets/{anchor}/{order}", auth(getHUDWidgetForm(d)))
-	mux.Handle("POST /design/maps/{id}/hud/widgets/{anchor}/{order}", auth(postHUDWidgetSave(d)))
-	mux.Handle("DELETE /design/maps/{id}/hud/widgets/{anchor}/{order}", auth(deleteHUDWidget(d)))
-	mux.Handle("POST /design/maps/{id}/hud/widgets/{anchor}/{order}/move", auth(postHUDWidgetMove(d)))
-	mux.Handle("POST /design/maps/{id}/hud/anchors/{anchor}", auth(postHUDStackMetadata(d)))
+	// Per-level HUD editor. Edits land on levels.hud_layout_json
+	// directly (no draft staging for v1 — same pattern as map_tiles
+	// and lighting cells). Per the holistic redesign, HUD lives on
+	// LEVELs, not maps.
+	mux.Handle("GET /design/levels/{id}/hud", auth(getMapHUDPage(d)))
+	mux.Handle("POST /design/levels/{id}/hud/widgets", auth(postHUDWidgetAdd(d)))
+	mux.Handle("GET /design/levels/{id}/hud/widgets/{anchor}/{order}", auth(getHUDWidgetForm(d)))
+	mux.Handle("POST /design/levels/{id}/hud/widgets/{anchor}/{order}", auth(postHUDWidgetSave(d)))
+	mux.Handle("DELETE /design/levels/{id}/hud/widgets/{anchor}/{order}", auth(deleteHUDWidget(d)))
+	mux.Handle("POST /design/levels/{id}/hud/widgets/{anchor}/{order}/move", auth(postHUDWidgetMove(d)))
+	mux.Handle("POST /design/levels/{id}/hud/anchors/{anchor}", auth(postHUDStackMetadata(d)))
 
 	// Authored-mode painting endpoints. JSON in / out. The design
 	// console's mapmaker JS pumps brush strokes through these; the
@@ -265,10 +274,72 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /design/publish/preview", auth(getPublishPreview(d)))
 	mux.Handle("POST /design/publish", auth(postPublish(d)))
 
-	// Sandbox (PLAN.md §131). Map picker + game-view shell pre-
-	// configured with a sandbox: instance id + designer WS ticket.
+	// Sandbox. Per the holistic redesign, sandboxes launch a LEVEL
+	// (geometry comes from the level's map; entity placements come
+	// from level_entities). Designer realm uses the
+	// `sandbox:<designer_id>:<level_id>` AOI namespace.
 	mux.Handle("GET /design/sandbox", auth(getSandboxIndex(d)))
 	mux.Handle("GET /design/sandbox/launch/{id}", auth(getSandboxLaunch(d)))
+
+	// ---- Phase 2 redesign surfaces ----
+	//
+	// New top-level pages added by the holistic redesign:
+	//   /design/worlds   — graph of LEVELs (campaign packaging)
+	//   /design/levels   — MAP + entity placements + HUD + instancing
+	//   /design/tilemaps — sliced tile sheets with adjacency
+	//   /design/library  — Sprites/Tilemaps/Audio/UI panels tab shell
+	//
+	// Plus per-class entity pages
+	// (/design/entities/{tiles|npcs|pcs|logic}) so designers can scope
+	// their grid to one class without per-tag filters.
+
+	mux.Handle("GET /design/worlds", auth(getWorldsList(d)))
+	mux.Handle("GET /design/worlds/new", auth(getWorldNewModal(d)))
+	mux.Handle("POST /design/worlds", auth(postWorldCreate(d)))
+	mux.Handle("GET /design/worlds/{id}", auth(getWorldDetail(d)))
+	mux.Handle("DELETE /design/worlds/{id}", auth(deleteWorld(d)))
+	mux.Handle("POST /design/worlds/{id}/rename", auth(postWorldRename(d)))
+	mux.Handle("POST /design/worlds/{id}/start-level", auth(postWorldStartLevel(d)))
+	// World export/import — full campaign bundle.
+	mux.Handle("GET /design/worlds/{id}/export", auth(getWorldExport(d)))
+	mux.Handle("GET /design/worlds/import", auth(getWorldImportModal(d)))
+	mux.Handle("POST /design/worlds/import", auth(postWorldImport(d)))
+
+	mux.Handle("GET /design/levels", auth(getLevelsList(d)))
+	mux.Handle("GET /design/levels/new", auth(getLevelNewModal(d)))
+	mux.Handle("POST /design/levels", auth(postLevelCreate(d)))
+	mux.Handle("GET /design/levels/{id}", auth(getLevelDetail(d)))
+	mux.Handle("DELETE /design/levels/{id}", auth(deleteLevel(d)))
+	mux.Handle("POST /design/levels/{id}/public-toggle", auth(postLevelPublic(d)))
+	// Level export/import — full bundle (level + map + entities + HUD).
+	mux.Handle("GET /design/levels/{id}/export", auth(getLevelExport(d)))
+	mux.Handle("GET /design/levels/import", auth(getLevelImportModal(d)))
+	mux.Handle("POST /design/levels/import", auth(postLevelImport(d)))
+
+	mux.Handle("GET /design/tilemaps", auth(getTilemapsList(d)))
+	mux.Handle("GET /design/tilemaps/{id}", auth(getTilemapDetail(d)))
+	mux.Handle("DELETE /design/tilemaps/{id}", auth(deleteTilemap(d)))
+	// Tilemap export/import — the .boxtilemap.zip carries the row +
+	// per-cell tile entities + backing PNG, round-tripping cleanly
+	// across projects. URL shape mirrors the level/world side
+	// (/design/<kind>s/{id}/export); the older
+	// /design/assets/export/{id} route is kept for back-compat.
+	mux.Handle("GET /design/tilemaps/{id}/export", auth(getTilemapExport(d)))
+	mux.Handle("GET /design/tilemaps/import", auth(getTilemapImportModal(d)))
+	mux.Handle("POST /design/tilemaps/import", auth(postTilemapImport(d)))
+
+	mux.Handle("GET /design/library", auth(getLibraryPage(d)))
+	mux.Handle("GET /design/library/sprites", auth(getLibraryTab("sprites")(d)))
+	mux.Handle("GET /design/library/tilemaps", auth(getLibraryTab("tilemaps")(d)))
+	mux.Handle("GET /design/library/audio", auth(getLibraryTab("audio")(d)))
+	mux.Handle("GET /design/library/ui-panels", auth(getLibraryTab("ui-panels")(d)))
+
+	// Per-class entity pages share the existing list handler with a
+	// synthetic class= query param.
+	mux.Handle("GET /design/entities/tiles", auth(getEntitiesByClass("tile")(d)))
+	mux.Handle("GET /design/entities/npcs", auth(getEntitiesByClass("npc")(d)))
+	mux.Handle("GET /design/entities/pcs", auth(getEntitiesByClass("pc")(d)))
+	mux.Handle("GET /design/entities/logic", auth(getEntitiesByClass("logic")(d)))
 
 	// Shared ref pickers (PLAN.md §5d). One generic "choose an asset /
 	// entity" modal that any form's KindAssetRef / KindEntityTypeRef
@@ -488,7 +559,13 @@ func getShellHome(d Deps) http.HandlerFunc {
 		// from the existing tree data so the page is useful right
 		// away without new infrastructure.
 		props := views.ShellProps{Layout: layout}
-		props.EntitiesNoSpr = countEntityWarns(layout.Tree.Entities)
+		// Sum warnings across the four entity-class sections (each
+		// already collected an N <= treeItemsPerSubSection sample).
+		props.EntitiesNoSpr =
+			countEntityWarns(layout.Tree.TileEntities) +
+				countEntityWarns(layout.Tree.NPCEntities) +
+				countEntityWarns(layout.Tree.PCEntities) +
+				countEntityWarns(layout.Tree.LogicEntities)
 		// Orphans / EmptyMaps stay 0 until those connection lookups
 		// land in the next chunk.
 		renderHTML(w, r, views.ShellHome(props))
@@ -510,11 +587,16 @@ func countEntityWarns(s views.IndexSection) int {
 
 // getSandboxIndex renders the sandbox map picker. PLAN.md §131.
 //
-// In the design console, sandbox is also launchable inline from any map
-// card on /design/maps — this index page remains as the dedicated entry
-// point and cross-map test runner.
+// getSandboxIndex lists levels (per the holistic redesign — sandboxes
+// launch a LEVEL, not a raw MAP). Each level card shows its backing
+// map for context.
 func getSandboxIndex(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// We render the existing SandboxIndex view, but feed it a
+		// "maps" list that's actually levels' backing maps for now.
+		// Phase 2 follow-up: a dedicated SandboxLevelIndex view that
+		// makes the level/map pairing explicit and surfaces
+		// non-public levels with a "private" badge.
 		items, err := d.Maps.List(r.Context(), "")
 		if err != nil {
 			http.Error(w, "list maps: "+err.Error(), http.StatusInternalServerError)
@@ -533,22 +615,56 @@ func getSandboxIndex(d Deps) http.HandlerFunc {
 	}
 }
 
-// getSandboxLaunch builds the sandbox: instance id + mints a designer
-// WS ticket, then renders the game view configured for the sandbox.
+// getSandboxLaunch builds a level-scoped sandbox session. The path id
+// is a LEVEL id; the level resolves to a map (for geometry + WS
+// JoinMap, which still keys off map_id) and an instance id of the form
+// "sandbox:<designer_id>:<level_id>".
 //
-// The instance id format is "sandbox:<designer_id>:<map_id>". The
-// AOI subscription manager refuses player-realm subscribers to that
-// id space, so the sandbox stays designer-private (PLAN.md §1, §129).
+// The AOI subscription manager refuses player-realm subscribers to
+// that id space, so the sandbox stays designer-private. If the path
+// id matches a map but no level wraps it yet, we fall back to a
+// map-scoped sandbox so existing /design/sandbox/launch/<map_id>
+// links from the maps list still work — Phase 2 follow-up reshapes
+// that picker.
 func getSandboxLaunch(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		dr := CurrentDesigner(r.Context())
 		idStr := r.PathValue("id")
-		mapID, err := strconv.ParseInt(idStr, 10, 64)
-		if err != nil || mapID <= 0 {
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
 			http.NotFound(w, r)
 			return
 		}
-		m, err := d.Maps.FindByID(r.Context(), mapID)
+
+		// First try the id as a level id.
+		if d.Levels != nil {
+			if lv, err := d.Levels.FindByID(r.Context(), id); err == nil && lv != nil {
+				m, mErr := d.Maps.FindByID(r.Context(), lv.MapID)
+				if mErr != nil || m == nil {
+					http.Error(w, "level's map not found", http.StatusInternalServerError)
+					return
+				}
+				ip := clientIP(r)
+				ticket, err := d.Auth.MintWSTicket(r.Context(), dr.ID, ip)
+				if err != nil {
+					http.Error(w, "mint ticket: "+err.Error(), http.StatusInternalServerError)
+					return
+				}
+				instanceID := fmt.Sprintf("sandbox:%d:%d", dr.ID, lv.ID)
+				renderHTML(w, r, views.SandboxGamePage(views.SandboxGameProps{
+					DesignerName: dr.Email,
+					Map:          *m,
+					WSURL:        resolveSandboxWSURL(r),
+					WSTicket:     ticket,
+					InstanceID:   instanceID,
+				}))
+				return
+			}
+		}
+
+		// Fallback: id is a map id. Used by the existing maps-list
+		// "Open in sandbox" link until that picker is reshaped.
+		m, err := d.Maps.FindByID(r.Context(), id)
 		if err != nil {
 			if errors.Is(err, mapsservice.ErrMapNotFound) {
 				http.NotFound(w, r)
@@ -563,6 +679,8 @@ func getSandboxLaunch(d Deps) http.HandlerFunc {
 			http.Error(w, "mint ticket: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		// Map-scoped sandbox: keep the historical instance namespace
+		// so the AOI manager's "sandbox:" prefix check still applies.
 		instanceID := fmt.Sprintf("sandbox:%d:%d", dr.ID, m.ID)
 		renderHTML(w, r, views.SandboxGamePage(views.SandboxGameProps{
 			DesignerName: dr.Email,
@@ -1016,15 +1134,14 @@ func postAssetPromoteToEntity(d Deps) http.HandlerFunc {
 		}
 
 		assetID := a.ID
-		var tags []string
-		if a.Kind == assets.KindTile {
-			tags = []string{"tile"}
-		}
-
+		// Per the holistic redesign, tile entities are minted by the
+		// tilemap service from a tilemap row; this generic
+		// "promote-to-entity" path produces a logic-class entity_type
+		// regardless of the source asset kind. Tilemap-specific
+		// fan-out happens elsewhere.
 		et, err := d.Entities.Create(r.Context(), entities.CreateInput{
 			Name:          newName,
 			SpriteAssetID: &assetID,
-			Tags:          tags,
 			CreatedBy:     dr.ID,
 		})
 		if err != nil {
@@ -1581,11 +1698,24 @@ func parseTags(raw string) []string {
 
 // ---- Entity Manager ----
 
+// getEntitiesList renders the entities grid. Honors:
+//
+//   ?class=tile|npc|pc|logic   — scopes by entity_class. Per the
+//                                holistic redesign, each class has its
+//                                own /design/entities/{tiles|npcs|...}
+//                                URL that sets this param.
+//   ?class=library_sprites|library_audio|library_ui — Phase 2 stubs:
+//                                redirect to the matching Library tab,
+//                                which in v1 still uses the asset list.
+//   ?filter=no-sprite          — narrow to entities missing a sprite.
+//   ?q=...                     — search by name (ILIKE).
+//   ?tags=foo,bar              — tag filter.
 func getEntitiesList(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		class := strings.TrimSpace(r.URL.Query().Get("class"))
 		opts := entityListOptsFromQuery(r)
 		filter := strings.TrimSpace(r.URL.Query().Get("filter"))
-		items, err := d.Entities.List(r.Context(), opts)
+		items, err := listEntitiesScoped(r.Context(), d, class, opts)
 		if err != nil {
 			slog.Error("entities list", "err", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -1593,25 +1723,27 @@ func getEntitiesList(d Deps) http.HandlerFunc {
 		}
 		items = applyEntityFilter(items, filter)
 		layout := BuildChrome(r, d)
-		layout.Title = "Entities"
+		layout.Title = entitiesPageTitle(class)
 		layout.Surface = "entity-manager"
-		layout.ActiveKind = "entity"
+		layout.ActiveKind = entityActiveKind(class)
 		layout.Variant = "no-rail"
-		layout.Crumbs = []views.Crumb{{Label: "Entities"}}
+		layout.Crumbs = entitiesPageCrumbs(class)
 		renderHTML(w, r, views.EntitiesList(views.EntitiesListProps{
 			Layout:       layout,
 			Items:        items,
 			Search:       opts.Search,
 			ActiveFilter: filter,
+			ActiveClass:  class,
 		}))
 	}
 }
 
 func getEntitiesGrid(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		class := strings.TrimSpace(r.URL.Query().Get("class"))
 		opts := entityListOptsFromQuery(r)
 		filter := strings.TrimSpace(r.URL.Query().Get("filter"))
-		items, err := d.Entities.List(r.Context(), opts)
+		items, err := listEntitiesScoped(r.Context(), d, class, opts)
 		if err != nil {
 			slog.Error("entities grid", "err", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -1622,7 +1754,61 @@ func getEntitiesGrid(d Deps) http.HandlerFunc {
 			Items:        items,
 			Search:       opts.Search,
 			ActiveFilter: filter,
+			ActiveClass:  class,
 		}))
+	}
+}
+
+// listEntitiesScoped narrows the entity list to one class when the
+// `class` query param is one of the four canonical values; otherwise
+// returns the full list.
+func listEntitiesScoped(ctx context.Context, d Deps, class string, opts entities.ListOpts) ([]entities.EntityType, error) {
+	switch class {
+	case "tile":
+		return d.Entities.ListByClass(ctx, entities.ClassTile, opts)
+	case "npc":
+		return d.Entities.ListByClass(ctx, entities.ClassNPC, opts)
+	case "pc":
+		return d.Entities.ListByClass(ctx, entities.ClassPC, opts)
+	case "logic":
+		return d.Entities.ListByClass(ctx, entities.ClassLogic, opts)
+	}
+	return d.Entities.List(ctx, opts)
+}
+
+// entitiesPageTitle picks the page title to match the active class.
+func entitiesPageTitle(class string) string {
+	switch class {
+	case "tile":
+		return "Tiles"
+	case "npc":
+		return "NPCs"
+	case "pc":
+		return "Player characters"
+	case "logic":
+		return "Logic"
+	}
+	return "Entities"
+}
+
+// entityActiveKind picks the tree-highlight kind to match the active
+// class (so the right sub-section gets aria-current).
+func entityActiveKind(class string) string {
+	switch class {
+	case "tile", "npc", "pc", "logic":
+		return class
+	}
+	return "entity"
+}
+
+// entitiesPageCrumbs builds the breadcrumb for the per-class page.
+func entitiesPageCrumbs(class string) []views.Crumb {
+	if class == "" {
+		return []views.Crumb{{Label: "Entities"}}
+	}
+	return []views.Crumb{
+		{Label: "Entities", Href: "/design/entities"},
+		{Label: entitiesPageTitle(class)},
 	}
 }
 
@@ -2590,9 +2776,12 @@ func postMapCreate(d Deps) http.HandlerFunc {
 			Width:     int32(parseIntOr(r.FormValue("width"), 64)),
 			Height:    int32(parseIntOr(r.FormValue("height"), 48)),
 			Mode:      strings.TrimSpace(r.FormValue("mode")),
-			Public:    parseCheckbox(r.FormValue("public")),
 			CreatedBy: dr.ID,
 		})
+		// Note: the form's "public" checkbox now belongs to LEVEL, not
+		// MAP. Phase 2 reshapes the new-map flow to also offer
+		// "create starter level" with the public flag.
+		_ = parseCheckbox(r.FormValue("public"))
 		if err != nil {
 			if errors.Is(err, mapsservice.ErrNameInUse) {
 				http.Error(w, err.Error(), http.StatusConflict)
@@ -2725,12 +2914,12 @@ func getMapmakerPage(d Deps) http.HandlerFunc {
 				palette = append(palette, entry)
 			}
 		}
-		// Pull the tile-folder tree once so the view can group entries
-		// without a round-trip per folder. Sprite/audio/UI roots are
-		// out of scope for the Mapmaker palette by design.
+		// Pull the tilemap-folder tree once so the view can group
+		// entries without a round-trip per folder. Sprite/audio/UI
+		// roots are out of scope for the Mapmaker palette by design.
 		var paletteFolders []folders.Folder
 		if d.Folders != nil {
-			fs, ferr := d.Folders.ListByKindRoot(r.Context(), folders.KindTile)
+			fs, ferr := d.Folders.ListByKindRoot(r.Context(), folders.KindTilemap)
 			if ferr != nil {
 				slog.Warn("palette folder tree", "err", ferr)
 			} else {
@@ -3337,15 +3526,13 @@ func getMapSettingsModal(d Deps) http.HandlerFunc {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
+		// Map-level settings now expose only geometry-related fields
+		// (name, mode, seed). Public/instancing/persistence/spectator
+		// moved to LEVEL in the holistic redesign; the level editor
+		// owns those toggles in Phase 2.
 		values := map[string]any{
-			"name":             m.Name,
-			"public":           m.Public,
-			"instancing_mode":  m.InstancingMode,
-			"persistence_mode": m.PersistenceMode,
-			"spectator_policy": m.SpectatorPolicy,
-		}
-		if m.RefreshWindowSeconds != nil {
-			values["refresh_window_seconds"] = *m.RefreshWindowSeconds
+			"name": m.Name,
+			"mode": m.Mode,
 		}
 		if m.Seed != nil {
 			values["seed"] = *m.Seed
@@ -3360,18 +3547,8 @@ func getMapSettingsModal(d Deps) http.HandlerFunc {
 			var d mapsservice.MapDraft
 			if jerr := json.Unmarshal(draftJSON, &d); jerr == nil {
 				values["name"] = d.Name
-				values["public"] = d.Public
-				if d.InstancingMode != "" {
-					values["instancing_mode"] = d.InstancingMode
-				}
-				if d.PersistenceMode != "" {
-					values["persistence_mode"] = d.PersistenceMode
-				}
-				if d.SpectatorPolicy != "" {
-					values["spectator_policy"] = d.SpectatorPolicy
-				}
-				if d.RefreshWindowSeconds != nil {
-					values["refresh_window_seconds"] = *d.RefreshWindowSeconds
+				if d.Mode != "" {
+					values["mode"] = d.Mode
 				}
 				if d.Seed != nil {
 					values["seed"] = *d.Seed
@@ -3414,23 +3591,22 @@ func postMapDraft(d Deps) http.HandlerFunc {
 			return
 		}
 		draft := mapsservice.MapDraft{
-			Name:            strings.TrimSpace(r.FormValue("name")),
-			Public:          parseCheckbox(r.FormValue("public")),
-			InstancingMode:  strings.TrimSpace(r.FormValue("instancing_mode")),
-			PersistenceMode: strings.TrimSpace(r.FormValue("persistence_mode")),
-			SpectatorPolicy: strings.TrimSpace(r.FormValue("spectator_policy")),
-		}
-		if v := strings.TrimSpace(r.FormValue("refresh_window_seconds")); v != "" {
-			if n, err := strconvAtoi64(v); err == nil {
-				rw := int32(n)
-				draft.RefreshWindowSeconds = &rw
-			}
+			Name: strings.TrimSpace(r.FormValue("name")),
+			Mode: strings.TrimSpace(r.FormValue("mode")),
 		}
 		if v := strings.TrimSpace(r.FormValue("seed")); v != "" {
 			if n, err := strconvAtoi64(v); err == nil {
 				draft.Seed = &n
 			}
 		}
+		// public/instancing/persistence/spectator/refresh_window are
+		// LEVEL fields now — the form may still post them but they
+		// land in the level draft, not the map draft.
+		_ = parseCheckbox(r.FormValue("public"))
+		_ = strings.TrimSpace(r.FormValue("instancing_mode"))
+		_ = strings.TrimSpace(r.FormValue("persistence_mode"))
+		_ = strings.TrimSpace(r.FormValue("spectator_policy"))
+		_ = strings.TrimSpace(r.FormValue("refresh_window_seconds"))
 		if err := draft.Validate(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -3452,51 +3628,6 @@ func postMapDraft(d Deps) http.HandlerFunc {
 			return
 		}
 		writeDraftSavedToast(w, "map")
-	}
-}
-
-// postMapPublicToggle flips the map's `public` column directly (no
-// draft pipeline) and returns the refreshed badge for HTMX outerHTML
-// swap. Map visibility is the one map-level field that wants the
-// painting tempo, not the draft tempo: collapsing a 5-step "draft +
-// push to live" workflow into a single click matches how tile
-// placements already bypass drafts.
-//
-// We deliberately do NOT round-trip through the publish pipeline.
-// `maps.public` is a runtime metadata flag — players who hit
-// /play/maps see the new value on next page load. Other map fields
-// (instancing, persistence, spectator policy) still use the draft
-// pipeline because they invalidate caches / live world state.
-func postMapPublicToggle(d Deps) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		dr := CurrentDesigner(r.Context())
-		if dr == nil {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		id, err := pathID(r)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		var nextPublic bool
-		err = d.Maps.Pool.QueryRow(r.Context(),
-			`UPDATE maps SET public = NOT public, updated_at = now()
-			 WHERE id = $1 RETURNING public`,
-			id,
-		).Scan(&nextPublic)
-		if err != nil {
-			slog.Error("map public toggle", "err", err, "map_id", id)
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-		// Return a refreshed badge that itself acts as the toggle, so
-		// the next click re-fires this endpoint. Outer-HTML swap
-		// replaces the whole element so click handlers stay consistent.
-		renderHTML(w, r, views.MapPublicBadge(views.MapPublicBadgeProps{
-			MapID:  id,
-			Public: nextPublic,
-		}))
 	}
 }
 
@@ -3589,7 +3720,7 @@ func (d Deps) hudLoadCommonDeps(r *http.Request, mapID int64) (skins, icons []vi
 		for _, a := range sp {
 			icons = append(icons, views.HUDAssetOption{ID: a.ID, Name: a.Name})
 		}
-		tl, lerr := d.Assets.List(r.Context(), assets.ListOpts{Kind: assets.KindTile, Limit: 200})
+		tl, lerr := d.Assets.List(r.Context(), assets.ListOpts{Kind: assets.KindSpriteAnimated, Limit: 200})
 		if lerr != nil {
 			return nil, nil, nil, nil, lerr
 		}
@@ -3607,7 +3738,11 @@ func (d Deps) hudLoadCommonDeps(r *http.Request, mapID int64) (skins, icons []vi
 		}
 	}
 	if d.ActionGroups != nil {
-		gs, lerr := d.ActionGroups.ListByMap(r.Context(), mapID)
+		// Action groups are level-scoped now. The HUD widget builder
+		// runs in a map context; for Phase 1b we surface every action
+		// group via a placeholder level lookup. Phase 2 reshapes the
+		// HUD page to live under a level.
+		gs, lerr := d.ActionGroups.ListByLevel(r.Context(), mapID)
 		if lerr != nil {
 			return nil, nil, nil, nil, lerr
 		}
@@ -3618,6 +3753,12 @@ func (d Deps) hudLoadCommonDeps(r *http.Request, mapID int64) (skins, icons []vi
 	return skins, icons, flagKeys, groupNames, nil
 }
 
+// getMapHUDPage now serves /design/levels/{id}/hud. The path id is a
+// LEVEL id; we resolve the level first to pick up its HUD layout, then
+// load its backing map for the editor's preview pane title.
+//
+// Function name is preserved for git-blame continuity; semantically
+// it's the "level HUD page" now.
 func getMapHUDPage(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		dr := CurrentDesigner(r.Context())
@@ -3625,21 +3766,30 @@ func getMapHUDPage(d Deps) http.HandlerFunc {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		id, err := pathID(r)
+		levelID, err := pathID(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		m, err := d.Maps.FindByID(r.Context(), id)
+		if d.Levels == nil {
+			http.Error(w, "levels service unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		lv, err := d.Levels.FindByID(r.Context(), levelID)
 		if err != nil {
-			http.Error(w, "not found", http.StatusNotFound)
+			http.Error(w, "level not found", http.StatusNotFound)
+			return
+		}
+		m, err := d.Maps.FindByID(r.Context(), lv.MapID)
+		if err != nil {
+			http.Error(w, "level's map not found", http.StatusNotFound)
 			return
 		}
 		if d.HUD == nil {
 			http.Error(w, "hud subsystem unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		layout, err := d.HUD.Get(r.Context(), id, dr.ID)
+		layout, err := d.HUD.Get(r.Context(), levelID, dr.ID)
 		if err != nil {
 			if errors.Is(err, hud.ErrNotFound) {
 				http.NotFound(w, r)
@@ -3649,17 +3799,17 @@ func getMapHUDPage(d Deps) http.HandlerFunc {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		skins, icons, flagKeys, groupNames, err := d.hudLoadCommonDeps(r, id)
+		skins, icons, flagKeys, groupNames, err := d.hudLoadCommonDeps(r, levelID)
 		if err != nil {
 			slog.Error("hud common deps", "err", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 		shell := BuildChrome(r, d)
-		shell.Title = "HUD · " + m.Name
+		shell.Title = "HUD · " + lv.Name
 		shell.Surface = "hud-editor"
-		shell.ActiveKind = "map"
-		shell.ActiveID = m.ID
+		shell.ActiveKind = "level"
+		shell.ActiveID = lv.ID
 		shell.Variant = "bleed"
 		renderHTML(w, r, views.HUDPage(views.HUDEditorProps{
 			Layout:        shell,
@@ -4142,16 +4292,17 @@ func postAssetUpload(d Deps) http.HandlerFunc {
 				item.Name = res.Asset.Name
 				item.Kind = string(res.Asset.Kind)
 				item.Reused = res.Reused
-				// Tile uploads auto-slice into one entity_type per
-				// non-empty 32x32 cell so the sheet is paintable in
-				// the Mapmaker palette without a "promote" step.
-				// Idempotent: cells that already have an entity
-				// (re-upload, sheet sliced before this code shipped,
-				// etc.) are skipped, so designers never see dupes.
-				if res.Asset.Kind == assets.KindTile && len(res.TileCells) > 0 {
-					n, perr := autoSliceTileSheet(r.Context(), d, res.Asset, res.TileCells, dr.ID)
+				// Tilemap-eligible uploads (multi-cell 32×32 grids)
+				// auto-slice into one tile-class entity_type per
+				// non-empty cell + a tilemap row on top. Phase 1b:
+				// the legacy autoSliceTileSheet path stays for now;
+				// Phase 2 routes new uploads through
+				// tilemaps.Service.Create which also fans out the
+				// tilemap_tiles + adjacency rows.
+				if res.TilemapEligible && len(res.TilemapCells) > 0 {
+					n, perr := autoSliceTileSheet(r.Context(), d, res.Asset, res.TilemapCells, dr.ID)
 					if perr != nil {
-						slog.Warn("auto-slice tile sheet",
+						slog.Warn("auto-slice tilemap sheet",
 							"err", perr,
 							"asset_id", res.Asset.ID,
 						)

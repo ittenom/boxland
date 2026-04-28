@@ -1,5 +1,5 @@
 // Package runtime is the live game-instance manager. One MapInstance per
-// (map_id, instance_id) owns:
+// (level_id, instance_id) owns:
 //
 //   * an ECS World
 //   * a system Scheduler running the canonical pipeline
@@ -40,9 +40,9 @@ type SystemDeps struct {
 	Animations systems.AnimationCatalog
 }
 
-// MapInstance is one live runtime for (mapID, instanceID).
+// MapInstance is one live runtime for (levelID, instanceID).
 type MapInstance struct {
-	MapID      uint32
+	LevelID    uint32
 	InstanceID string
 
 	World       *ecs.World
@@ -85,7 +85,7 @@ type HotSwap struct {
 }
 
 // NewMapInstance constructs an empty instance, registers the canonical
-// system pipeline, and runs recovery from (map_state + WAL). The caller
+// system pipeline, and runs recovery from (level_state + WAL). The caller
 // is responsible for calling LoadChunk for any chunks players are about
 // to look at.
 //
@@ -98,16 +98,16 @@ func NewMapInstance(
 	pool *pgxpool.Pool,
 	redis rueidis.Client,
 	mapsService *maps.Service,
-	mapID uint32,
+	levelID uint32,
 	instanceID string,
 	deps SystemDeps,
 ) (*MapInstance, error) {
 	world := ecs.NewWorld()
-	wal := persist.NewWAL(redis, mapID, instanceID)
-	persister := persist.NewPersister(pool, wal, mapID, instanceID)
+	wal := persist.NewWAL(redis, levelID, instanceID)
+	persister := persist.NewPersister(pool, wal, levelID, instanceID)
 
 	mi := &MapInstance{
-		MapID:        mapID,
+		LevelID:      levelID,
 		InstanceID:   instanceID,
 		World:        world,
 		Scheduler:    sim.NewScheduler(world),
@@ -130,10 +130,10 @@ func NewMapInstance(
 		}))
 	}
 
-	// Best-effort recovery: a fresh map has no snapshot, which is fine.
-	_, err := persist.Recover(ctx, pool, wal, mapID, instanceID, world, nil)
+	// Best-effort recovery: a fresh level has no snapshot, which is fine.
+	_, err := persist.Recover(ctx, pool, wal, levelID, instanceID, world, nil)
 	if err != nil && !errors.Is(err, persist.ErrNoSnapshot) {
-		return nil, fmt.Errorf("recover %d/%s: %w", mapID, instanceID, err)
+		return nil, fmt.Errorf("recover %d/%s: %w", levelID, instanceID, err)
 	}
 	return mi, nil
 }
@@ -154,7 +154,10 @@ func (mi *MapInstance) LoadChunk(ctx context.Context, lookup maps.EntityTypeLook
 	x1 := x0 + spatial.ChunkTiles - 1
 	y1 := y0 + spatial.ChunkTiles - 1
 
-	res, err := mi.MapsService.LoadChunk(ctx, mi.World, lookup, int64(mi.MapID), x0, y0, x1, y1)
+	// FIXME(level-rename): LoadChunk needs the underlying map_id (tile
+	// geometry); the runtime now keys by level_id. Resolving level→map
+	// at instance construction time is the next step.
+	res, err := mi.MapsService.LoadChunk(ctx, mi.World, lookup, int64(mi.LevelID), x0, y0, x1, y1)
 	if err != nil {
 		return maps.LoadResult{}, fmt.Errorf("load chunk: %w", err)
 	}
@@ -195,7 +198,7 @@ func (mi *MapInstance) MarkChunksDirty(tileX0, tileY0, tileX1, tileY1 int32) {
 // scheduler later.
 func (mi *MapInstance) PersistFlushInputs() persist.EncodeInputs {
 	return persist.EncodeInputs{
-		MapID:      mi.MapID,
+		LevelID:    mi.LevelID,
 		InstanceID: mi.InstanceID,
 		Tick:       mi.Scheduler.Tick(),
 		Stores:     mi.World.Stores(),

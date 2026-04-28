@@ -531,7 +531,7 @@ func AssetCard(a assets.Asset, publicURL func(string) string, usage map[int64]in
 				return templ_7745c5c3_Err
 			}
 		} else if publicURL != nil {
-			if a.Kind == assets.KindTile {
+			if a.Kind == assets.KindSpriteAnimated {
 				templ_7745c5c3_Err = AssetTileSheetThumb(a, publicURL).Render(ctx, templ_7745c5c3_Buffer)
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err

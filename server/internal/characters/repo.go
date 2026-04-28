@@ -41,14 +41,19 @@ func pgxBeginOpts() pgx.TxOptions { return pgx.TxOptions{} }
 type Service struct {
 	Pool *pgxpool.Pool
 
-	Slots            *repo.Repo[Slot]
-	Parts            *repo.Repo[Part]
-	Recipes          *repo.Repo[Recipe]
-	Bakes            *repo.Repo[Bake]
-	StatSets         *repo.Repo[StatSet]
-	TalentTrees      *repo.Repo[TalentTree]
-	TalentNodes      *repo.Repo[TalentNode]
-	NpcTemplates     *repo.Repo[NpcTemplate]
+	Slots       *repo.Repo[Slot]
+	Parts       *repo.Repo[Part]
+	Recipes     *repo.Repo[Recipe]
+	Bakes       *repo.Repo[Bake]
+	StatSets    *repo.Repo[StatSet]
+	TalentTrees *repo.Repo[TalentTree]
+	TalentNodes *repo.Repo[TalentNode]
+	// NpcTemplate is a logical view: an NPC is an entity_types row
+	// with entity_class='npc'. The Go façade preserves the old field
+	// shape (recipe_id, active_bake_id, entity_type_id) but the
+	// methods that touch it talk to entity_types directly. There's
+	// no Repo here because entity_types isn't a 1:1 column-mapping
+	// match for the NpcTemplate struct.
 	PlayerCharacters *repo.Repo[PlayerCharacter]
 
 	// Bake dependencies. Nil-safe at construction; required only when
@@ -78,7 +83,6 @@ func New(pool *pgxpool.Pool) *Service {
 		StatSets:         repo.New[StatSet](pool, "character_stat_sets"),
 		TalentTrees:      repo.New[TalentTree](pool, "character_talent_trees"),
 		TalentNodes:      repo.New[TalentNode](pool, "character_talent_nodes"),
-		NpcTemplates:     repo.New[NpcTemplate](pool, "npc_templates"),
 		PlayerCharacters: repo.New[PlayerCharacter](pool, "player_characters"),
 	}
 }
@@ -526,16 +530,16 @@ func (s *Service) propagateRecipeToLinkedNPCs(ctx context.Context, recipe *Recip
 	if err != nil {
 		return fmt.Errorf("run bake: %w", err)
 	}
-	// Update every NPC template linked to this recipe. The
-	// active_bake_id flips atomically alongside the bake row's
-	// existence, so spawned NPCs render the new look on the next
-	// instance reload.
+	// Update every NPC entity_type linked to this recipe. The
+	// active_bake_id + sprite_asset_id flip atomically alongside the
+	// bake row's existence, so spawned NPCs render the new look on
+	// the next instance reload.
 	if _, err := tx.Exec(ctx, `
-		UPDATE npc_templates
-		SET active_bake_id = $1, updated_at = now()
-		WHERE recipe_id = $2
-	`, out.BakeID, recipe.ID); err != nil {
-		return fmt.Errorf("propagate to npc templates: %w", err)
+		UPDATE entity_types
+		SET active_bake_id = $1, sprite_asset_id = $2, updated_at = now()
+		WHERE entity_class = 'npc' AND recipe_id = $3
+	`, out.BakeID, out.AssetID, recipe.ID); err != nil {
+		return fmt.Errorf("propagate to npc entity_types: %w", err)
 	}
 	return tx.Commit(ctx)
 }
@@ -555,12 +559,13 @@ func bytesEqual(a, b []byte) bool {
 	return true
 }
 
-// AttachRecipeToNpcTemplate sets npc_templates.recipe_id. Used by the
-// generator UI's "save & link" path. Doesn't bake — that happens on
-// the next publish.
+// AttachRecipeToNpcTemplate sets the recipe_id on an npc-class
+// entity_types row. Used by the generator UI's "save & link" path.
+// Doesn't bake — that happens on the next publish.
 func (s *Service) AttachRecipeToNpcTemplate(ctx context.Context, templateID, recipeID int64) error {
 	tag, err := s.Pool.Exec(ctx, `
-		UPDATE npc_templates SET recipe_id = $1, updated_at = now() WHERE id = $2
+		UPDATE entity_types SET recipe_id = $1, updated_at = now()
+		WHERE id = $2 AND entity_class = 'npc'
 	`, recipeID, templateID)
 	if err != nil {
 		return fmt.Errorf("characters: attach recipe: %w", err)
@@ -592,7 +597,10 @@ type CreateNpcTemplateInput struct {
 	CreatedBy int64
 }
 
-// CreateNpcTemplate inserts a new NPC template shell.
+// CreateNpcTemplate inserts a new NPC: an entity_types row with
+// entity_class='npc'. The row's id IS the NPC's identity — it doubles
+// as the template id and the entity_type id (the lazy-mint-on-publish
+// dance is gone in the holistic redesign).
 func (s *Service) CreateNpcTemplate(ctx context.Context, in CreateNpcTemplateInput) (*NpcTemplate, error) {
 	in.Name = strings.TrimSpace(in.Name)
 	if in.CreatedBy <= 0 {
@@ -606,39 +614,82 @@ func (s *Service) CreateNpcTemplate(ctx context.Context, in CreateNpcTemplateInp
 	if err := row.Validate(); err != nil {
 		return nil, err
 	}
-	if err := s.NpcTemplates.Insert(ctx, row); err != nil {
-		if isUniqueViolation(err, "npc_templates_name_key") {
+	err := s.Pool.QueryRow(ctx, `
+		INSERT INTO entity_types (name, entity_class, tags, created_by)
+		VALUES ($1, 'npc', $2, $3)
+		RETURNING id, created_at, updated_at
+	`, row.Name, row.Tags, row.CreatedBy).Scan(&row.ID, &row.CreatedAt, &row.UpdatedAt)
+	if err != nil {
+		if isUniqueViolation(err, "entity_types_name_key") {
 			return nil, fmt.Errorf("%w: %q", ErrNameInUse, in.Name)
 		}
-		return nil, fmt.Errorf("characters: insert npc_template: %w", err)
+		return nil, fmt.Errorf("characters: insert npc entity_type: %w", err)
 	}
+	// EntityTypeID is the same as the row's id — kept on the struct
+	// for back-compat with code that explicitly passes the entity_type
+	// id around.
+	id := row.ID
+	row.EntityTypeID = &id
 	return row, nil
 }
 
-// FindNpcTemplateByID returns one NPC template.
+// FindNpcTemplateByID returns one NPC.
 func (s *Service) FindNpcTemplateByID(ctx context.Context, id int64) (*NpcTemplate, error) {
-	got, err := s.NpcTemplates.Get(ctx, id)
-	if err != nil {
-		if errors.Is(err, repo.ErrNotFound) {
-			return nil, ErrNpcTemplateNotFound
-		}
-		return nil, err
+	row := &NpcTemplate{}
+	err := s.Pool.QueryRow(ctx, `
+		SELECT id, name, recipe_id, active_bake_id, tags, created_by, created_at, updated_at
+		FROM entity_types WHERE id = $1 AND entity_class = 'npc'
+	`, id).Scan(&row.ID, &row.Name, &row.RecipeID, &row.ActiveBakeID,
+		&row.Tags, &row.CreatedBy, &row.CreatedAt, &row.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNpcTemplateNotFound
 	}
-	return got, nil
+	if err != nil {
+		return nil, fmt.Errorf("characters: find npc: %w", err)
+	}
+	rid := row.ID
+	row.EntityTypeID = &rid
+	return row, nil
 }
 
-// ListNpcTemplates returns templates ordered by name.
+// ListNpcTemplates returns NPCs ordered by name.
 func (s *Service) ListNpcTemplates(ctx context.Context) ([]NpcTemplate, error) {
-	return s.NpcTemplates.List(ctx, repo.ListOpts{Order: "name ASC, id ASC"})
+	rows, err := s.Pool.Query(ctx, `
+		SELECT id, name, recipe_id, active_bake_id, tags, created_by, created_at, updated_at
+		FROM entity_types WHERE entity_class = 'npc'
+		ORDER BY name ASC, id ASC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("characters: list npcs: %w", err)
+	}
+	defer rows.Close()
+	var out []NpcTemplate
+	for rows.Next() {
+		var r NpcTemplate
+		if err := rows.Scan(&r.ID, &r.Name, &r.RecipeID, &r.ActiveBakeID,
+			&r.Tags, &r.CreatedBy, &r.CreatedAt, &r.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		rid := r.ID
+		r.EntityTypeID = &rid
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
-// DeleteNpcTemplate removes a template.
+// DeleteNpcTemplate removes the underlying entity_type. components,
+// automations, level_entities placements, etc. cascade via FK.
 func (s *Service) DeleteNpcTemplate(ctx context.Context, id int64) error {
-	if err := s.NpcTemplates.Delete(ctx, id); err != nil {
-		if errors.Is(err, repo.ErrNotFound) {
-			return ErrNpcTemplateNotFound
-		}
-		return err
+	tag, err := s.Pool.Exec(ctx, `
+		DELETE FROM entity_types WHERE id = $1 AND entity_class = 'npc'
+	`, id)
+	if err != nil {
+		return fmt.Errorf("characters: delete npc: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNpcTemplateNotFound
 	}
 	return nil
 }

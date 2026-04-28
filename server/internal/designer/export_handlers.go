@@ -12,9 +12,44 @@ import (
 	"boxland/server/internal/assets"
 	"boxland/server/internal/exporter"
 	"boxland/server/internal/importer"
+	"boxland/server/internal/levels"
 	mapsservice "boxland/server/internal/maps"
+	"boxland/server/internal/tilemaps"
+	"boxland/server/internal/worlds"
 	"boxland/server/views"
 )
+
+// exporterDeps builds the canonical exporter Deps from the designer
+// Deps. Centralized so every export handler ships the same dependency
+// graph; new fields land here once and propagate.
+func exporterDeps(d Deps) exporter.Deps {
+	return exporter.Deps{
+		Assets:       d.Assets,
+		Entities:     d.Entities,
+		Folders:      d.Folders,
+		Tilemaps:     d.Tilemaps,
+		Maps:         d.Maps,
+		Levels:       d.Levels,
+		Worlds:       d.Worlds,
+		ActionGroups: d.ActionGroups,
+		ObjectStore:  d.ObjectStore,
+	}
+}
+
+// importerDeps mirrors exporterDeps for the import side.
+func importerDeps(d Deps) importer.Deps {
+	return importer.Deps{
+		Assets:       d.Assets,
+		Entities:     d.Entities,
+		Folders:      d.Folders,
+		Tilemaps:     d.Tilemaps,
+		Maps:         d.Maps,
+		Levels:       d.Levels,
+		Worlds:       d.Worlds,
+		ActionGroups: d.ActionGroups,
+		ObjectStore:  d.ObjectStore,
+	}
+}
 
 // ---- Export handlers --------------------------------------------------
 
@@ -48,13 +83,7 @@ func getMapExport(d Deps) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
-		exp := exporter.New(exporter.Deps{
-			Assets:      d.Assets,
-			Entities:    d.Entities,
-			Folders:     d.Folders,
-			Maps:        d.Maps,
-			ObjectStore: d.ObjectStore,
-		})
+		exp := exporter.New(exporterDeps(d))
 		bytes, err := exp.ExportMap(r.Context(), mapID, dr.ID)
 		if err != nil {
 			slog.Error("export map", "err", err, "map_id", mapID, "designer_id", dr.ID)
@@ -84,11 +113,7 @@ func getAssetExport(d Deps) http.HandlerFunc {
 			http.Error(w, "find asset: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		exp := exporter.New(exporter.Deps{
-			Assets:      d.Assets,
-			Folders:     d.Folders,
-			ObjectStore: d.ObjectStore,
-		})
+		exp := exporter.New(exporterDeps(d))
 		bytes, err := exp.ExportAsset(r.Context(), assetID, dr.ID)
 		if err != nil {
 			slog.Error("export asset", "err", err, "asset_id", assetID, "designer_id", dr.ID)
@@ -104,11 +129,7 @@ func getAssetExport(d Deps) http.HandlerFunc {
 func getAllAssetsExport(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		dr := CurrentDesigner(r.Context())
-		exp := exporter.New(exporter.Deps{
-			Assets:      d.Assets,
-			Folders:     d.Folders,
-			ObjectStore: d.ObjectStore,
-		})
+		exp := exporter.New(exporterDeps(d))
 		bytes, err := exp.ExportAllAssets(r.Context(), dr.ID)
 		if err != nil {
 			slog.Error("export all assets", "err", err, "designer_id", dr.ID)
@@ -122,12 +143,48 @@ func getAllAssetsExport(d Deps) http.HandlerFunc {
 // ---- Import handlers --------------------------------------------------
 
 // getAssetsImportModal renders the small file-picker modal that powers
-// the "Import" button on the Asset Manager list page. The form posts
-// to /design/assets/import; the result lands in #modal-host as a
-// summary toast.
+// the "Import" button on the Library list page. The form posts to
+// /design/assets/import; the result lands in #modal-host as a summary
+// toast.
 func getAssetsImportModal(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		renderHTML(w, r, views.AssetsImportModal())
+	}
+}
+
+// getTilemapImportModal renders the import file-picker for tilemaps.
+func getTilemapImportModal(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		renderHTML(w, r, views.ImportModal(views.ImportModalProps{
+			Title:   "Import tilemap",
+			Lede:    "Drop a .boxtilemap file here. The tilemap, its tile entities, and the backing PNG come along together.",
+			PostURL: "/design/tilemaps/import",
+			Accept:  ".zip,.boxtilemap,application/zip",
+		}))
+	}
+}
+
+// getLevelImportModal renders the import file-picker for levels.
+func getLevelImportModal(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		renderHTML(w, r, views.ImportModal(views.ImportModalProps{
+			Title:   "Import level",
+			Lede:    "Drop a .boxlevel file here. The level, its backing map, entity placements, HUD, and assets come along together.",
+			PostURL: "/design/levels/import",
+			Accept:  ".zip,.boxlevel,application/zip",
+		}))
+	}
+}
+
+// getWorldImportModal renders the import file-picker for worlds.
+func getWorldImportModal(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		renderHTML(w, r, views.ImportModal(views.ImportModalProps{
+			Title:   "Import world",
+			Lede:    "Drop a .boxworld file here. Every level, map, tilemap, and asset in the world comes along together.",
+			PostURL: "/design/worlds/import",
+			Accept:  ".zip,.boxworld,application/zip",
+		}))
 	}
 }
 
@@ -147,13 +204,7 @@ func postAssetsImport(d Deps) http.HandlerFunc {
 			return
 		}
 		policy := importer.ConflictPolicy(r.URL.Query().Get("policy"))
-		imp := importer.New(importer.Deps{
-			Assets:      d.Assets,
-			Entities:    d.Entities,
-			Folders:     d.Folders,
-			Maps:        d.Maps,
-			ObjectStore: d.ObjectStore,
-		})
+		imp := importer.New(importerDeps(d))
 		res, err := imp.ImportAssets(r.Context(), body, dr.ID, policy)
 		if err != nil {
 			slog.Warn("import assets", "err", err, "designer_id", dr.ID)
@@ -175,13 +226,7 @@ func postMapImport(d Deps) http.HandlerFunc {
 			return
 		}
 		policy := importer.ConflictPolicy(r.URL.Query().Get("policy"))
-		imp := importer.New(importer.Deps{
-			Assets:      d.Assets,
-			Entities:    d.Entities,
-			Folders:     d.Folders,
-			Maps:        d.Maps,
-			ObjectStore: d.ObjectStore,
-		})
+		imp := importer.New(importerDeps(d))
 		res, err := imp.ImportMap(r.Context(), body, dr.ID, policy)
 		if err != nil {
 			slog.Warn("import map", "err", err, "designer_id", dr.ID)
@@ -244,12 +289,195 @@ func writeImportResult(w http.ResponseWriter, r *http.Request, res *importer.Res
 			BlobsUploaded:      res.BlobsUploaded,
 			EntityTypesCreated: res.EntityTypesCreated,
 			EntityTypesSkipped: res.EntityTypesSkipped,
+			TilemapsCreated:    res.TilemapsCreated,
+			TilemapsSkipped:    res.TilemapsSkipped,
 			MapsCreated:        res.MapsCreated,
+			LevelsCreated:      res.LevelsCreated,
+			WorldsCreated:      res.WorldsCreated,
 			Warnings:           res.Warnings,
 		}))
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
+}
+
+// ---- Phase 3 export handlers (tilemap / level / world) ----------------
+
+// getTilemapExport streams one tilemap as a .boxtilemap.zip.
+func getTilemapExport(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		dr := CurrentDesigner(r.Context())
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			http.NotFound(w, r)
+			return
+		}
+		if d.Tilemaps == nil {
+			http.Error(w, "tilemaps service unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		tm, err := d.Tilemaps.FindByID(r.Context(), id)
+		if err != nil {
+			if errors.Is(err, tilemaps.ErrTilemapNotFound) {
+				http.NotFound(w, r)
+				return
+			}
+			http.Error(w, "find tilemap: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if tm.CreatedBy != dr.ID {
+			http.NotFound(w, r)
+			return
+		}
+		exp := exporter.New(exporterDeps(d))
+		bytes, err := exp.ExportTilemap(r.Context(), id, dr.ID)
+		if err != nil {
+			slog.Error("export tilemap", "err", err, "tilemap_id", id, "designer_id", dr.ID)
+			http.Error(w, "export tilemap: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeZipDownload(w, exporter.FilenameFor(exporter.KindTilemap, tm.Name, time.Now()), bytes)
+	}
+}
+
+// getLevelExport streams one level as a .boxlevel.zip.
+func getLevelExport(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		dr := CurrentDesigner(r.Context())
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			http.NotFound(w, r)
+			return
+		}
+		if d.Levels == nil {
+			http.Error(w, "levels service unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		lv, err := d.Levels.FindByID(r.Context(), id)
+		if err != nil {
+			if errors.Is(err, levels.ErrLevelNotFound) {
+				http.NotFound(w, r)
+				return
+			}
+			http.Error(w, "find level: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if lv.CreatedBy != dr.ID {
+			http.NotFound(w, r)
+			return
+		}
+		exp := exporter.New(exporterDeps(d))
+		bytes, err := exp.ExportLevel(r.Context(), id, dr.ID)
+		if err != nil {
+			slog.Error("export level", "err", err, "level_id", id, "designer_id", dr.ID)
+			http.Error(w, "export level: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeZipDownload(w, exporter.FilenameFor(exporter.KindLevel, lv.Name, time.Now()), bytes)
+	}
+}
+
+// getWorldExport streams one world as a .boxworld.zip.
+func getWorldExport(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		dr := CurrentDesigner(r.Context())
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			http.NotFound(w, r)
+			return
+		}
+		if d.Worlds == nil {
+			http.Error(w, "worlds service unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		wld, err := d.Worlds.FindByID(r.Context(), id)
+		if err != nil {
+			if errors.Is(err, worlds.ErrWorldNotFound) {
+				http.NotFound(w, r)
+				return
+			}
+			http.Error(w, "find world: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if wld.CreatedBy != dr.ID {
+			http.NotFound(w, r)
+			return
+		}
+		exp := exporter.New(exporterDeps(d))
+		bytes, err := exp.ExportWorld(r.Context(), id, dr.ID)
+		if err != nil {
+			slog.Error("export world", "err", err, "world_id", id, "designer_id", dr.ID)
+			http.Error(w, "export world: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeZipDownload(w, exporter.FilenameFor(exporter.KindWorld, wld.Name, time.Now()), bytes)
+	}
+}
+
+// postTilemapImport accepts a .boxtilemap.zip upload.
+func postTilemapImport(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		dr := CurrentDesigner(r.Context())
+		body, err := readImportBody(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		policy := importer.ConflictPolicy(r.URL.Query().Get("policy"))
+		imp := importer.New(importerDeps(d))
+		res, err := imp.ImportTilemap(r.Context(), body, dr.ID, policy)
+		if err != nil {
+			slog.Warn("import tilemap", "err", err, "designer_id", dr.ID)
+			http.Error(w, err.Error(), importErrStatus(err))
+			return
+		}
+		writeImportResult(w, r, res)
+	}
+}
+
+// postLevelImport accepts a .boxlevel.zip upload.
+func postLevelImport(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		dr := CurrentDesigner(r.Context())
+		body, err := readImportBody(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		policy := importer.ConflictPolicy(r.URL.Query().Get("policy"))
+		imp := importer.New(importerDeps(d))
+		res, err := imp.ImportLevel(r.Context(), body, dr.ID, policy)
+		if err != nil {
+			slog.Warn("import level", "err", err, "designer_id", dr.ID)
+			http.Error(w, err.Error(), importErrStatus(err))
+			return
+		}
+		writeImportResult(w, r, res)
+	}
+}
+
+// postWorldImport accepts a .boxworld.zip upload.
+func postWorldImport(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		dr := CurrentDesigner(r.Context())
+		body, err := readImportBody(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		policy := importer.ConflictPolicy(r.URL.Query().Get("policy"))
+		imp := importer.New(importerDeps(d))
+		res, err := imp.ImportWorld(r.Context(), body, dr.ID, policy)
+		if err != nil {
+			slog.Warn("import world", "err", err, "designer_id", dr.ID)
+			http.Error(w, err.Error(), importErrStatus(err))
+			return
+		}
+		writeImportResult(w, r, res)
+	}
 }
 
 // importErrStatus maps importer errors to HTTP status codes.

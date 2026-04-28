@@ -26,10 +26,10 @@ const (
 // don't accidentally conflate a MapState blob with a Mutation blob etc.
 type EncodedMapState []byte
 
-// EncodeInputs bundles the data the encoder consumes. The map-instance
+// EncodeInputs bundles the data the encoder consumes. The level-instance
 // owner builds this at flush time.
 type EncodeInputs struct {
-	MapID      uint32
+	LevelID    uint32
 	InstanceID string
 	Tick       uint64
 	Stores     *ecs.Stores // entity component data
@@ -46,7 +46,7 @@ type EncodeInputs struct {
 //
 // Order matters in FlatBuffers vector building: nested objects must finish
 // BEFORE the table that owns them starts. We follow the canonical
-// "tiles -> entities -> map_state" order used in the schema.
+// "tiles -> entities -> level_state" order used in the schema.
 func EncodeMapState(in EncodeInputs) (EncodedMapState, error) {
 	if in.Stores == nil {
 		return nil, errors.New("persist: nil stores")
@@ -69,7 +69,9 @@ func EncodeMapState(in EncodeInputs) (EncodedMapState, error) {
 
 	proto.MapStateStart(b)
 	proto.MapStateAddProtocolVersion(b, pvOffset)
-	proto.MapStateAddMapId(b, in.MapID)
+	// FlatBuffers field name is preserved (MapId) for wire-protocol
+	// compatibility; semantically this now carries a level id.
+	proto.MapStateAddMapId(b, in.LevelID)
 	proto.MapStateAddInstanceId(b, instanceOffset)
 	proto.MapStateAddTick(b, in.Tick)
 	proto.MapStateAddTiles(b, tilesOffset)

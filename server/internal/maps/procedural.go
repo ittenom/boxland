@@ -123,9 +123,10 @@ func (s *Service) MaterializeProcedural(ctx context.Context, in MaterializeProce
 	if m.Mode != "procedural" {
 		return nil, ErrNotProcedural
 	}
-	if m.PersistenceMode != "persistent" {
-		return nil, ErrNotPersistent
-	}
+	// Maps now own only geometry; persistence/instancing live on
+	// LEVELs. Materializing always writes to map_tiles (the canonical
+	// authored geometry); transient *runtime* generation lives in
+	// GenerateTransientRegion / GenerateProceduralPreview.
 
 	layerID, err := s.resolveTargetTileLayer(ctx, m.ID, in.LayerID)
 	if err != nil {

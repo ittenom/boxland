@@ -1,7 +1,17 @@
-// Package maps owns Map + Layer + Tile + Lighting CRUD plus the
-// publish-pipeline handler. Per PLAN.md §1 "tiles ARE entities", the
-// runtime materializes tiles into the ECS at instance-load time; this
-// package is the *authoring* surface that persists their definitions.
+// Package maps owns MAP geometry: Map + Layer + Tile + Lighting CRUD
+// plus the procedural-generation machinery (locked cells, sample
+// patches, constraints) and the publish-pipeline handler.
+//
+// Per the holistic redesign, a MAP is *pure tile geometry*. Non-tile
+// entity placements, HUD layouts, instancing settings, action groups,
+// flags, and spectator policy live on a LEVEL (see internal/levels)
+// that references this map. One MAP can back many LEVELs (e.g. day
+// vs. night variants of a town that share geometry but layer different
+// NPCs and HUD).
+//
+// Per PLAN.md §1 "tiles ARE entities", the runtime materializes tiles
+// into the ECS at level-instance load time; this package is the
+// *authoring* surface that persists tile definitions.
 package maps
 
 import (
@@ -20,23 +30,20 @@ import (
 	"boxland/server/internal/persistence/repo"
 )
 
-// Map is one row from the maps table.
+// Map is one row from the maps table. Carries pure geometry: width,
+// height, mode, seed. Anything that varies per-deployment of the map
+// (HUD, instancing, public flag, spectator policy, action groups,
+// flags) lives on a LEVEL.
 type Map struct {
-	ID                   int64           `db:"id"                          pk:"auto" json:"id"`
-	Name                 string          `db:"name"                                  json:"name"`
-	Width                int32           `db:"width"                                 json:"width"`
-	Height               int32           `db:"height"                                json:"height"`
-	Public               bool            `db:"public"                                json:"public"`
-	InstancingMode       string          `db:"instancing_mode"                       json:"instancing_mode"`
-	PersistenceMode      string          `db:"persistence_mode"                      json:"persistence_mode"`
-	RefreshWindowSeconds *int32          `db:"refresh_window_seconds"                json:"refresh_window_seconds,omitempty"`
-	ResetRulesJSON       json.RawMessage `db:"reset_rules_json"                      json:"reset_rules"`
-	Mode                 string          `db:"mode"                                  json:"mode"`
-	Seed                 *int64          `db:"seed"                                  json:"seed,omitempty"`
-	SpectatorPolicy      string          `db:"spectator_policy"                      json:"spectator_policy"`
-	CreatedBy            int64           `db:"created_by"                            json:"created_by"`
-	CreatedAt            time.Time       `db:"created_at" repo:"readonly"            json:"created_at"`
-	UpdatedAt            time.Time       `db:"updated_at" repo:"readonly"            json:"updated_at"`
+	ID        int64     `db:"id"   pk:"auto"             json:"id"`
+	Name      string    `db:"name"                       json:"name"`
+	Width     int32     `db:"width"                      json:"width"`
+	Height    int32     `db:"height"                     json:"height"`
+	Mode      string    `db:"mode"                       json:"mode"`
+	Seed      *int64    `db:"seed"                       json:"seed,omitempty"`
+	CreatedBy int64     `db:"created_by"                 json:"created_by"`
+	CreatedAt time.Time `db:"created_at" repo:"readonly" json:"created_at"`
+	UpdatedAt time.Time `db:"updated_at" repo:"readonly" json:"updated_at"`
 }
 
 // Layer is one row from map_layers.
@@ -100,16 +107,12 @@ func New(pool *pgxpool.Pool) *Service {
 
 // CreateInput drives Create.
 type CreateInput struct {
-	Name            string
-	Width           int32
-	Height          int32
-	Public          bool
-	InstancingMode  string
-	PersistenceMode string
-	Mode            string // "authored" | "procedural"
-	Seed            *int64
-	SpectatorPolicy string
-	CreatedBy       int64
+	Name      string
+	Width     int32
+	Height    int32
+	Mode      string // "authored" | "procedural"
+	Seed      *int64
+	CreatedBy int64
 }
 
 // Create inserts a new map row. Default layer set ("base", "decoration",
@@ -124,17 +127,12 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Map, error) {
 		return nil, errors.New("maps: width and height must be >= 1")
 	}
 	row := &Map{
-		Name:            in.Name,
-		Width:           in.Width,
-		Height:          in.Height,
-		Public:          in.Public,
-		InstancingMode:  defaultStr(in.InstancingMode, "shared"),
-		PersistenceMode: defaultStr(in.PersistenceMode, "persistent"),
-		Mode:            defaultStr(in.Mode, "authored"),
-		Seed:            in.Seed,
-		SpectatorPolicy: defaultStr(in.SpectatorPolicy, "public"),
-		ResetRulesJSON:  []byte("{}"),
-		CreatedBy:       in.CreatedBy,
+		Name:      in.Name,
+		Width:     in.Width,
+		Height:    in.Height,
+		Mode:      defaultStr(in.Mode, "authored"),
+		Seed:      in.Seed,
+		CreatedBy: in.CreatedBy,
 	}
 	tx, err := s.Pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -143,16 +141,12 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Map, error) {
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	insertSQL := `
-		INSERT INTO maps
-			(name, width, height, public, instancing_mode, persistence_mode,
-			 reset_rules_json, mode, seed, spectator_policy, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11)
+		INSERT INTO maps (name, width, height, mode, seed, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, created_at, updated_at
 	`
 	if err := tx.QueryRow(ctx, insertSQL,
-		row.Name, row.Width, row.Height, row.Public,
-		row.InstancingMode, row.PersistenceMode, row.ResetRulesJSON,
-		row.Mode, row.Seed, row.SpectatorPolicy, row.CreatedBy,
+		row.Name, row.Width, row.Height, row.Mode, row.Seed, row.CreatedBy,
 	).Scan(&row.ID, &row.CreatedAt, &row.UpdatedAt); err != nil {
 		if isUniqueViolation(err, "maps_name_key") {
 			return nil, fmt.Errorf("%w: %q", ErrNameInUse, in.Name)
@@ -202,19 +196,6 @@ func (s *Service) List(ctx context.Context, search string) ([]Map, error) {
 	if search != "" {
 		opts.Where = squirrel.ILike{"name": "%" + search + "%"}
 	}
-	return s.Repo.List(ctx, opts)
-}
-
-// ListPublic returns every public map ordered by name. Used by the
-// player map picker (PLAN.md §6h); private maps stay invisible to the
-// player realm even before the spectator-policy gate runs.
-func (s *Service) ListPublic(ctx context.Context, search string) ([]Map, error) {
-	opts := repo.ListOpts{Order: "name ASC, id ASC"}
-	conds := squirrel.And{squirrel.Eq{"public": true}}
-	if search != "" {
-		conds = append(conds, squirrel.ILike{"name": "%" + search + "%"})
-	}
-	opts.Where = conds
 	return s.Repo.List(ctx, opts)
 }
 

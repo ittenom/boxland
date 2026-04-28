@@ -62,7 +62,7 @@ func newRealmFixture(t *testing.T) *realmFixture {
 
 	mapsSvc := maps.New(pool)
 	m, err := mapsSvc.Create(context.Background(), maps.CreateInput{
-		Name: "realm-iso-map", Width: 64, Height: 64, Public: true, CreatedBy: d.ID,
+		Name: "realm-iso-map", Width: 64, Height: 64, CreatedBy: d.ID,
 	})
 	if err != nil {
 		t.Fatal(err)

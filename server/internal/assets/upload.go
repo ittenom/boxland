@@ -27,20 +27,36 @@ func jsonMarshal(v any) ([]byte, error) { return json.Marshal(v) }
 const MaxUploadBytes = 16 * 1024 * 1024 // 16 MiB
 
 // UploadResult is the outcome of one HTTP upload.
+//
+// Tilemap-eligible PNGs (multi-cell 32×32 grids) are uploaded as
+// `KindSpriteAnimated` assets; the handler in internal/designer is
+// responsible for then creating a `tilemaps` row on top via the
+// internal/tilemaps service. TilemapEligible flags this case;
+// TilemapCells + TilemapMeta carry the pre-flight slice data so the
+// handler can hand them straight to tilemaps.Service.Create without
+// re-decoding the PNG.
 type UploadResult struct {
 	Asset      *Asset
 	Reused     bool   // true if an asset with the same content_addressed_path already existed
 	OriginalFn string // original filename from the multipart form
-	// TileCells / TileMeta are populated for kind=tile uploads.
-	// See MultiUploadResult for the long form.
-	TileCells    []TileCell
-	TileMeta     TileSheetMetadata
+
+	// TilemapEligible is true when the uploaded PNG matches the
+	// "multi-cell 32×32 grid" heuristic. The handler should create a
+	// tilemap on top of the asset and fan out per-cell tile entities.
+	TilemapEligible bool
+	TilemapCells    []TileCell
+	TilemapMeta     TileSheetMetadata
+
 	SpriteImport *ImportResult
 }
 
 // SupportedContentTypes maps the sniffed MIME type to the kind it produces.
 // We use sniffing (not the client-supplied type) because the client may lie
 // or guess wrong. Anything outside this set is rejected with 415.
+//
+// PNGs default to KindSprite; the upload pipeline upgrades to
+// KindSpriteAnimated when it detects a multi-frame strip (sprite-sheet
+// importer found multiple frames) or a multi-cell tilemap grid.
 var SupportedContentTypes = map[string]struct {
 	Kind   Kind
 	Format string
@@ -54,19 +70,29 @@ var SupportedContentTypes = map[string]struct {
 }
 
 const (
+	// KindOverrideSpriteSheet and KindOverrideAnimatedSprite are
+	// upload-form values. Both produce a KindSpriteAnimated asset
+	// (since both describe a multi-frame strip); the importer persists
+	// frame metadata + animation rows alongside the asset row.
 	KindOverrideSpriteSheet    = "sprite_sheet"
 	KindOverrideAnimatedSprite = "animated_sprite"
+	// KindOverrideTilemap is the upload-form value used by the
+	// "Upload tilemap" entry point. The result is still a
+	// KindSpriteAnimated asset; the handler then creates a tilemap row
+	// on top.
+	KindOverrideTilemap = "tilemap"
 )
 
 // NormalizeUploadKind maps UI-only upload modes onto persisted asset kinds.
-// Sprite sheets and animated sprites are still sprite assets; the importer
-// persists frame metadata + animation rows alongside the asset.
+// Sprite sheets, animated sprites, and tilemaps all persist as
+// `KindSpriteAnimated` — the structured "this is a tilemap" object is a
+// separate row in the tilemaps table, not a kind discriminator on assets.
 func NormalizeUploadKind(raw string) Kind {
 	switch strings.TrimSpace(raw) {
 	case "", "auto":
 		return ""
-	case KindOverrideSpriteSheet, KindOverrideAnimatedSprite:
-		return KindSprite
+	case KindOverrideSpriteSheet, KindOverrideAnimatedSprite, KindOverrideTilemap:
+		return KindSpriteAnimated
 	default:
 		return Kind(raw)
 	}
@@ -170,8 +196,9 @@ func (s *Service) UploadMany(
 		}
 		entry.Asset = res.Asset
 		entry.Reused = res.Reused
-		entry.TileCells = res.TileCells
-		entry.TileMeta = res.TileMeta
+		entry.TilemapEligible = res.TilemapEligible
+		entry.TilemapCells = res.TilemapCells
+		entry.TilemapMeta = res.TilemapMeta
 		entry.SpriteImport = res.SpriteImport
 		out = append(out, entry)
 	}
@@ -225,26 +252,41 @@ func (s *Service) uploadFromHeader(
 	if kindOverride != "" {
 		kind = NormalizeUploadKind(string(kindOverride))
 	}
-	if kindOverride == "" && supported.Kind == KindSprite && isAutoTileSheet(body) {
-		kind = KindTile
+	// Auto-detect tilemap-eligible PNGs only when the upload arrived
+	// without an explicit kind hint. An explicit
+	// KindOverrideSpriteSheet / KindOverrideAnimatedSprite says "this
+	// is a character strip, not a tilemap"; we honor that even when
+	// the PNG would slice cleanly into a 32×32 grid.
+	tilemapEligible := false
+	switch {
+	case string(kindOverride) == KindOverrideTilemap:
+		tilemapEligible = true
+		kind = KindSpriteAnimated
+	case kindOverride == "" && supported.Kind == KindSprite && isAutoTileSheet(body):
+		tilemapEligible = true
+		kind = KindSpriteAnimated
 	}
 	originalName := header.Filename
 	displayName := defaultDisplayName(originalName)
 
-	// Tile-sheet pre-flight: slice into 32x32 cells before we touch
+	// Tilemap pre-flight: slice into 32×32 cells before we touch
 	// object storage so a malformed sheet (odd dimensions, fully
 	// transparent) fails fast with a clean error instead of leaving
 	// an unusable asset row behind. The cells + metadata feed into
-	// the per-cell entity_type fan-out in the upload handler.
-	var tileCells []TileCell
-	var tileMD TileSheetMetadata
-	if kind == KindTile {
+	// the tilemap creation flow in the handler.
+	var tilemapCells []TileCell
+	var tilemapMeta TileSheetMetadata
+	if tilemapEligible {
 		cells, md, err := SliceTileSheet(body)
 		if err != nil {
-			return nil, err
+			// Bad PNG; demote to a regular sprite so the upload still
+			// succeeds (designer can re-upload as a sprite_animated
+			// strip if they want).
+			tilemapEligible = false
+		} else {
+			tilemapCells = cells
+			tilemapMeta = md
 		}
-		tileCells = cells
-		tileMD = md
 	}
 
 	// Sprite-sheet pre-flight: auto-detect the importer (Aseprite if
@@ -259,22 +301,29 @@ func (s *Service) uploadFromHeader(
 	// parsed once at the top of (Upload|UploadMany), so accessing
 	// r.MultipartForm here is safe.
 	var spriteImport *ImportResult
-	if kind == KindSprite && s.Importers != nil {
+	if (kind == KindSprite || kind == KindSpriteAnimated) && s.Importers != nil {
 		sidecar := readSidecar(header, siblings)
 		ir, err := DefaultSpriteImport(ctx, s.Importers, header.Filename, body, sidecar, AutoSliceConfig{})
 		if err != nil {
 			return nil, err
 		}
 		spriteImport = ir
+		// A sprite import that found multiple frames upgrades the
+		// asset to KindSpriteAnimated. The animations table carries
+		// the frame ranges; the asset row's kind flags the renderer.
+		if kind == KindSprite && spriteImport != nil && spriteImport.SheetMetadata.FrameCount > 1 {
+			kind = KindSpriteAnimated
+		}
 	}
 
 	key := persistence.ContentAddressedKey("assets", body)
 
 	if existing, err := s.FindByContentPath(ctx, kind, key); err == nil {
-		// Re-uploads of an existing tile sheet still surface the slice
-		// info so the handler can backfill any cells that lacked an
-		// entity (e.g. designer ran the upload before tile auto-slice
-		// shipped, or deleted some cells and wants them back).
+		// Re-uploads of an existing sheet still surface the slice
+		// info so the handler can backfill any cells that lacked a
+		// tile entity (e.g. designer ran the upload before tilemap
+		// auto-slice shipped, or deleted some cells and wants them
+		// back).
 		//
 		// Symmetrically for sprites: if the existing row predates the
 		// upload-time animation persistence (or had its rows wiped by
@@ -293,7 +342,9 @@ func (s *Service) uploadFromHeader(
 		}
 		return &UploadResult{
 			Asset: existing, Reused: true, OriginalFn: originalName,
-			TileCells: tileCells, TileMeta: tileMD, SpriteImport: spriteImport,
+			TilemapEligible: tilemapEligible,
+			TilemapCells:    tilemapCells, TilemapMeta: tilemapMeta,
+			SpriteImport: spriteImport,
 		}, nil
 	} else if !errors.Is(err, ErrAssetNotFound) {
 		return nil, fmt.Errorf("dedup lookup: %w", err)
@@ -304,18 +355,22 @@ func (s *Service) uploadFromHeader(
 	}
 
 	metadata := []byte("{}")
-	if kind == KindAudio {
+	switch {
+	case kind == KindAudio:
 		md, err := InspectAudio(body)
 		if err == nil {
 			if b, jerr := jsonMarshal(md); jerr == nil {
 				metadata = b
 			}
 		}
-	} else if kind == KindTile {
-		if b, jerr := MarshalTileSheetMetadata(tileMD); jerr == nil {
+	case tilemapEligible:
+		// Tilemap-eligible uploads carry the slice metadata on the
+		// asset row so the tilemap viewer can render the grid even
+		// before the tilemap row is wired up by the handler.
+		if b, jerr := MarshalTileSheetMetadata(tilemapMeta); jerr == nil {
 			metadata = b
 		}
-	} else if kind == KindSprite && spriteImport != nil {
+	case (kind == KindSprite || kind == KindSpriteAnimated) && spriteImport != nil:
 		// Persist the sheet metadata (grid, frame count, source) so
 		// the runtime catalog can rebuild source rects without
 		// re-parsing the PNG. See web/src/game/catalog.ts.
@@ -325,11 +380,11 @@ func (s *Service) uploadFromHeader(
 	}
 
 	// Compute dominant color for image kinds so the "sort by color"
-	// view in Asset Manager doesn't need a backfill pass for fresh
+	// view in the library doesn't need a backfill pass for fresh
 	// uploads. Failure is non-fatal; the lazy backfill in
 	// Service.EnsureDominantColors picks up any holes later.
 	var dominantColor *int64
-	if kind == KindSprite || kind == KindTile || kind == KindUIPanel {
+	if kind == KindSprite || kind == KindSpriteAnimated || kind == KindUIPanel {
 		if packed, ok := ComputeDominantColor(body); ok {
 			v := int64(packed)
 			dominantColor = &v
@@ -382,7 +437,9 @@ func (s *Service) uploadFromHeader(
 
 	return &UploadResult{
 		Asset: asset, Reused: false, OriginalFn: originalName,
-		TileCells: tileCells, TileMeta: tileMD, SpriteImport: spriteImport,
+		TilemapEligible: tilemapEligible,
+		TilemapCells:    tilemapCells, TilemapMeta: tilemapMeta,
+		SpriteImport: spriteImport,
 	}, nil
 }
 
@@ -395,21 +452,22 @@ const MaxFilesPerUpload = 64
 // Asset is populated (success) or Err is set (this single file failed
 // — others in the batch may have succeeded).
 //
-// TileCells is populated when the resulting asset is kind=tile: it
-// lists every 32x32 sub-cell of the sheet (with NonEmpty true for
-// cells that contain at least one opaque pixel). The handler uses it
-// to fan out one entity_type per non-empty cell so a tile sheet
-// becomes paintable in the Mapmaker palette without any extra step.
-// Empty for sprite/audio assets and for tile-sheet uploads that
-// failed slicing (e.g. odd dimensions — the asset row is not
-// created in that case; Err carries the reason).
+// TilemapCells is populated when the resulting asset is tilemap-
+// eligible: it lists every 32×32 sub-cell of the sheet (with NonEmpty
+// true for cells that contain at least one opaque pixel). The handler
+// uses it to build a `tilemaps` row + per-cell tile entity_types so
+// the sheet becomes paintable in the Mapmaker palette without any
+// extra step. Empty for plain sprite/audio assets.
 type MultiUploadResult struct {
-	Asset        *Asset
-	Reused       bool
-	OriginalFn   string
-	Err          error
-	TileCells    []TileCell
-	TileMeta     TileSheetMetadata
+	Asset      *Asset
+	Reused     bool
+	OriginalFn string
+	Err        error
+
+	TilemapEligible bool
+	TilemapCells    []TileCell
+	TilemapMeta     TileSheetMetadata
+
 	SpriteImport *ImportResult
 }
 

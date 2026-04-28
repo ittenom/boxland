@@ -35,7 +35,7 @@ func TestEntityDetail_PreviewCarriesAtlasSlicingData(t *testing.T) {
 	}
 	mdRaw, _ := json.Marshal(md)
 	sheet, err := deps.Assets.Create(ctx, assets.CreateInput{
-		Kind:                 assets.KindTile,
+		Kind:                 assets.KindSpriteAnimated,
 		Name:                 "forest-sheet",
 		ContentAddressedPath: "fs/forest.png",
 		OriginalFormat:       "png",

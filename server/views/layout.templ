@@ -77,29 +77,62 @@ type Crumb struct {
 
 // ProjectInfo is the chrome's identity strip: project name + per-kind
 // counts + draft total. Single-tenant for now, so ProjectName is a stub.
+//
+// Per the holistic redesign, the chrome's compact count chips show the
+// four most-glanceable totals: Worlds, Levels, Maps, Entities. (Library
+// counts are too granular for the chrome and surface inside the
+// Library page tabs instead.)
 type ProjectInfo struct {
-	Name           string
-	AssetCount     int
-	EntityCount    int
-	MapCount       int
-	SocketCount    int
-	GroupCount     int
-	CharacterCount int // sum of NPC templates + (later) player characters
-	DraftCount     int
+	Name        string
+	WorldCount  int
+	LevelCount  int
+	MapCount    int
+	EntityCount int
+
+	// Library-side counts. Surfaced inside the Library tabs; not in the
+	// chrome chips. Kept on this struct so per-tab badges in the tree
+	// can display "Tilemaps · 12" without an extra fetch.
+	SpriteCount   int
+	TilemapCount  int
+	AudioCount    int
+	UIPanelCount  int
+	TileGroupCount int
+
+	// Per-class entity counts. Drives the tree's nested entity
+	// section (Tiles / NPCs / PCs / Logic).
+	TileEntityCount  int
+	NPCEntityCount   int
+	PCEntityCount    int
+	LogicEntityCount int
+
+	DraftCount int
 }
 
 // ProjectIndex is the data the left tree renders. Each section is a
 // Kind + count + a small list of items; the tree never renders the
-// whole project, only enough for "where am I" glances. The Home + Settings
-// links are baked into the tree component, not here.
+// whole project, only enough for "where am I" glances.
+//
+// Per the holistic redesign, the tree is shaped around the canonical
+// hierarchy: WORLDS contain LEVELS, LEVELS reference MAPS for geometry,
+// MAPS are painted with TILE entities sliced from TILEMAPS in the
+// LIBRARY. Each top-level section has its own IndexSection; nested
+// sections (entity classes, library kinds) are rendered as sub-lists.
 type ProjectIndex struct {
-	Loaded     bool
-	Assets     IndexSection
-	Entities   IndexSection
-	Maps       IndexSection
-	Sockets    IndexSection
-	Groups     IndexSection
-	Characters IndexSection
+	Loaded   bool
+	Worlds   IndexSection
+	Levels   IndexSection
+	Maps     IndexSection
+	// Entities split by class.
+	TileEntities  IndexSection
+	NPCEntities   IndexSection
+	PCEntities    IndexSection
+	LogicEntities IndexSection
+	// Library kinds. Tilemaps is a first-class object backed by its
+	// own table; the rest mirror asset kinds.
+	Sprites  IndexSection
+	Tilemaps IndexSection
+	Audio    IndexSection
+	UIPanels IndexSection
 }
 
 type IndexSection struct {
@@ -283,14 +316,17 @@ templ Chrome(p LayoutProps) {
 		<span class="bx-chrome__project">{ projectName(p) }</span>
 
 		<div class="bx-chrome__counts">
-			<a class="bx-chrome__count" href="/design/assets" data-bx-count="asset" title="Assets">
-				<span class="bx-dot bx-dot--asset"></span>{ countLabel(p.Project.AssetCount) }
+			<a class="bx-chrome__count" href="/design/worlds" data-bx-count="world" title="Worlds">
+				<span class="bx-dot bx-dot--world"></span>{ countLabel(p.Project.WorldCount) }
 			</a>
-			<a class="bx-chrome__count" href="/design/entities" data-bx-count="entity" title="Entities">
-				<span class="bx-dot bx-dot--entity"></span>{ countLabel(p.Project.EntityCount) }
+			<a class="bx-chrome__count" href="/design/levels" data-bx-count="level" title="Levels">
+				<span class="bx-dot bx-dot--level"></span>{ countLabel(p.Project.LevelCount) }
 			</a>
 			<a class="bx-chrome__count" href="/design/maps" data-bx-count="map" title="Maps">
 				<span class="bx-dot bx-dot--map"></span>{ countLabel(p.Project.MapCount) }
+			</a>
+			<a class="bx-chrome__count" href="/design/entities" data-bx-count="entity" title="Entities">
+				<span class="bx-dot bx-dot--entity"></span>{ countLabel(p.Project.EntityCount) }
 			</a>
 		</div>
 
@@ -402,65 +438,150 @@ templ Crumbs(crumbs []Crumb) {
 
 // ---- project tree ----------------------------------------------------
 
+// ProjectTree renders the left-pane navigation. The shape mirrors the
+// canonical object hierarchy from the holistic redesign:
+//
+//   Workspace home / Sandbox        (pinned)
+//   Worlds                          (graph of LEVELs)
+//   Levels                          (MAP + entity placements + HUD)
+//   Maps                            (pure tile geometry)
+//   Entities                        (header — overview page)
+//     Tiles                         (entity_class='tile')
+//     NPCs                          (entity_class='npc')
+//     Player characters             (entity_class='pc')
+//     Logic                         (entity_class='logic')
+//   Library                         (header — Library page)
+//     Sprites                       (assets.kind='sprite')
+//     Tilemaps                      (tilemaps table)
+//     Audio                         (assets.kind='audio')
+//     UI panels                     (assets.kind='ui_panel')
+//   Settings                        (pinned)
+//
+// "Tile groups" and "Edge sockets" are accessed inside the tilemap
+// viewer in the redesign; they don't get top-level tree entries.
 templ ProjectTree(p LayoutProps) {
 	<nav class="bx-tree" aria-label="Project tree">
-		// Always-on home + sandbox + settings links at the very top
 		<div class="bx-tree__section">
-			@treePinned(p.ActiveKind)
+			@treePinnedHeader(p.ActiveKind)
 		</div>
 
 		@treeSection(treeProps{
-			Kind:    "asset",
-			Title:   "Assets",
-			Section: p.Tree.Assets,
-			Active:  activeMatch(p.ActiveKind, p.ActiveID, "asset"),
-			NewHref: "/design/assets",
-			ListHref: "/design/assets",
+			Kind:     "world",
+			Title:    "Worlds",
+			Section:  p.Tree.Worlds,
+			Active:   activeMatch(p.ActiveKind, p.ActiveID, "world"),
+			NewHref:  "/design/worlds",
+			ListHref: "/design/worlds",
 		})
 		@treeSection(treeProps{
-			Kind:    "entity",
-			Title:   "Entities",
-			Section: p.Tree.Entities,
-			Active:  activeMatch(p.ActiveKind, p.ActiveID, "entity"),
-			NewHref: "/design/entities",
-			ListHref: "/design/entities",
+			Kind:     "level",
+			Title:    "Levels",
+			Section:  p.Tree.Levels,
+			Active:   activeMatch(p.ActiveKind, p.ActiveID, "level"),
+			NewHref:  "/design/levels",
+			ListHref: "/design/levels",
 		})
 		@treeSection(treeProps{
-			Kind:    "map",
-			Title:   "Maps",
-			Section: p.Tree.Maps,
-			Active:  activeMatch(p.ActiveKind, p.ActiveID, "map"),
-			NewHref: "/design/maps",
+			Kind:     "map",
+			Title:    "Maps",
+			Section:  p.Tree.Maps,
+			Active:   activeMatch(p.ActiveKind, p.ActiveID, "map"),
+			NewHref:  "/design/maps",
 			ListHref: "/design/maps",
 		})
-		@treeSection(treeProps{
-			Kind:    "socket",
-			Title:   "Sockets",
-			Section: p.Tree.Sockets,
-			Active:  activeMatch(p.ActiveKind, p.ActiveID, "socket"),
-			NewHref: "/design/sockets",
-			ListHref: "/design/sockets",
-		})
-		@treeSection(treeProps{
-			Kind:    "group",
-			Title:   "Tile groups",
-			Section: p.Tree.Groups,
-			Active:  activeMatch(p.ActiveKind, p.ActiveID, "group"),
-			NewHref: "/design/tile-groups",
-			ListHref: "/design/tile-groups",
-		})
-		@treeSection(treeProps{
-			Kind:    "character",
-			Title:   "Characters",
-			Section: p.Tree.Characters,
-			Active:  activeMatch(p.ActiveKind, p.ActiveID, "character"),
-			NewHref: "/design/characters",
-			ListHref: "/design/characters",
-		})
+
+		// Entities header + four sub-sections (one per entity class).
+		<div class="bx-tree__section bx-tree__section--group">
+			<div class="bx-tree__head">
+				<span class="bx-dot bx-dot--entity"></span>
+				<a href="/design/entities">Entities</a>
+				<span class="bx-tree__count">{ countLabel(p.Project.EntityCount) }</span>
+			</div>
+			@treeSubSection(treeProps{
+				Kind:     "tile",
+				Title:    "Tiles",
+				Section:  p.Tree.TileEntities,
+				Active:   activeMatch(p.ActiveKind, p.ActiveID, "tile"),
+				ListHref: "/design/entities/tiles",
+				NewHref:  "/design/entities/tiles",
+			})
+			@treeSubSection(treeProps{
+				Kind:     "npc",
+				Title:    "NPCs",
+				Section:  p.Tree.NPCEntities,
+				Active:   activeMatch(p.ActiveKind, p.ActiveID, "npc"),
+				ListHref: "/design/entities/npcs",
+				NewHref:  "/design/entities/npcs",
+			})
+			@treeSubSection(treeProps{
+				Kind:     "pc",
+				Title:    "Player characters",
+				Section:  p.Tree.PCEntities,
+				Active:   activeMatch(p.ActiveKind, p.ActiveID, "pc"),
+				ListHref: "/design/entities/pcs",
+				NewHref:  "/design/entities/pcs",
+			})
+			@treeSubSection(treeProps{
+				Kind:     "logic",
+				Title:    "Logic",
+				Section:  p.Tree.LogicEntities,
+				Active:   activeMatch(p.ActiveKind, p.ActiveID, "logic"),
+				ListHref: "/design/entities/logic",
+				NewHref:  "/design/entities/logic",
+			})
+		</div>
+
+		// Library header + four sub-sections (one per kind).
+		<div class="bx-tree__section bx-tree__section--group">
+			<div class="bx-tree__head">
+				<span class="bx-dot bx-dot--asset"></span>
+				<a href="/design/library">Library</a>
+				<span class="bx-tree__count">{ countLabel(libraryTotal(p.Project)) }</span>
+			</div>
+			@treeSubSection(treeProps{
+				Kind:     "sprite",
+				Title:    "Sprites",
+				Section:  p.Tree.Sprites,
+				Active:   activeMatch(p.ActiveKind, p.ActiveID, "sprite"),
+				ListHref: "/design/library/sprites",
+				NewHref:  "/design/library/sprites",
+			})
+			@treeSubSection(treeProps{
+				Kind:     "tilemap",
+				Title:    "Tilemaps",
+				Section:  p.Tree.Tilemaps,
+				Active:   activeMatch(p.ActiveKind, p.ActiveID, "tilemap"),
+				ListHref: "/design/tilemaps",
+				NewHref:  "/design/tilemaps",
+			})
+			@treeSubSection(treeProps{
+				Kind:     "audio",
+				Title:    "Audio",
+				Section:  p.Tree.Audio,
+				Active:   activeMatch(p.ActiveKind, p.ActiveID, "audio"),
+				ListHref: "/design/library/audio",
+				NewHref:  "/design/library/audio",
+			})
+			@treeSubSection(treeProps{
+				Kind:     "ui_panel",
+				Title:    "UI panels",
+				Section:  p.Tree.UIPanels,
+				Active:   activeMatch(p.ActiveKind, p.ActiveID, "ui_panel"),
+				ListHref: "/design/library/ui-panels",
+				NewHref:  "/design/library/ui-panels",
+			})
+		</div>
+
+		<div class="bx-tree__section">
+			@treePinnedFooter(p.ActiveKind)
+		</div>
 	</nav>
 }
 
-templ treePinned(activeKind string) {
+// treePinnedHeader renders the "always at top" links: home + sandbox.
+// Settings is pinned at the bottom (treePinnedFooter) so it doesn't
+// distract from the canonical hierarchy in between.
+templ treePinnedHeader(activeKind string) {
 	<a
 		href="/design/"
 		class={ pinnedClass(activeKind, "home") }
@@ -475,6 +596,10 @@ templ treePinned(activeKind string) {
 	>
 		<span class="bx-tree__item__name">Sandbox</span>
 	</a>
+}
+
+// treePinnedFooter renders the bottom-pinned settings link.
+templ treePinnedFooter(activeKind string) {
 	<a
 		href="/design/settings"
 		class={ pinnedClass(activeKind, "settings") }
@@ -491,6 +616,52 @@ type treeProps struct {
 	Active   func(int64) bool
 	NewHref  string
 	ListHref string
+}
+
+// treeSubSection renders a nested "child" section (used inside the
+// Entities and Library group blocks). Visually quieter than
+// treeSection: no leading dot in the head, indented list, smaller
+// count chip. Same data shape so callers can swap freely.
+templ treeSubSection(t treeProps) {
+	<div class="bx-tree__sub">
+		<div class="bx-tree__sub__head">
+			<a href={ templ.SafeURL(t.ListHref) }>{ t.Title }</a>
+			<span class="bx-tree__count bx-tree__count--small">{ countLabel(t.Section.Total) }</span>
+		</div>
+		if t.Section.Total == 0 {
+			<a href={ templ.SafeURL(t.NewHref) } class="bx-tree__item bx-tree__item--sub bx-muted">
+				<span class="bx-tree__item__name">empty</span>
+			</a>
+		} else {
+			<ul class="bx-tree__list bx-tree__list--sub">
+				for _, it := range t.Section.Items {
+					<li>
+						<a
+							href={ templ.SafeURL(it.Href) }
+							class="bx-tree__item bx-tree__item--sub"
+							aria-current?={ t.Active(it.ID) }
+							title={ it.Name }
+						>
+							<span class="bx-tree__item__name">{ it.Name }</span>
+							if it.Warn != "" {
+								<span class="bx-tree__warn" title={ it.Warn }></span>
+							}
+							if it.Meta != "" {
+								<span class="bx-tree__item__meta">{ it.Meta }</span>
+							}
+						</a>
+					</li>
+				}
+				if t.Section.Total > len(t.Section.Items) {
+					<li>
+						<a href={ templ.SafeURL(t.ListHref) } class="bx-tree__item bx-tree__item--sub bx-muted">
+							<span class="bx-tree__item__name">+{ overflowLabel(t.Section.Total, len(t.Section.Items)) } more</span>
+						</a>
+					</li>
+				}
+			</ul>
+		}
+	</div>
 }
 
 templ treeSection(t treeProps) {
@@ -731,4 +902,10 @@ func formatIntPad(n int) string {
 		out = "-" + out
 	}
 	return out
+}
+
+// libraryTotal sums the four asset-library kinds. Used as the badge on
+// the "Library" tree group head.
+func libraryTotal(p ProjectInfo) int {
+	return p.SpriteCount + p.TilemapCount + p.AudioCount + p.UIPanelCount
 }

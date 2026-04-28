@@ -74,7 +74,7 @@ func ShellHome(p ShellProps) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var3 string
-			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(formatIntPad(p.Layout.Project.AssetCount))
+			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(formatIntPad(p.Layout.Project.WorldCount))
 			if templ_7745c5c3_Err != nil {
 				return templ.Error{Err: templ_7745c5c3_Err, FileName: `shell.templ`, Line: 35, Col: 55}
 			}
@@ -82,20 +82,20 @@ func ShellHome(p ShellProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</strong> assets</span> <span class=\"bx-work__chip\"><strong>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</strong> worlds</span> <span class=\"bx-work__chip\"><strong>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var4 string
-			templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(formatIntPad(p.Layout.Project.EntityCount))
+			templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(formatIntPad(p.Layout.Project.LevelCount))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `shell.templ`, Line: 38, Col: 56}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `shell.templ`, Line: 38, Col: 55}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "</strong> entities</span> <span class=\"bx-work__chip\"><strong>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "</strong> levels</span> <span class=\"bx-work__chip\"><strong>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -113,7 +113,7 @@ func ShellHome(p ShellProps) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var6 string
-			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(formatIntPad(p.Layout.Project.SocketCount))
+			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(formatIntPad(p.Layout.Project.EntityCount))
 			if templ_7745c5c3_Err != nil {
 				return templ.Error{Err: templ_7745c5c3_Err, FileName: `shell.templ`, Line: 44, Col: 56}
 			}
@@ -121,20 +121,20 @@ func ShellHome(p ShellProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "</strong> sockets</span> <span class=\"bx-work__chip\"><strong>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "</strong> entities</span> <span class=\"bx-work__chip\"><strong>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var7 string
-			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(formatIntPad(p.Layout.Project.GroupCount))
+			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(formatIntPad(p.Layout.Project.TilemapCount))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `shell.templ`, Line: 47, Col: 55}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `shell.templ`, Line: 47, Col: 57}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "</strong> tile groups</span></div><div class=\"bx-work__body bx-stack\"><header class=\"bx-row bx-row--apart\"><div><h1 data-copy-slot=\"home.title\">Workspace</h1><p class=\"bx-muted bx-small\" data-copy-slot=\"home.lede\">Pick up where you left off, or jump straight to a step.</p></div><div class=\"bx-row\"><button type=\"button\" class=\"bx-btn\" hx-get=\"/design/assets/upload\" hx-target=\"#modal-host\" hx-swap=\"innerHTML\" title=\"Upload PNG / WAV / OGG / MP3 files (or a folder)\">+ Asset</button> <button type=\"button\" class=\"bx-btn\" hx-get=\"/design/entities/new\" hx-target=\"#modal-host\" hx-swap=\"innerHTML\" title=\"Create a new entity type\">+ Entity</button> <button type=\"button\" class=\"bx-btn bx-btn--primary\" hx-get=\"/design/maps/new\" hx-target=\"#modal-host\" hx-swap=\"innerHTML\" title=\"Create a new map\">+ Map</button></div></header>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "</strong> tilemaps</span></div><div class=\"bx-work__body bx-stack\"><header class=\"bx-row bx-row--apart\"><div><h1 data-copy-slot=\"home.title\">Workspace</h1><p class=\"bx-muted bx-small\" data-copy-slot=\"home.lede\">Pick up where you left off, or jump straight to a step.</p></div><div class=\"bx-row\"><button type=\"button\" class=\"bx-btn\" hx-get=\"/design/assets/upload\" hx-target=\"#modal-host\" hx-swap=\"innerHTML\" title=\"Upload PNG / WAV / OGG / MP3 files (or a folder)\">+ Asset</button> <button type=\"button\" class=\"bx-btn\" hx-get=\"/design/entities/new\" hx-target=\"#modal-host\" hx-swap=\"innerHTML\" title=\"Create a new entity type\">+ Entity</button> <button type=\"button\" class=\"bx-btn bx-btn--primary\" hx-get=\"/design/maps/new\" hx-target=\"#modal-host\" hx-swap=\"innerHTML\" title=\"Create a new map\">+ Map</button></div></header>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -209,23 +209,35 @@ func ShellHome(p ShellProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = stepCard("asset", "1", "Assets", "Upload sprites, tiles, and audio.", p.Layout.Project.AssetCount, "/design/assets").Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = stepCard("asset", "1", "Library", "Upload sprites, audio, and UI panels.", libraryTotal(p.Layout.Project), "/design/library").Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = stepCard("entity", "2", "Entities", "Define behavior and components.", p.Layout.Project.EntityCount, "/design/entities").Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = stepCard("tilemap", "2", "Tilemaps", "Slice tile sheets into tiles.", p.Layout.Project.TilemapCount, "/design/tilemaps").Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = stepCard("map", "3", "Maps", "Lay out the world.", p.Layout.Project.MapCount, "/design/maps").Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = stepCard("map", "3", "Maps", "Paint geometry with tiles.", p.Layout.Project.MapCount, "/design/maps").Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = stepCard("kind", "4", "Sandbox", "Test against drafts.", 0, "/design/sandbox").Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = stepCard("entity", "4", "Entities", "Define NPCs, PCs, and game logic.", p.Layout.Project.EntityCount, "/design/entities").Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = stepCard("draft", "5", "Push to live", "Promote drafts to live.", p.Layout.Project.DraftCount, "").Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = stepCard("level", "5", "Levels", "Place entities into a map.", p.Layout.Project.LevelCount, "/design/levels").Render(ctx, templ_7745c5c3_Buffer)
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = stepCard("world", "6", "Worlds", "Connect levels into a campaign.", p.Layout.Project.WorldCount, "/design/worlds").Render(ctx, templ_7745c5c3_Buffer)
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = stepCard("kind", "7", "Sandbox", "Test against drafts.", 0, "/design/sandbox").Render(ctx, templ_7745c5c3_Buffer)
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = stepCard("draft", "8", "Push to live", "Promote drafts to live.", p.Layout.Project.DraftCount, "").Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -246,7 +258,7 @@ func ShellHome(p ShellProps) templ.Component {
 					var templ_7745c5c3_Var11 templ.SafeURL
 					templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(r.Href))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `shell.templ`, Line: 142, Col: 39}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `shell.templ`, Line: 148, Col: 39}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 					if templ_7745c5c3_Err != nil {
@@ -259,7 +271,7 @@ func ShellHome(p ShellProps) templ.Component {
 					var templ_7745c5c3_Var12 string
 					templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(r.What)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `shell.templ`, Line: 142, Col: 50}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `shell.templ`, Line: 148, Col: 50}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 					if templ_7745c5c3_Err != nil {
@@ -272,7 +284,7 @@ func ShellHome(p ShellProps) templ.Component {
 					var templ_7745c5c3_Var13 string
 					templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(r.Where)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `shell.templ`, Line: 143, Col: 49}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `shell.templ`, Line: 149, Col: 49}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 					if templ_7745c5c3_Err != nil {
@@ -285,7 +297,7 @@ func ShellHome(p ShellProps) templ.Component {
 					var templ_7745c5c3_Var14 string
 					templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(r.When)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `shell.templ`, Line: 143, Col: 63}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `shell.templ`, Line: 149, Col: 63}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 					if templ_7745c5c3_Err != nil {
@@ -359,7 +371,7 @@ func stepCard(kind, num, title, desc string, count int, href string) templ.Compo
 			var templ_7745c5c3_Var16 templ.SafeURL
 			templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(href))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `shell.templ`, Line: 172, Col: 53}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `shell.templ`, Line: 178, Col: 53}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 			if templ_7745c5c3_Err != nil {
@@ -410,7 +422,7 @@ func stepCardBody(kind, num, title, desc string, count int, isPush bool) templ.C
 		var templ_7745c5c3_Var18 string
 		templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(num)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `shell.templ`, Line: 181, Col: 40}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `shell.templ`, Line: 187, Col: 40}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 		if templ_7745c5c3_Err != nil {
@@ -423,7 +435,7 @@ func stepCardBody(kind, num, title, desc string, count int, isPush bool) templ.C
 		var templ_7745c5c3_Var19 string
 		templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(title)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `shell.templ`, Line: 182, Col: 18}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `shell.templ`, Line: 188, Col: 18}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 		if templ_7745c5c3_Err != nil {
@@ -441,7 +453,7 @@ func stepCardBody(kind, num, title, desc string, count int, isPush bool) templ.C
 			var templ_7745c5c3_Var20 string
 			templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(formatIntPad(count))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `shell.templ`, Line: 185, Col: 64}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `shell.templ`, Line: 191, Col: 64}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 			if templ_7745c5c3_Err != nil {
@@ -454,7 +466,7 @@ func stepCardBody(kind, num, title, desc string, count int, isPush bool) templ.C
 			var templ_7745c5c3_Var21 string
 			templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(pluralize(count))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `shell.templ`, Line: 185, Col: 90}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `shell.templ`, Line: 191, Col: 90}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 			if templ_7745c5c3_Err != nil {
@@ -472,7 +484,7 @@ func stepCardBody(kind, num, title, desc string, count int, isPush bool) templ.C
 			var templ_7745c5c3_Var22 string
 			templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(formatIntPad(count))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `shell.templ`, Line: 187, Col: 49}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `shell.templ`, Line: 193, Col: 49}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 			if templ_7745c5c3_Err != nil {
@@ -490,7 +502,7 @@ func stepCardBody(kind, num, title, desc string, count int, isPush bool) templ.C
 		var templ_7745c5c3_Var23 string
 		templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(desc)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `shell.templ`, Line: 191, Col: 61}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `shell.templ`, Line: 197, Col: 61}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 		if templ_7745c5c3_Err != nil {

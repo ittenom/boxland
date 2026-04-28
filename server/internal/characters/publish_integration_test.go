@@ -82,18 +82,18 @@ func TestPublish_WithRecipe_BakesAndAutoMintsEntityType(t *testing.T) {
 		t.Errorf("op = %q", outs[0].Op)
 	}
 
-	// Verify the NPC template row now has active_bake_id + entity_type_id.
-	var activeBakeID, entityTypeID *int64
+	// Verify the NPC entity_type row now has active_bake_id set. In
+	// the new model the npc IS the entity_type, so entity_type_id
+	// equals tmpl.ID by construction.
+	var activeBakeID *int64
 	if err := f.pool.QueryRow(ctx, `
-		SELECT active_bake_id, entity_type_id FROM npc_templates WHERE id = $1
-	`, tmpl.ID).Scan(&activeBakeID, &entityTypeID); err != nil {
-		t.Fatalf("read npc template: %v", err)
+		SELECT active_bake_id FROM entity_types
+		WHERE id = $1 AND entity_class = 'npc'
+	`, tmpl.ID).Scan(&activeBakeID); err != nil {
+		t.Fatalf("read npc entity_type: %v", err)
 	}
 	if activeBakeID == nil {
 		t.Errorf("active_bake_id is null after publish")
-	}
-	if entityTypeID == nil {
-		t.Errorf("entity_type_id is null after publish (auto-mint failed)")
 	}
 
 	// The bake row exists and is 'baked'.
@@ -108,29 +108,24 @@ func TestPublish_WithRecipe_BakesAndAutoMintsEntityType(t *testing.T) {
 		t.Errorf("bake status = %q, want baked", bakeStatus)
 	}
 
-	// The auto-minted entity_type points at the bake's asset.
+	// The NPC entity_type now points at the bake's asset (it was the
+	// row published — id == tmpl.ID).
 	var entitySpriteAssetID *int64
 	var entityName string
-	var entityTags []string
+	var entityClass string
 	if err := f.pool.QueryRow(ctx, `
-		SELECT name, sprite_asset_id, tags FROM entity_types WHERE id = $1
-	`, *entityTypeID).Scan(&entityName, &entitySpriteAssetID, &entityTags); err != nil {
+		SELECT name, entity_class, sprite_asset_id FROM entity_types WHERE id = $1
+	`, tmpl.ID).Scan(&entityName, &entityClass, &entitySpriteAssetID); err != nil {
 		t.Fatalf("read entity_type: %v", err)
+	}
+	if entityClass != "npc" {
+		t.Errorf("entity_class = %q, want npc", entityClass)
 	}
 	if entitySpriteAssetID == nil || *entitySpriteAssetID != bakeAssetID {
 		t.Errorf("entity_type.sprite_asset_id = %v, want %d", entitySpriteAssetID, bakeAssetID)
 	}
 	if entityName != "Goblin chief" {
 		t.Errorf("entity_type.name = %q", entityName)
-	}
-	hasNpcTag := false
-	for _, tg := range entityTags {
-		if tg == "npc" {
-			hasNpcTag = true
-		}
-	}
-	if !hasNpcTag {
-		t.Errorf("auto-minted entity_type missing 'npc' tag; got %v", entityTags)
 	}
 
 	// The drafts row was consumed by the publish.
@@ -285,10 +280,10 @@ func TestUpdateRecipe_PropagatesToLinkedNpcTemplates(t *testing.T) {
 	// Both NPCs must now have a non-null active_bake_id pointing at
 	// the same bake row (the freshly-baked one).
 	var bakeA, bakeB *int64
-	if err := f.pool.QueryRow(ctx, `SELECT active_bake_id FROM npc_templates WHERE id = $1`, tmplA.ID).Scan(&bakeA); err != nil {
+	if err := f.pool.QueryRow(ctx, `SELECT active_bake_id FROM entity_types WHERE id = $1 AND entity_class = 'npc'`, tmplA.ID).Scan(&bakeA); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.pool.QueryRow(ctx, `SELECT active_bake_id FROM npc_templates WHERE id = $1`, tmplB.ID).Scan(&bakeB); err != nil {
+	if err := f.pool.QueryRow(ctx, `SELECT active_bake_id FROM entity_types WHERE id = $1 AND entity_class = 'npc'`, tmplB.ID).Scan(&bakeB); err != nil {
 		t.Fatal(err)
 	}
 	if bakeA == nil || bakeB == nil {
@@ -432,7 +427,7 @@ func TestPublish_BakeFailurePreservesPriorActiveBake(t *testing.T) {
 	}
 
 	var firstBakeID int64
-	if err := f.pool.QueryRow(ctx, `SELECT active_bake_id FROM npc_templates WHERE id = $1`, tmpl.ID).Scan(&firstBakeID); err != nil {
+	if err := f.pool.QueryRow(ctx, `SELECT active_bake_id FROM entity_types WHERE id = $1 AND entity_class = 'npc'`, tmpl.ID).Scan(&firstBakeID); err != nil {
 		t.Fatal(err)
 	}
 	if firstBakeID == 0 {
@@ -483,7 +478,7 @@ func TestPublish_BakeFailurePreservesPriorActiveBake(t *testing.T) {
 	// Critical assertion: the template's active_bake_id is still the
 	// first (good) bake — the failed publish rolled back cleanly.
 	var bakeAfterFail int64
-	if err := f.pool.QueryRow(ctx, `SELECT active_bake_id FROM npc_templates WHERE id = $1`, tmpl.ID).Scan(&bakeAfterFail); err != nil {
+	if err := f.pool.QueryRow(ctx, `SELECT active_bake_id FROM entity_types WHERE id = $1 AND entity_class = 'npc'`, tmpl.ID).Scan(&bakeAfterFail); err != nil {
 		t.Fatal(err)
 	}
 	if bakeAfterFail != firstBakeID {
@@ -542,7 +537,7 @@ func TestPublish_RepublishSameRecipe_ReusesBake(t *testing.T) {
 	}
 
 	var firstBakeID int64
-	_ = f.pool.QueryRow(ctx, `SELECT active_bake_id FROM npc_templates WHERE id = $1`, tmpl.ID).Scan(&firstBakeID)
+	_ = f.pool.QueryRow(ctx, `SELECT active_bake_id FROM entity_types WHERE id = $1 AND entity_class = 'npc'`, tmpl.ID).Scan(&firstBakeID)
 	var bakeRowsBefore int
 	_ = f.pool.QueryRow(ctx, `SELECT count(*) FROM character_bakes WHERE status = 'baked'`).Scan(&bakeRowsBefore)
 
@@ -563,7 +558,7 @@ func TestPublish_RepublishSameRecipe_ReusesBake(t *testing.T) {
 		t.Errorf("re-publish created a new baked row (was %d, now %d)", bakeRowsBefore, bakeRowsAfter)
 	}
 	var secondBakeID int64
-	_ = f.pool.QueryRow(ctx, `SELECT active_bake_id FROM npc_templates WHERE id = $1`, tmpl.ID).Scan(&secondBakeID)
+	_ = f.pool.QueryRow(ctx, `SELECT active_bake_id FROM entity_types WHERE id = $1 AND entity_class = 'npc'`, tmpl.ID).Scan(&secondBakeID)
 	if secondBakeID != firstBakeID {
 		t.Errorf("active_bake_id changed after no-op republish (%d -> %d)", firstBakeID, secondBakeID)
 	}

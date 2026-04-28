@@ -10,27 +10,27 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Repo persists per-realm HUD layouts. One row per map (column on the
-// existing maps row). Tenant isolation is enforced by always scoping
+// Repo persists per-realm HUD layouts. One row per level (column on the
+// existing levels row). Tenant isolation is enforced by always scoping
 // queries to (id, created_by) — handlers MUST pass the requesting
 // designer id from session context, never trust the URL alone.
 type Repo struct {
 	Pool *pgxpool.Pool
 }
 
-// ErrNotFound is returned when a map id doesn't exist OR the requester
+// ErrNotFound is returned when a level id doesn't exist OR the requester
 // doesn't own it. We collapse the two so we don't leak existence; this
-// matches the codebase pattern from internal/maps + internal/automations.
-var ErrNotFound = errors.New("hud: map not found")
+// matches the codebase pattern from internal/levels + internal/automations.
+var ErrNotFound = errors.New("hud: level not found")
 
 // Get loads the live layout for a realm. Tenant-scoped.
-func (r *Repo) Get(ctx context.Context, mapID, ownerID int64) (Layout, error) {
+func (r *Repo) Get(ctx context.Context, levelID, ownerID int64) (Layout, error) {
 	var raw json.RawMessage
 	err := r.Pool.QueryRow(ctx, `
 		SELECT hud_layout_json
-		FROM maps
+		FROM levels
 		WHERE id = $1 AND created_by = $2
-	`, mapID, ownerID).Scan(&raw)
+	`, levelID, ownerID).Scan(&raw)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Layout{}, ErrNotFound
@@ -41,15 +41,15 @@ func (r *Repo) Get(ctx context.Context, mapID, ownerID int64) (Layout, error) {
 }
 
 // GetForPlayer loads the layout for the player WS path. Players don't
-// own the map, so we don't filter by created_by; the realm-membership
+// own the level, so we don't filter by created_by; the realm-membership
 // check is upstream (in the WS JoinMap handler). Returns the empty
-// layout for unknown maps so the player gets a clean default rather
+// layout for unknown levels so the player gets a clean default rather
 // than a hard error mid-join.
-func (r *Repo) GetForPlayer(ctx context.Context, mapID int64) (Layout, error) {
+func (r *Repo) GetForPlayer(ctx context.Context, levelID int64) (Layout, error) {
 	var raw json.RawMessage
 	err := r.Pool.QueryRow(ctx, `
-		SELECT hud_layout_json FROM maps WHERE id = $1
-	`, mapID).Scan(&raw)
+		SELECT hud_layout_json FROM levels WHERE id = $1
+	`, levelID).Scan(&raw)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return NewEmpty(), nil
@@ -67,16 +67,16 @@ func (r *Repo) GetForPlayer(ctx context.Context, mapID int64) (Layout, error) {
 // invokes after the diff is committed. Designer-side editing writes to
 // the drafts table via the existing artifact pipeline; this Save is
 // the publish-time apply step.
-func (r *Repo) Save(ctx context.Context, mapID, ownerID int64, l Layout) error {
+func (r *Repo) Save(ctx context.Context, levelID, ownerID int64, l Layout) error {
 	raw, err := json.Marshal(l)
 	if err != nil {
 		return fmt.Errorf("hud: marshal layout: %w", err)
 	}
 	tag, err := r.Pool.Exec(ctx, `
-		UPDATE maps
+		UPDATE levels
 		SET hud_layout_json = $3, updated_at = now()
 		WHERE id = $1 AND created_by = $2
-	`, mapID, ownerID, raw)
+	`, levelID, ownerID, raw)
 	if err != nil {
 		return fmt.Errorf("hud: save layout: %w", err)
 	}
@@ -92,7 +92,7 @@ func (r *Repo) Save(ctx context.Context, mapID, ownerID int64, l Layout) error {
 // each other. Returns the new layout (helpful for HTMX swaps).
 //
 // `mut` may return an error to abort the transaction without writing.
-func (r *Repo) Mutate(ctx context.Context, mapID, ownerID int64, mut func(l *Layout) error) (Layout, error) {
+func (r *Repo) Mutate(ctx context.Context, levelID, ownerID int64, mut func(l *Layout) error) (Layout, error) {
 	tx, err := r.Pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Layout{}, fmt.Errorf("hud: begin: %w", err)
@@ -102,10 +102,10 @@ func (r *Repo) Mutate(ctx context.Context, mapID, ownerID int64, mut func(l *Lay
 	var raw json.RawMessage
 	err = tx.QueryRow(ctx, `
 		SELECT hud_layout_json
-		FROM maps
+		FROM levels
 		WHERE id = $1 AND created_by = $2
 		FOR UPDATE
-	`, mapID, ownerID).Scan(&raw)
+	`, levelID, ownerID).Scan(&raw)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Layout{}, ErrNotFound
@@ -124,9 +124,9 @@ func (r *Repo) Mutate(ctx context.Context, mapID, ownerID int64, mut func(l *Lay
 		return Layout{}, fmt.Errorf("hud: marshal: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
-		UPDATE maps SET hud_layout_json = $3, updated_at = now()
+		UPDATE levels SET hud_layout_json = $3, updated_at = now()
 		WHERE id = $1 AND created_by = $2
-	`, mapID, ownerID, newRaw); err != nil {
+	`, levelID, ownerID, newRaw); err != nil {
 		return Layout{}, fmt.Errorf("hud: update: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -138,16 +138,16 @@ func (r *Repo) Mutate(ctx context.Context, mapID, ownerID int64, mut func(l *Lay
 // SaveTx is the transactional variant the publish pipeline uses.
 // Identical isolation rules; takes a pgx.Tx so it can land alongside
 // the publish_diffs row in one commit.
-func SaveTx(ctx context.Context, tx pgx.Tx, mapID, ownerID int64, l Layout) error {
+func SaveTx(ctx context.Context, tx pgx.Tx, levelID, ownerID int64, l Layout) error {
 	raw, err := json.Marshal(l)
 	if err != nil {
 		return fmt.Errorf("hud: marshal layout: %w", err)
 	}
 	tag, err := tx.Exec(ctx, `
-		UPDATE maps
+		UPDATE levels
 		SET hud_layout_json = $3, updated_at = now()
 		WHERE id = $1 AND created_by = $2
-	`, mapID, ownerID, raw)
+	`, levelID, ownerID, raw)
 	if err != nil {
 		return fmt.Errorf("hud: save layout (tx): %w", err)
 	}

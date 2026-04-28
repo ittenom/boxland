@@ -4,21 +4,21 @@
 // Builder) rest on three primitives: switches (booleans), variables
 // (ints), and common events (callable trigger groups). This package
 // owns the first two; common events live in the automations package
-// (call_action_group + map_action_groups).
+// (call_action_group + level_action_groups).
 //
 // Indie-RPG research §P1 #9. PLAN.md (Automations).
 //
 // # Tenant isolation
 //
-// Every API takes mapID as the first positional argument. There is
-// deliberately no "list flags across maps" surface -- a sim that needs
+// Every API takes levelID as the first positional argument. There is
+// deliberately no "list flags across levels" surface -- a sim that needs
 // to read flags from another realm should fetch them by visiting that
 // realm's instance, not by sneaking a cross-realm query. The
-// underlying SQL never omits map_id from the WHERE clause.
+// underlying SQL never omits level_id from the WHERE clause.
 //
 // # Performance
 //
-// LoadAll(mapID) is the only N-row query; sim startup uses it to seed
+// LoadAll(levelID) is the only N-row query; sim startup uses it to seed
 // an in-memory map. Per-trigger Get is a hash lookup against that
 // snapshot. Set/Add write through to the DB and invalidate the cached
 // row in one shot. We do NOT N+1 (one query per Get/Set per tick) --
@@ -37,7 +37,7 @@ import (
 )
 
 // Kind discriminates the flag's value type. Mirrors the
-// map_flags.kind CHECK constraint.
+// level_flags.kind CHECK constraint.
 type Kind string
 
 const (
@@ -45,14 +45,14 @@ const (
 	KindInt  Kind = "int"
 )
 
-// MaxKeyLen mirrors the map_flags.key length CHECK at column level.
+// MaxKeyLen mirrors the level_flags.key length CHECK at column level.
 // Validated client-side so the DB error never reaches the user.
 const MaxKeyLen = 64
 
-// Flag is one row from map_flags. Value is decoded into a typed Go
+// Flag is one row from level_flags. Value is decoded into a typed Go
 // value (bool / int32) at read time so callers don't see JSON.
 type Flag struct {
-	MapID     int64
+	LevelID   int64
 	Key       string
 	Kind      Kind
 	Bool      bool
@@ -74,20 +74,20 @@ type Service struct {
 }
 
 // New builds a Service. The cache is not constructed here -- the sim
-// owns its own Cache and seeds it via LoadAll on map instance boot.
+// owns its own Cache and seeds it via LoadAll on level instance boot.
 func New(pool *pgxpool.Pool) *Service {
 	return &Service{Pool: pool}
 }
 
-// LoadAll returns every flag for one map, in lexical key order.
+// LoadAll returns every flag for one level, in lexical key order.
 // Single query; no N+1.
-func (s *Service) LoadAll(ctx context.Context, mapID int64) ([]Flag, error) {
+func (s *Service) LoadAll(ctx context.Context, levelID int64) ([]Flag, error) {
 	rows, err := s.Pool.Query(ctx,
-		`SELECT map_id, key, kind, value_json, updated_at
-		   FROM map_flags
-		  WHERE map_id = $1
+		`SELECT level_id, key, kind, value_json, updated_at
+		   FROM level_flags
+		  WHERE level_id = $1
 		  ORDER BY key ASC`,
-		mapID,
+		levelID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("flags load: %w", err)
@@ -104,16 +104,16 @@ func (s *Service) LoadAll(ctx context.Context, mapID int64) ([]Flag, error) {
 	return out, rows.Err()
 }
 
-// Get returns one flag by (map_id, key). ErrNotFound if absent.
-func (s *Service) Get(ctx context.Context, mapID int64, key string) (Flag, error) {
+// Get returns one flag by (level_id, key). ErrNotFound if absent.
+func (s *Service) Get(ctx context.Context, levelID int64, key string) (Flag, error) {
 	if err := validateKey(key); err != nil {
 		return Flag{}, err
 	}
 	row := s.Pool.QueryRow(ctx,
-		`SELECT map_id, key, kind, value_json, updated_at
-		   FROM map_flags
-		  WHERE map_id = $1 AND key = $2`,
-		mapID, key,
+		`SELECT level_id, key, kind, value_json, updated_at
+		   FROM level_flags
+		  WHERE level_id = $1 AND key = $2`,
+		levelID, key,
 	)
 	f, err := scanFlag(row)
 	if err != nil {
@@ -126,21 +126,21 @@ func (s *Service) Get(ctx context.Context, mapID int64, key string) (Flag, error
 }
 
 // SetBool upserts a bool flag.
-func (s *Service) SetBool(ctx context.Context, mapID int64, key string, v bool) error {
+func (s *Service) SetBool(ctx context.Context, levelID int64, key string, v bool) error {
 	if err := validateKey(key); err != nil {
 		return err
 	}
 	raw, _ := json.Marshal(v)
-	return s.upsert(ctx, mapID, key, KindBool, raw)
+	return s.upsert(ctx, levelID, key, KindBool, raw)
 }
 
 // SetInt upserts an int flag.
-func (s *Service) SetInt(ctx context.Context, mapID int64, key string, v int32) error {
+func (s *Service) SetInt(ctx context.Context, levelID int64, key string, v int32) error {
 	if err := validateKey(key); err != nil {
 		return err
 	}
 	raw, _ := json.Marshal(v)
-	return s.upsert(ctx, mapID, key, KindInt, raw)
+	return s.upsert(ctx, levelID, key, KindInt, raw)
 }
 
 // Add atomically increments an int flag by `delta` (negative ok).
@@ -149,19 +149,19 @@ func (s *Service) SetInt(ctx context.Context, mapID int64, key string, v int32) 
 //
 // One round-trip; uses INSERT ... ON CONFLICT DO UPDATE so concurrent
 // Add calls from sibling triggers don't lose increments.
-func (s *Service) Add(ctx context.Context, mapID int64, key string, delta int32) (int32, error) {
+func (s *Service) Add(ctx context.Context, levelID int64, key string, delta int32) (int32, error) {
 	if err := validateKey(key); err != nil {
 		return 0, err
 	}
 	row := s.Pool.QueryRow(ctx, `
-		INSERT INTO map_flags (map_id, key, kind, value_json)
+		INSERT INTO level_flags (level_id, key, kind, value_json)
 		VALUES ($1, $2, 'int', to_jsonb($3::int))
-		ON CONFLICT (map_id, key) DO UPDATE
-		   SET value_json = to_jsonb(((map_flags.value_json)::int) + EXCLUDED.value_json::int),
+		ON CONFLICT (level_id, key) DO UPDATE
+		   SET value_json = to_jsonb(((level_flags.value_json)::int) + EXCLUDED.value_json::int),
 		       updated_at = now()
-		 WHERE map_flags.kind = 'int'
+		 WHERE level_flags.kind = 'int'
 		RETURNING value_json::int
-	`, mapID, key, delta)
+	`, levelID, key, delta)
 	var newVal int32
 	if err := row.Scan(&newVal); err != nil {
 		if strings.Contains(err.Error(), "no rows") {
@@ -174,13 +174,13 @@ func (s *Service) Add(ctx context.Context, mapID int64, key string, delta int32)
 }
 
 // Delete removes one flag.
-func (s *Service) Delete(ctx context.Context, mapID int64, key string) error {
+func (s *Service) Delete(ctx context.Context, levelID int64, key string) error {
 	if err := validateKey(key); err != nil {
 		return err
 	}
 	tag, err := s.Pool.Exec(ctx,
-		`DELETE FROM map_flags WHERE map_id = $1 AND key = $2`,
-		mapID, key,
+		`DELETE FROM level_flags WHERE level_id = $1 AND key = $2`,
+		levelID, key,
 	)
 	if err != nil {
 		return fmt.Errorf("flags delete: %w", err)
@@ -195,15 +195,15 @@ func (s *Service) Delete(ctx context.Context, mapID int64, key string) error {
 // different kind, returns ErrKindMismatch (we never silently coerce
 // a bool flag to int or vice versa -- silent coercion would let a
 // publish-time rename break trigger reads).
-func (s *Service) upsert(ctx context.Context, mapID int64, key string, kind Kind, raw json.RawMessage) error {
+func (s *Service) upsert(ctx context.Context, levelID int64, key string, kind Kind, raw json.RawMessage) error {
 	tag, err := s.Pool.Exec(ctx, `
-		INSERT INTO map_flags (map_id, key, kind, value_json)
+		INSERT INTO level_flags (level_id, key, kind, value_json)
 		VALUES ($1, $2, $3, $4::jsonb)
-		ON CONFLICT (map_id, key) DO UPDATE
+		ON CONFLICT (level_id, key) DO UPDATE
 		   SET value_json = EXCLUDED.value_json,
 		       updated_at = now()
-		 WHERE map_flags.kind = EXCLUDED.kind
-	`, mapID, key, string(kind), raw)
+		 WHERE level_flags.kind = EXCLUDED.kind
+	`, levelID, key, string(kind), raw)
 	if err != nil {
 		return fmt.Errorf("flags upsert: %w", err)
 	}
@@ -223,7 +223,7 @@ func scanFlag(r interface {
 		kindStr string
 		raw     []byte
 	)
-	if err := r.Scan(&f.MapID, &f.Key, &kindStr, &raw, &f.UpdatedAt); err != nil {
+	if err := r.Scan(&f.LevelID, &f.Key, &kindStr, &raw, &f.UpdatedAt); err != nil {
 		return Flag{}, err
 	}
 	f.Kind = Kind(kindStr)

@@ -147,7 +147,7 @@ func assetDeleteConfirm(usedBy []RailRef) string {
 templ assetDetailPreview(p AssetDetailProps) {
 	if p.Asset.Kind == assets.KindAudio {
 		@AudioPreview(p.Asset, p.PublicURL)
-	} else if p.Asset.Kind == assets.KindTile && p.PublicURL != nil {
+	} else if p.Asset.Kind == assets.KindSpriteAnimated && p.PublicURL != nil {
 		@tileAtlasPreview(p)
 	} else if p.Asset.Kind == assets.KindUIPanel && p.PublicURL != nil {
 		@uiPanelPreview(p)

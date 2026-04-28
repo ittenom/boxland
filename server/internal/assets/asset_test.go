@@ -95,7 +95,7 @@ func TestCreate_SameNameDifferentKindAllowed(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := svc.Create(ctx, assets.CreateInput{
-		Kind: assets.KindTile, Name: "wall", ContentAddressedPath: "p2",
+		Kind: assets.KindSpriteAnimated, Name: "wall", ContentAddressedPath: "p2",
 		OriginalFormat: "png", CreatedBy: designerID,
 	}); err != nil {
 		t.Errorf("same name across kinds should be allowed: %v", err)
@@ -114,7 +114,7 @@ func TestFindByContentPath_KindFiltered(t *testing.T) {
 		OriginalFormat: "png", CreatedBy: designerID,
 	})
 	_, _ = svc.Create(ctx, assets.CreateInput{
-		Kind: assets.KindTile, Name: "x", ContentAddressedPath: "shared-path",
+		Kind: assets.KindSpriteAnimated, Name: "x", ContentAddressedPath: "shared-path",
 		OriginalFormat: "png", CreatedBy: designerID,
 	})
 
@@ -138,7 +138,7 @@ func TestList_FiltersAndPagination(t *testing.T) {
 	svc := assets.New(pool)
 	ctx := context.Background()
 
-	for i, kind := range []assets.Kind{assets.KindSprite, assets.KindSprite, assets.KindTile, assets.KindAudio} {
+	for i, kind := range []assets.Kind{assets.KindSprite, assets.KindSprite, assets.KindSpriteAnimated, assets.KindAudio} {
 		_, err := svc.Create(ctx, assets.CreateInput{
 			Kind:                 kind,
 			Name:                 string([]rune{'a', rune('A' + i)}), // "aA", "aB", "aC", "aD"
@@ -248,7 +248,7 @@ func TestListByFolder_KindRootHonored(t *testing.T) {
 		OriginalFormat: "png", CreatedBy: designerID,
 	})
 	_, _ = svc.Create(ctx, assets.CreateInput{
-		Kind: assets.KindTile, Name: "t1", ContentAddressedPath: "p2",
+		Kind: assets.KindSpriteAnimated, Name: "t1", ContentAddressedPath: "p2",
 		OriginalFormat: "png", CreatedBy: designerID,
 	})
 

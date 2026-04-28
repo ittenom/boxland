@@ -13,6 +13,7 @@ import (
 
 	authdesigner "boxland/server/internal/auth/designer"
 	authplayer "boxland/server/internal/auth/player"
+	"boxland/server/internal/levels"
 	"boxland/server/internal/maps"
 	"boxland/server/internal/proto"
 	"boxland/server/internal/sim/aoi"
@@ -44,6 +45,7 @@ type spectateFixture struct {
 	t           *testing.T
 	server      *httptest.Server
 	mapsSvc     *maps.Service
+	levelsSvc   *levels.Service
 	authDesigner *authdesigner.Service
 	authPlayer  *authplayer.Service
 	gateway     *boxws.Gateway
@@ -78,11 +80,12 @@ func newSpectateFixture(t *testing.T) *spectateFixture {
 	}
 
 	mapsSvc := maps.New(pool)
+	levelsSvc := levels.New(pool)
 
 	mgr := runtime.NewInstanceManager(pool, cli, mapsSvc, runtime.SystemDeps{})
 	dispatcher := boxws.NewDispatcher()
 	boxws.RegisterDefaultVerbs(dispatcher)
-	deps := boxws.AuthoringDeps{MapsService: mapsSvc, Instances: mgr}
+	deps := boxws.AuthoringDeps{MapsService: mapsSvc, LevelsService: levelsSvc, Instances: mgr}
 	boxws.RegisterAuthoringVerbs(dispatcher, deps)
 	boxws.RegisterSpectatorVerb(dispatcher, deps)
 
@@ -104,6 +107,7 @@ func newSpectateFixture(t *testing.T) *spectateFixture {
 		t:            t,
 		server:       srv,
 		mapsSvc:      mapsSvc,
+		levelsSvc:    levelsSvc,
 		authDesigner: authD,
 		authPlayer:   authP,
 		gateway:      g,
@@ -142,20 +146,33 @@ func (f *spectateFixture) awaitConn(t *testing.T) *boxws.Connection {
 	return nil
 }
 
-func (f *spectateFixture) createMap(t *testing.T, name, policy string, public bool) *maps.Map {
+// createMap creates a map AND a level pointing at it (the schema redesign
+// moved Public + SpectatorPolicy off maps onto levels). Tests use the
+// returned *levels.Level — its .ID is what the wire payload now carries
+// in the (legacy-named) MapId field, and what the spectator-invite calls
+// on levelsSvc key off.
+func (f *spectateFixture) createMap(t *testing.T, name, policy string, public bool) *levels.Level {
 	t.Helper()
 	m, err := f.mapsSvc.Create(context.Background(), maps.CreateInput{
+		Name:      name + "-map",
+		Width:     64,
+		Height:    64,
+		CreatedBy: f.designerID,
+	})
+	if err != nil {
+		t.Fatalf("create map %q: %v", name, err)
+	}
+	lv, err := f.levelsSvc.Create(context.Background(), levels.CreateInput{
 		Name:            name,
-		Width:           64,
-		Height:          64,
+		MapID:           m.ID,
 		Public:          public,
 		SpectatorPolicy: policy,
 		CreatedBy:       f.designerID,
 	})
 	if err != nil {
-		t.Fatalf("create map %q: %v", name, err)
+		t.Fatalf("create level %q: %v", name, err)
 	}
-	return m
+	return lv
 }
 
 // ---- public-policy: any player allowed ----
@@ -304,7 +321,7 @@ func TestSpectate_InviteMap_PlayerAllowedWithInvite(t *testing.T) {
 	f := newSpectateFixture(t)
 	m := f.createMap(t, "inv-map", "invite", false)
 
-	if err := f.mapsSvc.GrantSpectatorInvite(context.Background(), m.ID, f.playerID, f.designerID); err != nil {
+	if err := f.levelsSvc.GrantSpectatorInvite(context.Background(), m.ID, f.playerID, f.designerID); err != nil {
 		t.Fatalf("grant invite: %v", err)
 	}
 
@@ -374,7 +391,7 @@ func TestSpectatorInvites_GrantAndRevoke(t *testing.T) {
 
 	ctx := context.Background()
 
-	allowed, err := f.mapsSvc.IsPlayerSpectatorAllowed(ctx, m.ID, f.playerID, "invite")
+	allowed, err := f.levelsSvc.IsPlayerSpectatorAllowed(ctx, m.ID, f.playerID, "invite")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,16 +399,16 @@ func TestSpectatorInvites_GrantAndRevoke(t *testing.T) {
 		t.Fatal("no invite yet, must not be allowed")
 	}
 
-	if err := f.mapsSvc.GrantSpectatorInvite(ctx, m.ID, f.playerID, f.designerID); err != nil {
+	if err := f.levelsSvc.GrantSpectatorInvite(ctx, m.ID, f.playerID, f.designerID); err != nil {
 		t.Fatal(err)
 	}
 
 	// Idempotency: re-granting must not error.
-	if err := f.mapsSvc.GrantSpectatorInvite(ctx, m.ID, f.playerID, f.designerID); err != nil {
+	if err := f.levelsSvc.GrantSpectatorInvite(ctx, m.ID, f.playerID, f.designerID); err != nil {
 		t.Fatalf("re-grant should be idempotent: %v", err)
 	}
 
-	allowed, err = f.mapsSvc.IsPlayerSpectatorAllowed(ctx, m.ID, f.playerID, "invite")
+	allowed, err = f.levelsSvc.IsPlayerSpectatorAllowed(ctx, m.ID, f.playerID, "invite")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,22 +416,22 @@ func TestSpectatorInvites_GrantAndRevoke(t *testing.T) {
 		t.Fatal("after grant, must be allowed")
 	}
 
-	invites, err := f.mapsSvc.ListSpectatorInvites(ctx, m.ID)
+	invites, err := f.levelsSvc.ListSpectatorInvites(ctx, m.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(invites) != 1 {
 		t.Fatalf("invites: got %d, want 1", len(invites))
 	}
-	if invites[0].PlayerID != f.playerID || invites[0].GrantedBy != f.designerID {
-		t.Errorf("invite shape mismatch: %+v", invites[0])
+	if invites[0] != f.playerID {
+		t.Errorf("invite player id mismatch: got %d, want %d", invites[0], f.playerID)
 	}
 
-	if err := f.mapsSvc.RevokeSpectatorInvite(ctx, m.ID, f.playerID); err != nil {
+	if err := f.levelsSvc.RevokeSpectatorInvite(ctx, m.ID, f.playerID); err != nil {
 		t.Fatal(err)
 	}
 
-	allowed, err = f.mapsSvc.IsPlayerSpectatorAllowed(ctx, m.ID, f.playerID, "invite")
+	allowed, err = f.levelsSvc.IsPlayerSpectatorAllowed(ctx, m.ID, f.playerID, "invite")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,19 +446,19 @@ func TestSpectatorInvites_PolicyDispatch(t *testing.T) {
 	ctx := context.Background()
 
 	// Public always allowed (no DB hit).
-	allowed, err := f.mapsSvc.IsPlayerSpectatorAllowed(ctx, m.ID, f.playerID, "public")
+	allowed, err := f.levelsSvc.IsPlayerSpectatorAllowed(ctx, m.ID, f.playerID, "public")
 	if err != nil || !allowed {
 		t.Errorf("public: allowed=%v err=%v", allowed, err)
 	}
 
 	// Private always rejected (no DB hit).
-	allowed, err = f.mapsSvc.IsPlayerSpectatorAllowed(ctx, m.ID, f.playerID, "private")
+	allowed, err = f.levelsSvc.IsPlayerSpectatorAllowed(ctx, m.ID, f.playerID, "private")
 	if err != nil || allowed {
 		t.Errorf("private: allowed=%v err=%v", allowed, err)
 	}
 
 	// Unknown policy fails closed.
-	_, err = f.mapsSvc.IsPlayerSpectatorAllowed(ctx, m.ID, f.playerID, "garbage")
+	_, err = f.levelsSvc.IsPlayerSpectatorAllowed(ctx, m.ID, f.playerID, "garbage")
 	if err == nil {
 		t.Errorf("unknown policy: want error, got nil")
 	}

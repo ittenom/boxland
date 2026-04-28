@@ -20,41 +20,92 @@ import (
 	"boxland/server/internal/persistence/repo"
 )
 
+// Class is the entity-class discriminator. Mirrors the
+// entity_types.entity_class CHECK constraint. Per the holistic
+// redesign, ENTITY is the broad parent class with four subtypes:
+//
+//   tile   — a sprite designed to stamp into a map's tile grid;
+//            tilemap_id + cell_col + cell_row link back to the source
+//            tilemap.
+//   npc    — a non-player character; recipe_id + active_bake_id link
+//            into the character pipeline.
+//   pc     — a player-controllable character template.
+//   logic  — an invisible game-logic entity (spawn point, region
+//            trigger, item consumer, level transition).
+type Class string
+
+const (
+	ClassTile  Class = "tile"
+	ClassNPC   Class = "npc"
+	ClassPC    Class = "pc"
+	ClassLogic Class = "logic"
+)
+
+// Valid reports whether c names a real entity class.
+func (c Class) Valid() bool {
+	switch c {
+	case ClassTile, ClassNPC, ClassPC, ClassLogic:
+		return true
+	}
+	return false
+}
+
 // EntityType is one row from entity_types. Components are loaded
 // separately on demand (most surfaces don't need them).
 type EntityType struct {
-	ID                    int64     `db:"id"                       pk:"auto" json:"id"`
-	Name                  string    `db:"name"                               json:"name"`
-	SpriteAssetID         *int64    `db:"sprite_asset_id"                    json:"sprite_asset_id,omitempty"`
-	// AtlasIndex is the row-major 32x32 cell within sprite_asset_id
-	// that this entity's sprite uses (col + row*cols). 0 for plain
-	// 32x32 sprites (the only cell). Populated from tile-sheet uploads
-	// at slice time. Wire-format equivalent: Tile.frame.
-	AtlasIndex            int32     `db:"atlas_index"                        json:"atlas_index"`
-	DefaultAnimationID    *int64    `db:"default_animation_id"               json:"default_animation_id,omitempty"`
-	ColliderW             int32     `db:"collider_w"                         json:"collider_w"`
-	ColliderH             int32     `db:"collider_h"                         json:"collider_h"`
-	ColliderAnchorX       int32     `db:"collider_anchor_x"                  json:"collider_anchor_x"`
-	ColliderAnchorY       int32     `db:"collider_anchor_y"                  json:"collider_anchor_y"`
-	DefaultCollisionMask  int64     `db:"default_collision_mask"             json:"default_collision_mask"`
+	ID    int64  `db:"id"   pk:"auto" json:"id"`
+	Name  string `db:"name"           json:"name"`
+	// EntityClass is the subtype discriminator. Defaults to "logic"
+	// (see migration 0001_init).
+	EntityClass Class `db:"entity_class" json:"entity_class"`
+
+	// Render link. For tile-class entities, sprite_asset_id is the
+	// tilemap's backing PNG and atlas_index is (cell_row*cols + cell_col).
+	SpriteAssetID *int64 `db:"sprite_asset_id" json:"sprite_asset_id,omitempty"`
+	// AtlasIndex is the row-major 32×32 cell within sprite_asset_id
+	// that this entity's sprite uses. 0 for plain 32×32 sprites (the
+	// only cell). Wire-format equivalent: Tile.frame.
+	AtlasIndex         int32  `db:"atlas_index"          json:"atlas_index"`
+	DefaultAnimationID *int64 `db:"default_animation_id" json:"default_animation_id,omitempty"`
+
+	// Tile-class linkage. Populated only when entity_class='tile';
+	// set together at tilemap-creation time so a tile entity always
+	// knows which tilemap cell produced it.
+	TilemapID *int64 `db:"tilemap_id" json:"tilemap_id,omitempty"`
+	CellCol   *int32 `db:"cell_col"   json:"cell_col,omitempty"`
+	CellRow   *int32 `db:"cell_row"   json:"cell_row,omitempty"`
+
+	// Character linkage. Populated only when entity_class IN ('npc','pc').
+	// recipe_id is the editing handle; active_bake_id points at the
+	// most recently published bake. Both null on first save; the
+	// publish pipeline fills active_bake_id and updates sprite_asset_id.
+	RecipeID     *int64 `db:"recipe_id"      json:"recipe_id,omitempty"`
+	ActiveBakeID *int64 `db:"active_bake_id" json:"active_bake_id,omitempty"`
+
+	// Collider + render flags.
+	ColliderW            int32 `db:"collider_w"             json:"collider_w"`
+	ColliderH            int32 `db:"collider_h"             json:"collider_h"`
+	ColliderAnchorX      int32 `db:"collider_anchor_x"      json:"collider_anchor_x"`
+	ColliderAnchorY      int32 `db:"collider_anchor_y"      json:"collider_anchor_y"`
+	DefaultCollisionMask int64 `db:"default_collision_mask" json:"default_collision_mask"`
 	// YSortAnchor opts the type into foot-position y-sorting against
 	// other entities on the same render layer. Default false preserves
-	// the layer-only ordering existing entities rely on. See
-	// docs/indie-rpg-research-todo.md §P1 #8 and migration 0027.
-	YSortAnchor           bool      `db:"y_sort_anchor"                      json:"y_sort_anchor"`
+	// the layer-only ordering existing entities rely on.
+	YSortAnchor bool `db:"y_sort_anchor" json:"y_sort_anchor"`
 	// DrawAbovePlayer pins the type's sprite above the player layer
 	// regardless of y-sort. Wins over YSortAnchor when both are true.
-	DrawAbovePlayer       bool      `db:"draw_above_player"                  json:"draw_above_player"`
-	Tags                  []string  `db:"tags"                               json:"tags"`
+	DrawAbovePlayer bool `db:"draw_above_player" json:"draw_above_player"`
 	// ProceduralInclude controls whether this entity type appears in
-	// procedural-WFC random fill. Default true (the DB column has the
-	// same default — see migration 0042). Designers flip the eye-icon
-	// in the procedural-mode palette to mute tiles they don't want
-	// auto-spawned. Hand-painting an excluded tile still works.
-	ProceduralInclude     bool      `db:"procedural_include"                 json:"procedural_include"`
-	CreatedBy             int64     `db:"created_by"                         json:"created_by"`
-	CreatedAt             time.Time `db:"created_at" repo:"readonly"         json:"created_at"`
-	UpdatedAt             time.Time `db:"updated_at" repo:"readonly"         json:"updated_at"`
+	// procedural-WFC random fill. Default true. Designers flip the
+	// eye-icon in the procedural-mode palette to mute tiles they
+	// don't want auto-spawned. Hand-painting an excluded tile still
+	// works.
+	ProceduralInclude bool `db:"procedural_include" json:"procedural_include"`
+
+	Tags      []string  `db:"tags"                       json:"tags"`
+	CreatedBy int64     `db:"created_by"                 json:"created_by"`
+	CreatedAt time.Time `db:"created_at" repo:"readonly" json:"created_at"`
+	UpdatedAt time.Time `db:"updated_at" repo:"readonly" json:"updated_at"`
 }
 
 // ComponentRow is one row from entity_components.
@@ -88,10 +139,26 @@ func New(pool *pgxpool.Pool, registry *components.Registry) *Service {
 
 // CreateInput drives Create.
 type CreateInput struct {
-	Name                 string
-	SpriteAssetID        *int64
-	AtlasIndex           int32 // 32x32 cell within SpriteAssetID; 0 for single-sprite assets.
-	DefaultAnimationID   *int64
+	Name string
+	// EntityClass is the subtype. Defaults to ClassLogic when zero —
+	// most call sites that don't set it are creating logic entities
+	// (the catch-all). Tilemap auto-slice sets ClassTile; the
+	// character publish path sets ClassNPC / ClassPC.
+	EntityClass Class
+
+	SpriteAssetID      *int64
+	AtlasIndex         int32 // 32×32 cell within SpriteAssetID; 0 for single-sprite assets.
+	DefaultAnimationID *int64
+
+	// Tile-class linkage. Set together by the tilemap service.
+	TilemapID *int64
+	CellCol   *int32
+	CellRow   *int32
+
+	// Character-class linkage. Set by the character publish path.
+	RecipeID     *int64
+	ActiveBakeID *int64
+
 	ColliderW            int32
 	ColliderH            int32
 	ColliderAnchorX      int32
@@ -108,11 +175,23 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*EntityType, erro
 	if in.Name == "" {
 		return nil, errors.New("entities: name is required")
 	}
+	if in.EntityClass == "" {
+		in.EntityClass = ClassLogic
+	}
+	if !in.EntityClass.Valid() {
+		return nil, fmt.Errorf("entities: invalid entity_class %q", in.EntityClass)
+	}
 	row := &EntityType{
 		Name:                 in.Name,
+		EntityClass:          in.EntityClass,
 		SpriteAssetID:        in.SpriteAssetID,
 		AtlasIndex:           in.AtlasIndex,
 		DefaultAnimationID:   in.DefaultAnimationID,
+		TilemapID:            in.TilemapID,
+		CellCol:              in.CellCol,
+		CellRow:              in.CellRow,
+		RecipeID:             in.RecipeID,
+		ActiveBakeID:         in.ActiveBakeID,
 		ColliderW:            valOrDefault(in.ColliderW, 16),
 		ColliderH:            valOrDefault(in.ColliderH, 16),
 		ColliderAnchorX:      valOrDefault(in.ColliderAnchorX, 8),
@@ -129,6 +208,58 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*EntityType, erro
 		return nil, fmt.Errorf("create entity type: %w", err)
 	}
 	return row, nil
+}
+
+// ListByClass returns every entity_type of the given class, ordered by
+// name. The Library (Entities → Tiles / NPCs / PCs / Logic) and the
+// Mapmaker palette (Tiles only) use this to scope the entity lookup
+// without leaking unrelated rows.
+func (s *Service) ListByClass(ctx context.Context, class Class, opts ListOpts) ([]EntityType, error) {
+	if !class.Valid() {
+		return nil, fmt.Errorf("entities: invalid entity_class %q", class)
+	}
+	clauses := squirrel.And{squirrel.Eq{"entity_class": string(class)}}
+	if len(opts.Tags) > 0 {
+		clauses = append(clauses, squirrel.Expr("tags && ?::text[]", opts.Tags))
+	}
+	if opts.Search != "" {
+		clauses = append(clauses, squirrel.ILike{"name": "%" + opts.Search + "%"})
+	}
+	listOpts := repo.ListOpts{
+		Where:  clauses,
+		Order:  "lower(name) ASC, id ASC",
+		Limit:  opts.Limit,
+		Offset: opts.Offset,
+	}
+	return s.Repo.List(ctx, listOpts)
+}
+
+// FindByTilemapCell looks up the tile-class entity_type that came from
+// a given tilemap cell. Returns ErrEntityTypeNotFound if the cell hasn't
+// been sliced (yet) or the tilemap doesn't own a tile at that cell.
+//
+// Used by the tilemap service's Replace flow: when re-uploading a
+// tilemap, cells whose pixel hash is unchanged keep the same
+// entity_type_id (preserving every map_tiles reference), so we look
+// the existing entity up by (tilemap_id, cell_col, cell_row) instead
+// of by sprite_asset_id + atlas_index (which can collide across
+// tilemap re-uploads when the backing PNG is replaced).
+func (s *Service) FindByTilemapCell(ctx context.Context, tilemapID int64, col, row int32) (*EntityType, error) {
+	out, err := s.Repo.List(ctx, repo.ListOpts{
+		Where: squirrel.And{
+			squirrel.Eq{"tilemap_id": tilemapID},
+			squirrel.Eq{"cell_col": col},
+			squirrel.Eq{"cell_row": row},
+		},
+		Limit: 1,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return nil, ErrEntityTypeNotFound
+	}
+	return &out[0], nil
 }
 
 // SetProceduralInclude flips the procedural_include flag on one entity

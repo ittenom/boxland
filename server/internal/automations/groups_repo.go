@@ -12,9 +12,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// GroupsRepo owns CRUD on map_action_groups. Tenant isolation: every
-// API takes mapID as the first argument and the underlying SQL never
-// omits map_id from WHERE.
+// GroupsRepo owns CRUD on level_action_groups. Tenant isolation: every
+// API takes levelID as the first argument and the underlying SQL never
+// omits level_id from WHERE.
 //
 // Indie-RPG research §P1 #10. Migration 0030.
 type GroupsRepo struct {
@@ -29,7 +29,7 @@ func NewGroupsRepo(pool *pgxpool.Pool) *GroupsRepo {
 // to convert into the compile-friendly ActionGroup.
 type GroupRow struct {
 	ID          int64
-	MapID       int64
+	LevelID     int64
 	Name        string
 	ActionsJSON json.RawMessage
 	CreatedAt   time.Time
@@ -46,7 +46,7 @@ func (r GroupRow) Decode() (ActionGroup, error) {
 	}
 	return ActionGroup{
 		ID:      r.ID,
-		MapID:   r.MapID,
+		LevelID: r.LevelID,
 		Name:    r.Name,
 		Actions: nodes,
 	}, nil
@@ -55,16 +55,16 @@ func (r GroupRow) Decode() (ActionGroup, error) {
 // Errors returned by the groups repo.
 var (
 	ErrGroupNotFound  = errors.New("action_groups: not found")
-	ErrGroupNameInUse = errors.New("action_groups: name already exists in this map")
+	ErrGroupNameInUse = errors.New("action_groups: name already exists in this level")
 )
 
-// ListByMap returns every action group on a map, ordered by name.
-func (r *GroupsRepo) ListByMap(ctx context.Context, mapID int64) ([]GroupRow, error) {
+// ListByLevel returns every action group on a level, ordered by name.
+func (r *GroupsRepo) ListByLevel(ctx context.Context, levelID int64) ([]GroupRow, error) {
 	rows, err := r.Pool.Query(ctx, `
-		SELECT id, map_id, name, actions_json, created_at, updated_at
-		  FROM map_action_groups
-		 WHERE map_id = $1
-		 ORDER BY name ASC`, mapID)
+		SELECT id, level_id, name, actions_json, created_at, updated_at
+		  FROM level_action_groups
+		 WHERE level_id = $1
+		 ORDER BY name ASC`, levelID)
 	if err != nil {
 		return nil, fmt.Errorf("action groups list: %w", err)
 	}
@@ -72,7 +72,7 @@ func (r *GroupsRepo) ListByMap(ctx context.Context, mapID int64) ([]GroupRow, er
 	var out []GroupRow
 	for rows.Next() {
 		var g GroupRow
-		if err := rows.Scan(&g.ID, &g.MapID, &g.Name, &g.ActionsJSON, &g.CreatedAt, &g.UpdatedAt); err != nil {
+		if err := rows.Scan(&g.ID, &g.LevelID, &g.Name, &g.ActionsJSON, &g.CreatedAt, &g.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, g)
@@ -82,8 +82,8 @@ func (r *GroupsRepo) ListByMap(ctx context.Context, mapID int64) ([]GroupRow, er
 
 // LoadCompiled is the convenience hot-path for the sim: list + decode +
 // compile + return the name index in one call. One DB query.
-func (r *GroupsRepo) LoadCompiled(ctx context.Context, mapID int64, actions *Registry) (CompiledActionGroups, error) {
-	rows, err := r.ListByMap(ctx, mapID)
+func (r *GroupsRepo) LoadCompiled(ctx context.Context, levelID int64, actions *Registry) (CompiledActionGroups, error) {
+	rows, err := r.ListByLevel(ctx, levelID)
 	if err != nil {
 		return nil, err
 	}
@@ -99,9 +99,9 @@ func (r *GroupsRepo) LoadCompiled(ctx context.Context, mapID int64, actions *Reg
 }
 
 // Upsert inserts a new group or updates an existing one in-place by
-// (map_id, name). Returns ErrGroupNameInUse only when the underlying
+// (level_id, name). Returns ErrGroupNameInUse only when the underlying
 // constraint is hit by a concurrent insert (vanishingly rare).
-func (r *GroupsRepo) Upsert(ctx context.Context, mapID int64, name string, actionsJSON json.RawMessage) (GroupRow, error) {
+func (r *GroupsRepo) Upsert(ctx context.Context, levelID int64, name string, actionsJSON json.RawMessage) (GroupRow, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || len(name) > 64 {
 		return GroupRow{}, errors.New("action_groups: name must be 1..64 chars")
@@ -111,15 +111,15 @@ func (r *GroupsRepo) Upsert(ctx context.Context, mapID int64, name string, actio
 	}
 	var g GroupRow
 	row := r.Pool.QueryRow(ctx, `
-		INSERT INTO map_action_groups (map_id, name, actions_json)
+		INSERT INTO level_action_groups (level_id, name, actions_json)
 		VALUES ($1, $2, $3::jsonb)
-		ON CONFLICT (map_id, name) DO UPDATE
+		ON CONFLICT (level_id, name) DO UPDATE
 		   SET actions_json = EXCLUDED.actions_json,
 		       updated_at   = now()
-		RETURNING id, map_id, name, actions_json, created_at, updated_at`,
-		mapID, name, actionsJSON,
+		RETURNING id, level_id, name, actions_json, created_at, updated_at`,
+		levelID, name, actionsJSON,
 	)
-	if err := row.Scan(&g.ID, &g.MapID, &g.Name, &g.ActionsJSON, &g.CreatedAt, &g.UpdatedAt); err != nil {
+	if err := row.Scan(&g.ID, &g.LevelID, &g.Name, &g.ActionsJSON, &g.CreatedAt, &g.UpdatedAt); err != nil {
 		var pe *pgconn.PgError
 		if errors.As(err, &pe) && pe.Code == "23505" {
 			return GroupRow{}, fmt.Errorf("%w: %q", ErrGroupNameInUse, name)
@@ -130,10 +130,10 @@ func (r *GroupsRepo) Upsert(ctx context.Context, mapID int64, name string, actio
 }
 
 // Delete removes one group by name.
-func (r *GroupsRepo) Delete(ctx context.Context, mapID int64, name string) error {
+func (r *GroupsRepo) Delete(ctx context.Context, levelID int64, name string) error {
 	tag, err := r.Pool.Exec(ctx,
-		`DELETE FROM map_action_groups WHERE map_id = $1 AND name = $2`,
-		mapID, name,
+		`DELETE FROM level_action_groups WHERE level_id = $1 AND name = $2`,
+		levelID, name,
 	)
 	if err != nil {
 		return fmt.Errorf("action_groups delete: %w", err)

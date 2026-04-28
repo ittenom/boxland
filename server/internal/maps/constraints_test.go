@@ -110,7 +110,7 @@ func TestMapConstraints_TenantIsolated(t *testing.T) {
 	mapA, _, _, _ := procFixture(t, ctx, designerID, baseEtID, ents, svc)
 	mB, err := svc.Create(ctx, maps.CreateInput{
 		Name: "proc-b", Width: 4, Height: 4, Mode: "procedural",
-		PersistenceMode: "persistent", CreatedBy: designerID,
+		CreatedBy: designerID,
 	})
 	if err != nil {
 		t.Fatalf("create B: %v", err)

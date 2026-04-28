@@ -247,7 +247,7 @@ templ AssetCard(a assets.Asset, publicURL func(string) string, usage map[int64]i
 				></canvas>
 				<span class="bx-asset-card__pip bx-asset-card__pip--audio">audio</span>
 			} else if publicURL != nil {
-				if a.Kind == assets.KindTile {
+				if a.Kind == assets.KindSpriteAnimated {
 					@AssetTileSheetThumb(a, publicURL)
 					<span class="bx-asset-card__pip bx-asset-card__pip--tile">tile</span>
 				} else {

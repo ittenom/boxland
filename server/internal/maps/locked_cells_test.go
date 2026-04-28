@@ -35,7 +35,7 @@ func procFixture(t *testing.T, ctx context.Context, designerID, baseEtID int64, 
 	}
 	m, err := svc.Create(ctx, maps.CreateInput{
 		Name: "proc-map", Width: 4, Height: 4,
-		Mode: "procedural", PersistenceMode: "persistent",
+		Mode:      "procedural",
 		CreatedBy: designerID,
 	})
 	if err != nil {
@@ -158,7 +158,7 @@ func TestLockCells_TenantIsolated(t *testing.T) {
 	// Second map. Reuse the same designer + tiles; we just need a fresh maps.id.
 	mB, err := svc.Create(ctx, maps.CreateInput{
 		Name: "proc-map-2", Width: 4, Height: 4, Mode: "procedural",
-		PersistenceMode: "persistent", CreatedBy: designerID,
+		CreatedBy: designerID,
 	})
 	if err != nil {
 		t.Fatalf("create map B: %v", err)

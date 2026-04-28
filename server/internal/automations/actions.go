@@ -151,7 +151,7 @@ func (c AdjustResourceConfig) Validate() error {
 }
 
 // SetFlagConfig writes a per-realm switch (bool) or variable (int)
-// in map_flags. Indie-RPG research §P1 #9. The runtime resolves the
+// in level_flags. Indie-RPG research §P1 #9. The runtime resolves the
 // realm from the firing automation's instance.
 type SetFlagConfig struct {
 	Key     string `json:"key"`

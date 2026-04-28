@@ -1,0 +1,321 @@
+package views
+
+import (
+	"fmt"
+
+	"boxland/server/internal/levels"
+	"boxland/server/internal/worlds"
+)
+
+// worlds.templ — list page, detail page, and "new world" modal.
+//
+// Per the holistic redesign, a WORLD is a graph of LEVELs connected by
+// transition entities. The detail page renders the world's level list
+// (the actual node-graph editor lives in world_graph.templ — Phase 2.5).
+
+type WorldsListProps struct {
+	Layout        LayoutProps
+	Items         []worlds.World
+	LevelsByWorld map[int64]int // world_id → level count, for the card badge
+	Search        string
+}
+
+templ WorldsListPage(p WorldsListProps) {
+	@Layout(p.Layout) {
+		<div class="bx-work__body bx-stack">
+			<header class="bx-row bx-row--apart">
+				<div>
+					<h1 data-copy-slot="worlds.title">Worlds</h1>
+					<p class="bx-muted bx-small" data-copy-slot="worlds.lede">
+						A world is a graph of levels connected by transition entities.
+					</p>
+				</div>
+				<div class="bx-row" style="gap: var(--bx-s2);">
+					<form method="get" action="/design/worlds" class="bx-row" style="gap: var(--bx-s1);">
+						<input
+							class="bx-input"
+							type="search"
+							name="q"
+							value={ p.Search }
+							placeholder="Search worlds..."
+							style="width: 220px;"
+						/>
+					</form>
+					<button
+						type="button"
+						class="bx-btn bx-btn--ghost"
+						hx-get="/design/worlds/import"
+						hx-target="#modal-host"
+						hx-swap="innerHTML"
+					>+ Import</button>
+					<button
+						type="button"
+						class="bx-btn bx-btn--primary"
+						hx-get="/design/worlds/new"
+						hx-target="#modal-host"
+						hx-swap="innerHTML"
+						data-copy-slot="worlds.new"
+					>+ World</button>
+				</div>
+			</header>
+
+			if len(p.Items) == 0 {
+				<div class="bx-panel bx-stack-tight">
+					<p class="bx-muted" data-copy-slot="worlds.empty">No worlds yet.</p>
+					<p class="bx-small bx-muted">
+						Create a world to bundle related levels into a playable campaign.
+					</p>
+				</div>
+			} else {
+				<div class="bx-grid bx-grid--auto">
+					for _, w := range p.Items {
+						@worldCard(w, p.LevelsByWorld[w.ID])
+					}
+				</div>
+			}
+		</div>
+		<div id="modal-host"></div>
+	}
+}
+
+templ worldCard(w worlds.World, levelCount int) {
+	<a
+		class="bx-card bx-card--world"
+		href={ templ.URL(fmt.Sprintf("/design/worlds/%d", w.ID)) }
+	>
+		<div class="bx-row bx-row--apart">
+			<span class="bx-card__title">
+				<span class="bx-dot bx-dot--world"></span>
+				{ w.Name }
+			</span>
+			if w.StartLevelID == nil {
+				<span class="bx-badge bx-badge--warn" title="No start level set">incomplete</span>
+			}
+		</div>
+		<div class="bx-card__meta bx-small bx-muted">
+			{ fmt.Sprintf("%d level%s", levelCount, pluralS(levelCount)) }
+		</div>
+	</a>
+}
+
+templ WorldNewModal() {
+	<div class="bx-modal-backdrop" data-bx-dismissible role="dialog" aria-modal="true">
+		<div class="bx-modal" style="width: min(420px, 95vw);">
+			<header class="bx-modal__header">
+				<h2 style="margin:0;" data-copy-slot="worlds.new.title">New world</h2>
+				<button type="button" class="bx-btn bx-btn--ghost bx-btn--small"
+					hx-on:click="this.closest('.bx-modal-backdrop').remove()" aria-label="Close">Esc</button>
+			</header>
+			<form
+				class="bx-modal__body bx-stack"
+				hx-post="/design/worlds"
+				hx-swap="none"
+			>
+				<label class="bx-stack-tight">
+					<span class="bx-small bx-muted">Name</span>
+					<input class="bx-input" name="name" required autofocus maxlength="64"/>
+				</label>
+				<p class="bx-small bx-muted" data-copy-slot="worlds.new.help">
+					Levels can be wired into the world after creation.
+				</p>
+				<footer class="bx-modal__footer">
+					<button type="submit" class="bx-btn bx-btn--primary" data-copy-slot="worlds.new.submit">
+						Create world
+					</button>
+				</footer>
+			</form>
+		</div>
+	</div>
+}
+
+// ---- world detail page ---------------------------------------------
+
+type WorldDetailProps struct {
+	Layout LayoutProps
+	World  worlds.World
+	Levels []levels.Level
+}
+
+templ WorldDetailPage(p WorldDetailProps) {
+	@Layout(p.Layout) {
+		<div class="bx-work__body bx-stack">
+			<header class="bx-row bx-row--apart">
+				<div>
+					<h1>{ p.World.Name }</h1>
+					if p.World.StartLevelID == nil {
+						<p class="bx-small">
+							<span class="bx-badge bx-badge--warn">incomplete</span>
+							No start level — pick one below to mark this world playable.
+						</p>
+					}
+				</div>
+				<div class="bx-row" style="gap: var(--bx-s2);">
+					<a
+						href={ templ.URL(fmt.Sprintf("/design/worlds/%d/export", p.World.ID)) }
+						class="bx-btn bx-btn--ghost bx-btn--small bx-row"
+						style="gap: 6px;"
+						download
+						title="Save this world (with all levels, maps, tilemaps, and assets) as a re-importable .boxworld.zip"
+						data-bx-export-world
+					>
+						@Icon("save")
+						<span>Export</span>
+					</a>
+					<button type="button" class="bx-btn bx-btn--danger bx-btn--small"
+						hx-delete={ fmt.Sprintf("/design/worlds/%d", p.World.ID) }
+						hx-confirm="Delete this world? Levels survive (their world_id is cleared).">
+						Delete
+					</button>
+				</div>
+			</header>
+
+			<section class="bx-panel">
+				<h3 class="bx-panel__title">Levels in this world</h3>
+				if len(p.Levels) == 0 {
+					<p class="bx-muted bx-small">
+						No levels yet.
+						<a href="/design/levels">Create a level</a> and assign it to this world.
+					</p>
+				} else {
+					<ul class="bx-list">
+						for _, lv := range p.Levels {
+							<li class="bx-row bx-row--apart">
+								<a class="bx-row" href={ templ.URL(fmt.Sprintf("/design/levels/%d", lv.ID)) }
+								   style="gap: var(--bx-s2);">
+									<span class="bx-dot bx-dot--level"></span>
+									<span>{ lv.Name }</span>
+									if lv.Public {
+										<span class="bx-badge bx-badge--success">public</span>
+									}
+									if p.World.StartLevelID != nil && *p.World.StartLevelID == lv.ID {
+										<span class="bx-badge">start</span>
+									}
+								</a>
+								<form
+									class="bx-row"
+									hx-post={ fmt.Sprintf("/design/worlds/%d/start-level", p.World.ID) }
+									hx-swap="none"
+								>
+									<input type="hidden" name="level_id" value={ fmt.Sprintf("%d", lv.ID) }/>
+									if p.World.StartLevelID == nil || *p.World.StartLevelID != lv.ID {
+										<button type="submit" class="bx-btn bx-btn--ghost bx-btn--small">
+											Mark as start
+										</button>
+									}
+								</form>
+							</li>
+						}
+					</ul>
+				}
+			</section>
+
+			<section class="bx-panel">
+				<h3 class="bx-panel__title">World graph</h3>
+				if len(p.Levels) == 0 {
+					<p class="bx-small bx-muted">
+						Add levels to this world to see the graph render here.
+					</p>
+				} else {
+					@worldGraph(p)
+				}
+			</section>
+		</div>
+	}
+}
+
+// worldGraph renders the level graph as an SVG node layout. Each
+// level is a rectangle; the start level (if any) gets a thicker
+// border + accent color. Transition edges (door entities pointing at
+// other levels) will land in Phase 3 once level_entities placement
+// surfaces are richer; for v1 the graph shows nodes only, arranged
+// in a fixed grid so designers see at a glance how many levels they
+// have and which is the start.
+templ worldGraph(p WorldDetailProps) {
+	<div class="bx-world-graph">
+		<svg
+			xmlns="http://www.w3.org/2000/svg"
+			viewBox={ worldGraphViewBox(len(p.Levels)) }
+			class="bx-world-graph__svg"
+			role="img"
+			aria-label={ fmt.Sprintf("World graph for %s — %d levels", p.World.Name, len(p.Levels)) }
+		>
+			for i, lv := range p.Levels {
+				@worldGraphNode(p.World, lv, i)
+			}
+		</svg>
+		<p class="bx-small bx-muted" style="margin-top: var(--bx-s2);">
+			Transition arrows (door → level) appear here once level_entities placement editing lands.
+		</p>
+	</div>
+}
+
+templ worldGraphNode(world worlds.World, lv levels.Level, i int) {
+	{{ x, y := worldGraphPos(i) }}
+	<a
+		href={ templ.URL(fmt.Sprintf("/design/levels/%d", lv.ID)) }
+		class={ worldGraphNodeClass(world, lv) }
+		transform={ fmt.Sprintf("translate(%d, %d)", x, y) }
+	>
+		<rect
+			x="0" y="0" width="120" height="60"
+			rx="0" ry="0"
+		></rect>
+		<text x="8" y="22" class="bx-world-graph__title">{ lv.Name }</text>
+		<text x="8" y="42" class="bx-world-graph__meta">
+			if isWorldStart(world, lv) {
+				start
+			} else if lv.Public {
+				public
+			} else {
+				private
+			}
+		</text>
+	</a>
+}
+
+func worldGraphPos(i int) (int, int) {
+	const (
+		cellW = 140
+		cellH = 80
+		cols  = 4
+	)
+	col := i % cols
+	row := i / cols
+	return col*cellW + 20, row*cellH + 20
+}
+
+func worldGraphViewBox(n int) string {
+	const cols = 4
+	rows := n / cols
+	if n%cols != 0 {
+		rows++
+	}
+	if rows == 0 {
+		rows = 1
+	}
+	w := cols*140 + 40
+	h := rows*80 + 40
+	return fmt.Sprintf("0 0 %d %d", w, h)
+}
+
+func worldGraphNodeClass(w worlds.World, lv levels.Level) string {
+	if isWorldStart(w, lv) {
+		return "bx-world-graph__node bx-world-graph__node--start"
+	}
+	return "bx-world-graph__node"
+}
+
+func isWorldStart(w worlds.World, lv levels.Level) bool {
+	return w.StartLevelID != nil && *w.StartLevelID == lv.ID
+}
+
+// pluralS returns "" for n == 1, else "s". Used by the redesign
+// surfaces' card meta strings ("3 levels", "1 cell"). The existing
+// plural(int, one, many) helper in assets.templ is more capable but
+// also more verbose; pluralS keeps the inline templates tidy.
+func pluralS(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}

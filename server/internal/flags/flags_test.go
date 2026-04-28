@@ -9,6 +9,7 @@ import (
 
 	authdesigner "boxland/server/internal/auth/designer"
 	"boxland/server/internal/flags"
+	"boxland/server/internal/levels"
 	"boxland/server/internal/maps"
 	"boxland/server/internal/persistence/testdb"
 )
@@ -19,9 +20,9 @@ func openTestPool(t *testing.T) *pgxpool.Pool {
 	return testdb.New(t)
 }
 
-// seedMap creates a designer + map so flag rows have FK targets.
-// The pool is already empty because testdb.New(t) returns a fresh database for every test.
-func seedMap(t *testing.T, pool *pgxpool.Pool) int64 {
+// seedLevel creates a designer + map + level so flag rows (now keyed
+// to levels.id post-redesign) have a real FK target.
+func seedLevel(t *testing.T, pool *pgxpool.Pool) int64 {
 	t.Helper()
 	auth := authdesigner.New(pool)
 	d, err := auth.CreateDesigner(context.Background(), "flags-test@x.com", "p", authdesigner.RoleEditor)
@@ -35,21 +36,27 @@ func seedMap(t *testing.T, pool *pgxpool.Pool) int64 {
 	if err != nil {
 		t.Fatalf("create map: %v", err)
 	}
-	return m.ID
+	lv, err := levels.New(pool).Create(context.Background(), levels.CreateInput{
+		Name: "flag-test-level", MapID: m.ID, CreatedBy: d.ID,
+	})
+	if err != nil {
+		t.Fatalf("create level: %v", err)
+	}
+	return lv.ID
 }
 
 func TestSetBool_RoundTrip(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
-	mapID := seedMap(t, pool)
+	levelID := seedLevel(t, pool)
 
 	svc := flags.New(pool)
 	ctx := context.Background()
 
-	if err := svc.SetBool(ctx, mapID, "met_king", true); err != nil {
+	if err := svc.SetBool(ctx, levelID, "met_king", true); err != nil {
 		t.Fatalf("SetBool: %v", err)
 	}
-	got, err := svc.Get(ctx, mapID, "met_king")
+	got, err := svc.Get(ctx, levelID, "met_king")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -61,13 +68,13 @@ func TestSetBool_RoundTrip(t *testing.T) {
 func TestSetInt_AndAdd_AreAtomic(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
-	mapID := seedMap(t, pool)
+	levelID := seedLevel(t, pool)
 
 	svc := flags.New(pool)
 	ctx := context.Background()
 
 	// Add to a missing key should create it with the delta value.
-	v, err := svc.Add(ctx, mapID, "gold", 100)
+	v, err := svc.Add(ctx, levelID, "gold", 100)
 	if err != nil {
 		t.Fatalf("Add (insert): %v", err)
 	}
@@ -75,7 +82,7 @@ func TestSetInt_AndAdd_AreAtomic(t *testing.T) {
 		t.Errorf("first Add: got %d, want 100", v)
 	}
 	// Subsequent Add should accumulate, not overwrite.
-	v, err = svc.Add(ctx, mapID, "gold", -25)
+	v, err = svc.Add(ctx, levelID, "gold", -25)
 	if err != nil {
 		t.Fatalf("Add (accumulate): %v", err)
 	}
@@ -83,10 +90,10 @@ func TestSetInt_AndAdd_AreAtomic(t *testing.T) {
 		t.Errorf("second Add: got %d, want 75", v)
 	}
 	// SetInt should overwrite.
-	if err := svc.SetInt(ctx, mapID, "gold", 1); err != nil {
+	if err := svc.SetInt(ctx, levelID, "gold", 1); err != nil {
 		t.Fatalf("SetInt: %v", err)
 	}
-	got, err := svc.Get(ctx, mapID, "gold")
+	got, err := svc.Get(ctx, levelID, "gold")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -98,23 +105,23 @@ func TestSetInt_AndAdd_AreAtomic(t *testing.T) {
 func TestKindMismatch_OnTypeChange(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
-	mapID := seedMap(t, pool)
+	levelID := seedLevel(t, pool)
 
 	svc := flags.New(pool)
 	ctx := context.Background()
 
-	if err := svc.SetBool(ctx, mapID, "x", true); err != nil {
+	if err := svc.SetBool(ctx, levelID, "x", true); err != nil {
 		t.Fatal(err)
 	}
 	// Trying to overwrite a bool flag with an int must fail loudly so
 	// designers see the bug at publish, not at runtime via a silent
 	// coercion that breaks downstream triggers.
-	err := svc.SetInt(ctx, mapID, "x", 42)
+	err := svc.SetInt(ctx, levelID, "x", 42)
 	if !errors.Is(err, flags.ErrKindMismatch) {
 		t.Errorf("SetInt over bool: want ErrKindMismatch, got %v", err)
 	}
 	// Add against a bool flag also rejects.
-	if _, err := svc.Add(ctx, mapID, "x", 1); !errors.Is(err, flags.ErrKindMismatch) {
+	if _, err := svc.Add(ctx, levelID, "x", 1); !errors.Is(err, flags.ErrKindMismatch) {
 		t.Errorf("Add over bool: want ErrKindMismatch, got %v", err)
 	}
 }
@@ -122,16 +129,16 @@ func TestKindMismatch_OnTypeChange(t *testing.T) {
 func TestLoadAll_IsLexical_AndScopedToMap(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
-	mapID := seedMap(t, pool)
+	levelID := seedLevel(t, pool)
 
 	svc := flags.New(pool)
 	ctx := context.Background()
 	for _, k := range []string{"zebra", "apple", "mango"} {
-		if err := svc.SetInt(ctx, mapID, k, 1); err != nil {
+		if err := svc.SetInt(ctx, levelID, k, 1); err != nil {
 			t.Fatal(err)
 		}
 	}
-	out, err := svc.LoadAll(ctx, mapID)
+	out, err := svc.LoadAll(ctx, levelID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,20 +151,21 @@ func TestLoadAll_IsLexical_AndScopedToMap(t *testing.T) {
 		}
 	}
 
-	// A different map_id must see zero rows -- tenant isolation.
-	otherID := seedMapForIsolation(t, pool)
+	// A different level_id must see zero rows -- tenant isolation.
+	otherID := seedLevelForIsolation(t, pool)
 	other, err := svc.LoadAll(ctx, otherID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(other) != 0 {
-		t.Errorf("cross-map leak: got %d rows on a fresh map", len(other))
+		t.Errorf("cross-level leak: got %d rows on a fresh level", len(other))
 	}
 }
 
-// seedMapForIsolation makes a SECOND map without resetting the DB so we
-// can prove flags don't leak across maps in the same tenant.
-func seedMapForIsolation(t *testing.T, pool *pgxpool.Pool) int64 {
+// seedLevelForIsolation makes a SECOND level (under its own designer +
+// map) without resetting the DB so we can prove flags don't leak across
+// levels.
+func seedLevelForIsolation(t *testing.T, pool *pgxpool.Pool) int64 {
 	t.Helper()
 	auth := authdesigner.New(pool)
 	d, err := auth.CreateDesigner(context.Background(), "flags-iso@x.com", "p", authdesigner.RoleEditor)
@@ -171,26 +179,32 @@ func seedMapForIsolation(t *testing.T, pool *pgxpool.Pool) int64 {
 	if err != nil {
 		t.Fatalf("create iso map: %v", err)
 	}
-	return m.ID
+	lv, err := levels.New(pool).Create(context.Background(), levels.CreateInput{
+		Name: "iso-level", MapID: m.ID, CreatedBy: d.ID,
+	})
+	if err != nil {
+		t.Fatalf("create iso level: %v", err)
+	}
+	return lv.ID
 }
 
 func TestDelete_RemovesRow(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
-	mapID := seedMap(t, pool)
+	levelID := seedLevel(t, pool)
 
 	svc := flags.New(pool)
 	ctx := context.Background()
-	if err := svc.SetBool(ctx, mapID, "tmp", true); err != nil {
+	if err := svc.SetBool(ctx, levelID, "tmp", true); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.Delete(ctx, mapID, "tmp"); err != nil {
+	if err := svc.Delete(ctx, levelID, "tmp"); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if _, err := svc.Get(ctx, mapID, "tmp"); !errors.Is(err, flags.ErrNotFound) {
+	if _, err := svc.Get(ctx, levelID, "tmp"); !errors.Is(err, flags.ErrNotFound) {
 		t.Errorf("after delete: want ErrNotFound, got %v", err)
 	}
-	if err := svc.Delete(ctx, mapID, "tmp"); !errors.Is(err, flags.ErrNotFound) {
+	if err := svc.Delete(ctx, levelID, "tmp"); !errors.Is(err, flags.ErrNotFound) {
 		t.Errorf("double delete: want ErrNotFound, got %v", err)
 	}
 }

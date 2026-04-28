@@ -13,8 +13,8 @@ import (
 // consults. Only the bits we actually need; kept narrow so tests can
 // supply fakes easily.
 //
-// FlagKeys: every key currently defined in map_flags for the realm.
-// ActionGroupNames: every name in map_action_groups for the realm.
+// FlagKeys: every key currently defined in level_flags for the realm.
+// ActionGroupNames: every name in level_action_groups for the realm.
 // All compared case-sensitively; the storage layer normalizes on write.
 type ResolveDeps struct {
 	FlagKeys         map[string]flags.Kind
@@ -23,14 +23,14 @@ type ResolveDeps struct {
 
 // LoadResolveDeps assembles ResolveDeps for a realm in two queries.
 // Used by the publish handler. No N+1 — one query per dependency
-// kind, each scoped by map_id.
-func LoadResolveDeps(ctx context.Context, mapID int64, fs *flags.Service, ar AutoResolver) (ResolveDeps, error) {
+// kind, each scoped by level_id.
+func LoadResolveDeps(ctx context.Context, levelID int64, fs *flags.Service, ar AutoResolver) (ResolveDeps, error) {
 	out := ResolveDeps{
 		FlagKeys:         map[string]flags.Kind{},
 		ActionGroupNames: map[string]struct{}{},
 	}
 	if fs != nil {
-		all, err := fs.LoadAll(ctx, mapID)
+		all, err := fs.LoadAll(ctx, levelID)
 		if err != nil {
 			return out, fmt.Errorf("hud: load flags: %w", err)
 		}
@@ -39,7 +39,7 @@ func LoadResolveDeps(ctx context.Context, mapID int64, fs *flags.Service, ar Aut
 		}
 	}
 	if ar != nil {
-		names, err := ar.ListActionGroupNames(ctx, mapID)
+		names, err := ar.ListActionGroupNames(ctx, levelID)
 		if err != nil {
 			return out, fmt.Errorf("hud: load action groups: %w", err)
 		}
@@ -50,11 +50,11 @@ func LoadResolveDeps(ctx context.Context, mapID int64, fs *flags.Service, ar Aut
 	return out, nil
 }
 
-// AutoResolver lists the names of action groups for a given map. Tiny
+// AutoResolver lists the names of action groups for a given level. Tiny
 // interface so tests can supply a fixture without depending on the
 // automations package's repo type.
 type AutoResolver interface {
-	ListActionGroupNames(ctx context.Context, mapID int64) ([]string, error)
+	ListActionGroupNames(ctx context.Context, levelID int64) ([]string, error)
 }
 
 // ResolveAndValidate runs structural Validate first, then walks the
