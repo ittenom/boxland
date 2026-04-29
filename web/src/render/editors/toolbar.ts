@@ -60,14 +60,15 @@ export class Toolbar {
 	}
 
 	private makeButton(action: ToolbarAction): Container {
-		const role = action.disabled
-			? Roles.ButtonSmLockA
-			: action.active
-				? Roles.ButtonSmPressA
-				: Roles.ButtonSmReleaseA;
 		const display = action.icon ?? (action.hotkey ? `${action.label} ${action.hotkey}` : action.label);
 		const tooltip = action.tooltip ?? (action.hotkey ? `${action.label} - ${action.hotkey}` : action.label);
 		const isIcon = Boolean(action.icon);
+		const role = action.active
+			? Roles.ButtonSmPressA
+			: action.disabled && !isIcon
+				? Roles.ButtonSmLockA
+				: Roles.ButtonSmReleaseA;
+		const disabledRole = isIcon ? Roles.ButtonSmReleaseA : Roles.ButtonSmLockA;
 		const w = isIcon ? this.height : this.buttonWidth;
 		const h = this.height;
 		const text = new Text({
@@ -88,7 +89,7 @@ export class Toolbar {
 			defaultView: this.bg(role, w, h),
 			hoverView: this.bg(Roles.ButtonSmPressA, w, h),
 			pressedView: this.bg(Roles.ButtonSmPressA, w, h),
-			disabledView: this.bg(Roles.ButtonSmLockA, w, h),
+			disabledView: this.bg(disabledRole, w, h),
 			text,
 			padding: 5,
 			textOffset: { x: 0, y: -1 },

@@ -39,6 +39,7 @@ import {
 	stamp,
 	stampRect,
 	floodFill,
+	applyHistorySide,
 } from "./tools";
 import {
 	type Cell,
@@ -282,13 +283,19 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 		toolbar.onAction(t, () => { state.setTool(t); renderToolbar(); });
 	}
 	toolbar.onAction("undo", () => {
-		// v1: the WS protocol carries EditorUndo at the session
-		// layer; clients dispatch by sending a DesignerCommand.
-		// For now we no-op locally — full undo wiring lands when
-		// we surface the editor history through the WS dispatch
-		// helpers (Phase 4 already added the opcode + handler).
+		const entry = state.popUndoEntry();
+		if (!entry) return;
+		shipStamp(applyHistorySide(state, entry, "before"));
+		renderToolbar();
+		refreshCanvas();
 	});
-	toolbar.onAction("redo", () => { /* same: see undo above */ });
+	toolbar.onAction("redo", () => {
+		const entry = state.popRedoEntry();
+		if (!entry) return;
+		shipStamp(applyHistorySide(state, entry, "after"));
+		renderToolbar();
+		refreshCanvas();
+	});
 	toolbar.onAction("copy", () => {
 		copySelection();
 		renderToolbar();
@@ -466,6 +473,7 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 			shipStamp(out);
 		}
 		isStroking = false;
+		finishStroke("paint");
 		strokeCtx = null;
 		rectStart = null;
 	};
@@ -484,6 +492,12 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 			const points = out.unlocked.map((t) => ({ layerId: t.layerId, x: t.x, y: t.y }));
 			placementWire.unlockTiles(points);
 		}
+	};
+
+	const finishStroke = (label: string): void => {
+		if (!strokeCtx || strokeCtx.seen.size === 0) return;
+		state.pushHistory(state.buildHistoryEntry(label, strokeCtx));
+		renderToolbar();
 	};
 
 	const applyStamp = (cell: Cell, mods: { shift?: boolean; alt?: boolean }): void => {
@@ -541,6 +555,9 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 			placed.push(tile);
 		}
 		shipStamp({ placed, erased: [], locked: [], unlocked: [] });
+		if (ctx.seen.size > 0) {
+			state.pushHistory(state.buildHistoryEntry("paste", ctx));
+		}
 	};
 
 	app.slots.canvasWrap.on("pointerdown", (e) => {
@@ -613,6 +630,19 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 		if (isText) return;
 		const k = e.key.toLowerCase();
 		const mod = e.ctrlKey || e.metaKey;
+		if (mod && k === "z") {
+			if (e.shiftKey) {
+				const entry = state.popRedoEntry();
+				if (entry) shipStamp(applyHistorySide(state, entry, "after"));
+			} else {
+				const entry = state.popUndoEntry();
+				if (entry) shipStamp(applyHistorySide(state, entry, "before"));
+			}
+			renderToolbar();
+			refreshCanvas();
+			e.preventDefault();
+			return;
+		}
 		if (!mod && k === "c") {
 			copySelection();
 			renderToolbar();
