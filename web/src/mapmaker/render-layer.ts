@@ -5,9 +5,9 @@
 // intentionally editor-specific: it paints top-left grid cells directly
 // while the workbench owns pan/zoom around the map surface.
 
-import { Container, Graphics, Sprite } from "pixi.js";
+import { Container, Graphics, Rectangle, Sprite, Texture } from "pixi.js";
 
-import { SUB_PER_PX, StaticAssetCatalog, TextureCache, type Renderable } from "@render";
+import { loadTextureAsset, SUB_PER_PX, StaticAssetCatalog, type Renderable } from "@render";
 
 const TILE_SIZE = 32;
 
@@ -16,14 +16,13 @@ export class MapmakerRenderableLayer extends Container {
 	private readonly spriteRoot = new Container();
 	private readonly fallbacks = new Map<number, Graphics>();
 	private readonly sprites = new Map<number, Sprite>();
-	private readonly textures: TextureCache;
+	private readonly textures = new Map<string, Promise<Texture | undefined>>();
 	private renderGeneration = 0;
 
 	constructor(private readonly catalog: StaticAssetCatalog, mapWidth: number, mapHeight: number) {
 		super();
 		void mapWidth;
 		void mapHeight;
-		this.textures = new TextureCache(catalog);
 		this.addChild(this.fallbackRoot);
 		this.addChild(this.spriteRoot);
 	}
@@ -63,7 +62,7 @@ export class MapmakerRenderableLayer extends Container {
 	}
 
 	private async upsertSprite(r: Renderable, generation: number): Promise<void> {
-		if (!this.catalog.urlFor(r.asset_id, r.variant_id ?? 0)) return;
+		if (!this.catalog.entryFor(r.asset_id)) return;
 		let sprite = this.sprites.get(r.id);
 		if (!sprite) {
 			sprite = new Sprite();
@@ -71,7 +70,7 @@ export class MapmakerRenderableLayer extends Container {
 			this.sprites.set(r.id, sprite);
 			this.spriteRoot.addChild(sprite);
 		}
-		const tex = await this.textures.frame(r.asset_id, r.anim_id, r.anim_frame, r.variant_id ?? 0);
+		const tex = await this.textureFor(r.asset_id);
 		if (generation !== this.renderGeneration || !this.fallbacks.has(r.id)) return;
 		if (!tex) {
 			this.spriteRoot.removeChild(sprite);
@@ -85,6 +84,28 @@ export class MapmakerRenderableLayer extends Container {
 		sprite.tint = r.tint && (r.tint >>> 8) !== 0 ? (r.tint >>> 8) & 0xffffff : 0xffffff;
 		positionSprite(sprite, r);
 		sprite.zIndex = r.layer;
+	}
+
+	private textureFor(assetID: number): Promise<Texture | undefined> {
+		const entry = this.catalog.entryFor(assetID);
+		if (!entry || !entry.url) return Promise.resolve(undefined);
+		const cols = Math.max(1, entry.atlasCols);
+		const ts = Math.max(1, entry.tileSize || TILE_SIZE);
+		const idx = Math.max(0, entry.atlasIndex);
+		const key = `${assetID}:${entry.url}:${idx}:${cols}:${ts}`;
+		let promise = this.textures.get(key);
+		if (!promise) {
+			promise = loadTextureAsset(entry.url).then((base) => {
+				if (!base || !base.source) return undefined;
+				base.source.scaleMode = "nearest";
+				return new Texture({
+					source: base.source,
+					frame: new Rectangle((idx % cols) * ts, Math.floor(idx / cols) * ts, ts, ts),
+				});
+			}).catch(() => undefined);
+			this.textures.set(key, promise);
+		}
+		return promise;
 	}
 
 	spriteCount(): number {

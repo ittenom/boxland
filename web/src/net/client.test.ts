@@ -242,6 +242,17 @@ describe("NetClient backoff", () => {
 // ---- Fatal close codes ----
 
 describe("NetClient fatal close codes", () => {
+	it("standard policy violation close goes fatal + does not reconnect", async () => {
+		const { client, sched, wsRef } = makeClient();
+		client.connect();
+		wsRef.current!.simulateOpen();
+		await Promise.resolve(); await Promise.resolve();
+
+		wsRef.current!.simulateClose(1008, "auth failed");
+		expect(client.getState()).toBe("fatal");
+		expect(sched.pending).toHaveLength(0);
+	});
+
 	it("close code 4xxx goes fatal + does not reconnect", async () => {
 		const { client, sched, wsRef } = makeClient();
 		client.connect();

@@ -288,9 +288,11 @@ export class NetClient {
 
 	private handleClose(code: number, reason: string): void {
 		this.ws = null;
-		// Codes 4000+ are app-level fatal (auth bad, realm violation).
-		// Treat anything >= 4000 as terminal.
-		if (code >= 4000 && code < 5000) {
+		// 1008 is the standard WebSocket policy-violation close code;
+		// the Boxland gateway uses it for failed auth handshakes. Codes
+		// 4000+ are app-level fatal (auth bad, realm violation). Treat
+		// both as terminal so one-shot designer tickets don't retry-spam.
+		if (code === 1008 || (code >= 4000 && code < 5000)) {
 			this.transition("fatal");
 			this.emitError(new Error(`net: fatal close ${code} ${reason}`));
 			return;

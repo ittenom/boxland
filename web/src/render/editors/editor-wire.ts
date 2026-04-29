@@ -33,6 +33,7 @@ import type { EditorKind } from "./types";
 export interface EditorWireOptions {
 	wsURL: string;
 	wsTicket: string;
+	ticketURL?: string;
 	clientVersion?: string;
 	onState?: (state: ConnState) => void;
 }
@@ -67,6 +68,7 @@ export class EditorWire {
 
 	static connect(opts: EditorWireOptions): Promise<EditorWire> {
 		const mailbox = new Mailbox();
+		let embeddedTicket = opts.wsTicket;
 		// We need the wire instance from inside the onRawFrame
 		// hook before construction completes. Use a forward
 		// reference + a tiny indirection.
@@ -74,12 +76,22 @@ export class EditorWire {
 
 		const net = new NetClient(opts.wsURL, {
 			mailbox,
-			auth: (): AuthParams => ({
-				realm: Realm.Designer,
-				token: opts.wsTicket,
-				clientKind: ClientKind.Web,
-				clientVersion: opts.clientVersion ?? "editor",
-			}),
+			auth: async (): Promise<AuthParams> => {
+				let token: string;
+				try {
+					token = await mintDesignerWSTicket(opts.ticketURL ?? "/design/ws-ticket");
+				} catch (err) {
+					if (!embeddedTicket) throw err;
+					token = embeddedTicket;
+					embeddedTicket = "";
+				}
+				return {
+					realm: Realm.Designer,
+					token,
+					clientKind: ClientKind.Web,
+					clientVersion: opts.clientVersion ?? "editor",
+				};
+			},
 			onRawFrame: (bytes: Uint8Array): boolean => {
 				if (!wire) return false;
 				return wire.handleFrame(bytes);
@@ -222,4 +234,23 @@ export class EditorWire {
 		void this.isJoined;
 		return true;
 	}
+}
+
+async function mintDesignerWSTicket(ticketURL: string): Promise<string> {
+	const headers: Record<string, string> = {};
+	const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") ?? "";
+	if (csrf) headers["X-CSRF-Token"] = csrf;
+	const res = await fetch(ticketURL, {
+		method: "POST",
+		credentials: "same-origin",
+		headers,
+	});
+	if (!res.ok) {
+		throw new Error(`mint designer ws ticket: ${res.status}`);
+	}
+	const body = await res.json() as { ticket?: unknown };
+	if (typeof body.ticket !== "string" || body.ticket === "") {
+		throw new Error("mint designer ws ticket: missing ticket");
+	}
+	return body.ticket;
 }

@@ -123,6 +123,13 @@ export class StaticAssetCatalog implements AssetCatalog {
 		return this.byID.size;
 	}
 
+	/** Return the raw static entry. Editor-only adapters use this when
+	 *  they need to mirror PaletteGrid's direct atlas slicing instead
+	 *  of going through the animation-oriented AssetCatalog.frame API. */
+	entryFor(asset_id: AssetId): StaticCatalogEntry | undefined {
+		return this.byID.get(asset_id);
+	}
+
 	/** Iterate every URL in the catalog. The caller can pass the
 	 *  result to `Promise.all(urls.map(loadTextureAsset))` to warm
 	 *  Pixi's texture cache before the first frame, so the editor

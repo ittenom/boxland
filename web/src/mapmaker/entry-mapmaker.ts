@@ -11,6 +11,7 @@
 // of the legacy REST one.
 
 import { Container, Graphics, Text } from "pixi.js";
+import * as flatbuffers from "flatbuffers";
 
 import {
 	EditorApp,
@@ -26,6 +27,9 @@ import {
 	type ToolbarAction,
 } from "@render";
 import { EditorKind } from "@proto/editor-kind.js";
+import { EditorDiffKind } from "@proto/editor-diff-kind.js";
+import { EditorMapTile } from "@proto/editor-map-tile.js";
+import { EditorMapTilePoint } from "@proto/editor-map-tile-point.js";
 
 import { MapmakerState, newStrokeCtx, type StrokeCtx } from "./state";
 import { WSMapmakerWire } from "./ws-wire";
@@ -169,6 +173,34 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 
 	// 5) Wire WS-backed wire.
 	const placementWire = new WSMapmakerWire(wire, boot.mapId);
+	wire.onDiff((diff) => {
+		const bytes = diffBodyBytes(diff);
+		switch (diff.kind()) {
+			case EditorDiffKind.TilePlaced:
+				if (!bytes) return;
+				state.upsertTile(mapTileFromEditorBytes(bytes));
+				return;
+			case EditorDiffKind.TileErased: {
+				if (!bytes) return;
+				const p = mapTilePointFromEditorBytes(bytes);
+				state.deleteTile(p.layerId, p.x, p.y);
+				return;
+			}
+			case EditorDiffKind.LockAdded:
+				if (!bytes) return;
+				state.upsertLock(mapTileFromEditorBytes(bytes));
+				return;
+			case EditorDiffKind.LockRemoved: {
+				if (!bytes) return;
+				const p = mapTilePointFromEditorBytes(bytes);
+				state.deleteLock(p.layerId, p.x, p.y);
+				return;
+			}
+			case EditorDiffKind.HistoryChanged:
+				renderToolbar();
+				return;
+		}
+	});
 
 	// Snapshot palette. The same records feed the left rail and
 	// texture lookup for the map surface.
@@ -586,6 +618,30 @@ function drawCursor(g: Graphics, cell: Cell | null, mapW: number, mapH: number):
 		.stroke({ color: 0xffd84a, width: 2, alignment: 1 });
 	g.rect(x + 5, y + 5, CELL_SIZE - 10, CELL_SIZE - 10)
 		.stroke({ color: 0x10131c, width: 1, alignment: 1 });
+}
+
+function diffBodyBytes(diff: import("@proto/editor-diff.js").EditorDiff): Uint8Array | null {
+	const len = diff.bodyLength();
+	if (len === 0) return null;
+	const out = new Uint8Array(len);
+	for (let i = 0; i < len; i++) out[i] = diff.body(i)!;
+	return out;
+}
+
+function mapTileFromEditorBytes(bytes: Uint8Array): MapTile {
+	const t = EditorMapTile.getRootAsEditorMapTile(new flatbuffers.ByteBuffer(bytes));
+	return tileFromWire({
+		layer_id: t.layerId(),
+		x: t.x(),
+		y: t.y(),
+		entity_type_id: Number(t.entityTypeId()),
+		rotation_degrees: t.rotationDegrees(),
+	});
+}
+
+function mapTilePointFromEditorBytes(bytes: Uint8Array): { layerId: number; x: number; y: number } {
+	const p = EditorMapTilePoint.getRootAsEditorMapTilePoint(new flatbuffers.ByteBuffer(bytes));
+	return { layerId: p.layerId(), x: p.x(), y: p.y() };
 }
 
 if (typeof document !== "undefined" && document.body?.dataset.surface === "mapmaker") {

@@ -4,6 +4,7 @@ export type { BoxlandAppOptions } from "./app";
 export { Scene } from "./scene";
 export type { SceneOptions } from "./scene";
 export { TextureCache } from "./textures";
+export { loadTextureAsset } from "./asset-texture";
 export { LightingLayer } from "./lighting";
 export type { LightingCell, LightingOptions } from "./lighting";
 export {

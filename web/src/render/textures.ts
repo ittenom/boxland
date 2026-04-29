@@ -56,7 +56,7 @@ export class TextureCache {
 		const def: AnimationFrame | undefined = this.catalog.frame(asset_id, anim_id, frame);
 		if (!def) return undefined;
 		if (!this.catalog.urlFor(asset_id, variant_id)) return undefined;
-		const key = `${asset_id}:${anim_id}:${frame}:${variant_id}`;
+		const key = `${asset_id}:${anim_id}:${def.frame}:${def.sx}:${def.sy}:${def.sw}:${def.sh}:${variant_id}`;
 		const cached = this.frames.get(key);
 		if (cached) return cached;
 
