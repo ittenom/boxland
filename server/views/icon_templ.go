@@ -155,7 +155,7 @@ func iconBackground(name string) string {
 	x := -col * iconCellPx
 	y := -row * iconCellPx
 	return fmt.Sprintf(
-		"display:inline-block;width:%dpx;height:%dpx;background:url('/static/icons/sprites.png') %dpx %dpx no-repeat;image-rendering:pixelated;",
+		"display:inline-block;width:%dpx;height:%dpx;background:url(/static/icons/sprites.png) %dpx %dpx no-repeat;image-rendering:pixelated;",
 		iconCellPx, iconCellPx, x, y,
 	)
 }

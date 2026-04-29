@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	flatbuffers "github.com/google/flatbuffers/go"
+
 	authdesigner "boxland/server/internal/auth/designer"
 	"boxland/server/internal/assets"
 	"boxland/server/internal/entities"
@@ -77,6 +79,9 @@ func TestBuildEditorSnapshot_LevelEditorBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildEditorSnapshot: %v", err)
 	}
+	if !proto.EditorSnapshotBufferHasIdentifier(bytes) {
+		t.Fatalf("snapshot missing %s file identifier", proto.EditorSnapshotIdentifier)
+	}
 	snap := proto.GetRootAsEditorSnapshot(bytes, 0)
 	if snap.Kind() != proto.EditorKindLevelEditor {
 		t.Errorf("kind: got %v want LevelEditor", snap.Kind())
@@ -135,6 +140,9 @@ func TestBuildEditorSnapshot_MapmakerBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildEditorSnapshot: %v", err)
 	}
+	if !proto.EditorSnapshotBufferHasIdentifier(bytes) {
+		t.Fatalf("snapshot missing %s file identifier", proto.EditorSnapshotIdentifier)
+	}
 	snap := proto.GetRootAsEditorSnapshot(bytes, 0)
 	if snap.Kind() != proto.EditorKindMapmaker {
 		t.Errorf("kind: got %v want Mapmaker", snap.Kind())
@@ -187,5 +195,23 @@ func TestBuildEditorSnapshot_EmptyTheme(t *testing.T) {
 	snap := proto.GetRootAsEditorSnapshot(bytes, 0)
 	if snap.ThemeLength() != 0 {
 		t.Errorf("theme: got %d, want 0 (no ClassUI types seeded)", snap.ThemeLength())
+	}
+}
+
+func TestEncodeEditorDiff_IncludesEditorFileIdentifier(t *testing.T) {
+	bytes, err := encodeEditorDiff(editor.Diff{
+		Kind:      editor.DiffHistoryChanged,
+		UndoDepth: 2,
+		RedoDepth: 1,
+	})
+	if err != nil {
+		t.Fatalf("encodeEditorDiff: %v", err)
+	}
+	if !flatbuffers.BufferHasIdentifier(bytes, proto.EditorSnapshotIdentifier) {
+		t.Fatalf("diff missing %s file identifier", proto.EditorSnapshotIdentifier)
+	}
+	diff := proto.GetRootAsEditorDiff(bytes, 0)
+	if diff.Kind() != proto.EditorDiffKindHistoryChanged {
+		t.Fatalf("kind: got %v want HistoryChanged", diff.Kind())
 	}
 }

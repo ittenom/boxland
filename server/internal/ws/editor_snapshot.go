@@ -108,7 +108,7 @@ func buildEditorSnapshot(
 	proto.EditorSnapshotAddUndoDepth(b, undoDepth)
 	proto.EditorSnapshotAddRedoDepth(b, redoDepth)
 	root := proto.EditorSnapshotEnd(b)
-	b.Finish(root)
+	proto.FinishEditorSnapshotBuffer(b, root)
 	return b.FinishedBytes(), nil
 }
 
@@ -372,7 +372,7 @@ func encodeEditorDiff(d editor.Diff) ([]byte, error) {
 	proto.EditorDiffAddUndoDepth(b, d.UndoDepth)
 	proto.EditorDiffAddRedoDepth(b, d.RedoDepth)
 	root := proto.EditorDiffEnd(b)
-	b.Finish(root)
+	b.FinishWithFileIdentifier(root, []byte(proto.EditorSnapshotIdentifier))
 	return b.FinishedBytes(), nil
 }
 

@@ -82,13 +82,17 @@ function readMeta(name: string): string {
 	return m?.getAttribute("content") ?? "";
 }
 
+function readHostOrMeta(host: HTMLElement, hostAttr: string, metaName: string): string {
+	return host.getAttribute(hostAttr) ?? readMeta(metaName);
+}
+
 export async function bootLevelEditor(
 	host: HTMLElement = document.querySelector("[data-bx-level-editor]") as HTMLElement,
 ): Promise<EditorApp | null> {
 	if (!host) return null;
 	const boot = readBoot(host);
-	const wsURL = readMeta("bx-ws-url");
-	const wsTicket = readMeta("bx-ws-ticket");
+	const wsURL = readHostOrMeta(host, "data-bx-ws-url", "bx-ws-url");
+	const wsTicket = readHostOrMeta(host, "data-bx-ws-ticket", "bx-ws-ticket");
 	if (!wsURL || !wsTicket) {
 		console.error("[level-editor] missing bx-ws-url or bx-ws-ticket meta");
 		return null;
