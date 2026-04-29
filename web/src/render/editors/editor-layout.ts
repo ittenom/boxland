@@ -98,7 +98,7 @@ export function buildEditorLayout(opts: BuildLayoutOptions): EditorSlots {
 		paddingBottom: 5,
 		gap: 8,
 	};
-	attachChromeBg(toolbar, opts.theme, Roles.FrameHorizontal, opts.width, toolbarH, PANEL_ALT, STROKE);
+	attachSolidBg(toolbar, opts.width, toolbarH, PANEL_ALT, STROKE);
 	root.addChild(toolbar);
 
 	// Body — fills remaining vertical space between toolbar and
@@ -168,7 +168,7 @@ export function buildEditorLayout(opts: BuildLayoutOptions): EditorSlots {
 		paddingRight: 10,
 		gap: 12,
 	};
-	attachChromeBg(statusbar, opts.theme, Roles.FrameHorizontal, opts.width, statusbarH, PANEL_ALT, STROKE);
+	attachSolidBg(statusbar, opts.width, statusbarH, PANEL_ALT, STROKE);
 	root.addChild(statusbar);
 
 	// Modal overlay layer — sits on top of everything else,

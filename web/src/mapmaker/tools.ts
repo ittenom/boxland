@@ -120,13 +120,21 @@ export function stampRect(
 ): StampResult {
 	const r = normalizeRect(from, to);
 	const merged: StampResult = { placed: [], erased: [], locked: [], unlocked: [] };
+	if (!state.activeLayer || !state.activeEntity) return merged;
 	for (let y = r.y0; y <= r.y1; y++) {
 		for (let x = r.x0; x <= r.x1; x++) {
-			const out = stamp(state, ctx, { x, y }, {});
-			merged.placed.push(...out.placed);
-			merged.erased.push(...out.erased);
-			merged.locked.push(...out.locked);
-			merged.unlocked.push(...out.unlocked);
+			const cell = { x, y };
+			if (!state.inBounds(cell)) continue;
+			state.capturePreImage(ctx, state.activeLayer, x, y);
+			const t: MapTile = {
+				layerId: state.activeLayer,
+				x,
+				y,
+				entityTypeId: state.activeEntity,
+				rotation: state.activeRotation,
+			};
+			state.upsertTile(t);
+			merged.placed.push(t);
 		}
 	}
 	return merged;

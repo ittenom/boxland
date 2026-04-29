@@ -45,6 +45,7 @@ import {
 	type MapTile,
 	type Tool,
 	type MapLayer,
+	normalizeRect,
 	tileFromWire,
 } from "./types";
 import { buildRenderables } from "./render-bridge";
@@ -55,6 +56,13 @@ const MAP_ORIGIN_X = 18;
 const MAP_ORIGIN_Y = 18;
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 4;
+
+interface ClipboardTile {
+	dx: number;
+	dy: number;
+	entityTypeId: number;
+	rotation: 0 | 90 | 180 | 270;
+}
 
 interface MapmakerBoot {
 	mapId: number;
@@ -253,6 +261,7 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 	//    calls per stroke end).
 	const toolbar = new Toolbar({ theme, slot: app.slots.toolbar });
 	const tools: Tool[] = ["brush", "rect", "fill", "eyedrop", "eraser", "lock"];
+	let clipboard: ClipboardTile[] = [];
 	const renderToolbar = (): void => {
 		toolbar.render([
 			...tools.map<ToolbarAction>((t) => ({
@@ -263,6 +272,8 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 				tooltip: `${t.charAt(0).toUpperCase() + t.slice(1)} - ${hotkeyForTool(t)}`,
 				active: state.tool === t,
 			})),
+			{ id: "copy", label: "Copy", hotkey: "C", icon: "⧉", tooltip: "Copy - C" },
+			{ id: "paste", label: "Paste", hotkey: "V", icon: "⎘", tooltip: "Paste - V", disabled: clipboard.length === 0 },
 			{ id: "undo", label: "Undo", hotkey: "Ctrl+Z", icon: "↶", tooltip: "Undo - Ctrl+Z", disabled: !state.canUndo() },
 			{ id: "redo", label: "Redo", hotkey: "Shift+Z", icon: "↷", tooltip: "Redo - Shift+Z", disabled: !state.canRedo() },
 		]);
@@ -278,6 +289,14 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 		// helpers (Phase 4 already added the opcode + handler).
 	});
 	toolbar.onAction("redo", () => { /* same: see undo above */ });
+	toolbar.onAction("copy", () => {
+		copySelection();
+		renderToolbar();
+	});
+	toolbar.onAction("paste", () => {
+		pasteClipboard();
+		renderToolbar();
+	});
 	renderToolbar();
 
 	// 6b) Left/right rails. These are intentionally simple, but
@@ -366,9 +385,15 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 	mapSurface.addChild(renderLayer);
 	const cursorOverlay = new Graphics();
 	mapSurface.addChild(cursorOverlay);
-	const renderCursor = (): void => drawCursor(cursorOverlay, state.cursorCell, state.mapWidth(), state.mapHeight());
-	state.subscribe(renderCursor);
-	renderCursor();
+	const renderOverlay = (): void => drawOverlay(cursorOverlay, {
+		cursor: state.cursorCell,
+		dragFrom: state.dragRectFrom,
+		dragTo: state.dragRectTo,
+		mapW: state.mapWidth(),
+		mapH: state.mapHeight(),
+	});
+	state.subscribe(renderOverlay);
+	renderOverlay();
 	refreshCanvas = (): void => {
 		const visibleLayers = new Set<number>();
 		for (const layer of state.allLayers()) {
@@ -418,21 +443,25 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 		// cell during the drag.
 		if (state.tool === "rect") {
 			rectStart = cell;
+			state.setDragRect(cell, cell);
 			return;
 		}
+		state.setDragRect(null, null);
 		applyStamp(cell, mods);
 	};
 	const continueStroke = (cell: Cell, mods: { shift?: boolean; alt?: boolean }): void => {
 		if (!isStroking) return;
-		// Rect previews on pointerup — no per-move work for now;
-		// future iteration: draw a marquee outline here.
-		if (state.tool === "rect") return;
+		if (state.tool === "rect") {
+			if (rectStart) state.setDragRect(rectStart, cell);
+			return;
+		}
 		applyStamp(cell, mods);
 	};
 	const endStroke = (cell: Cell | null): void => {
 		if (!isStroking) return;
 		// Commit the rect stroke as one batch.
 		if (state.tool === "rect" && rectStart && cell) {
+			state.setDragRect(rectStart, cell);
 			const out = stampRect(state, strokeCtx ?? newStrokeCtx(), rectStart, cell);
 			shipStamp(out);
 		}
@@ -469,6 +498,49 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 		// shipStamp call below is a no-op for it.
 		const out = stamp(state, strokeCtx, cell, mods);
 		shipStamp(out);
+	};
+
+	const copySelection = (): void => {
+		const layerId = state.activeLayer;
+		const anchor = state.cursorCell ?? { x: 0, y: 0 };
+		const rect = state.dragRectFrom && state.dragRectTo
+			? normalizeRect(state.dragRectFrom, state.dragRectTo)
+			: { x0: anchor.x, y0: anchor.y, x1: anchor.x, y1: anchor.y };
+		const out: ClipboardTile[] = [];
+		for (let y = rect.y0; y <= rect.y1; y++) {
+			for (let x = rect.x0; x <= rect.x1; x++) {
+				const tile = state.tileAt(layerId, x, y);
+				if (!tile) continue;
+				out.push({
+					dx: x - rect.x0,
+					dy: y - rect.y0,
+					entityTypeId: tile.entityTypeId,
+					rotation: tile.rotation,
+				});
+			}
+		}
+		clipboard = out;
+	};
+
+	const pasteClipboard = (): void => {
+		if (!clipboard.length || !state.cursorCell || !ensureLayerOptions(state.activeLayer).editable) return;
+		const ctx = newStrokeCtx();
+		const placed: MapTile[] = [];
+		for (const item of clipboard) {
+			const cell = { x: state.cursorCell.x + item.dx, y: state.cursorCell.y + item.dy };
+			if (!state.inBounds(cell)) continue;
+			state.capturePreImage(ctx, state.activeLayer, cell.x, cell.y);
+			const tile: MapTile = {
+				layerId: state.activeLayer,
+				x: cell.x,
+				y: cell.y,
+				entityTypeId: item.entityTypeId,
+				rotation: item.rotation,
+			};
+			state.upsertTile(tile);
+			placed.push(tile);
+		}
+		shipStamp({ placed, erased: [], locked: [], unlocked: [] });
 	};
 
 	app.slots.canvasWrap.on("pointerdown", (e) => {
@@ -519,6 +591,10 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 	});
 	app.pixi.pixi.canvas.addEventListener("wheel", (e) => {
 		if (!host.contains(e.target as Node)) return;
+		if (isOverUI(app.slots.sidebar, e.offsetX, e.offsetY) || isOverUI(app.slots.inspector, e.offsetX, e.offsetY)) {
+			e.preventDefault();
+			return;
+		}
 		const global = { x: e.offsetX, y: e.offsetY };
 		const before = mapSurface.toLocal(global);
 		const factor = e.deltaY < 0 ? 1.1 : 0.9;
@@ -537,6 +613,18 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 		if (isText) return;
 		const k = e.key.toLowerCase();
 		const mod = e.ctrlKey || e.metaKey;
+		if (!mod && k === "c") {
+			copySelection();
+			renderToolbar();
+			e.preventDefault();
+			return;
+		}
+		if (!mod && k === "v") {
+			pasteClipboard();
+			renderToolbar();
+			e.preventDefault();
+			return;
+		}
 		if (e.code === "Space") {
 			spaceDown = true;
 			app.slots.canvasWrap.cursor = "grab";
@@ -733,9 +821,27 @@ function drawMapGrid(g: Graphics, mapW: number, mapH: number): void {
 	g.rect(0, 0, w, h).stroke({ color: 0xffd84a, width: 2, alignment: 1 });
 }
 
-function drawCursor(g: Graphics, cell: Cell | null, mapW: number, mapH: number): void {
+function drawOverlay(g: Graphics, opts: {
+	cursor: Cell | null;
+	dragFrom: Cell | null;
+	dragTo: Cell | null;
+	mapW: number;
+	mapH: number;
+}): void {
 	g.clear();
-	if (!cell || cell.x < 0 || cell.y < 0 || cell.x >= mapW || cell.y >= mapH) return;
+	if (opts.dragFrom && opts.dragTo) {
+		const r = normalizeRect(opts.dragFrom, opts.dragTo);
+		const x = r.x0 * CELL_SIZE;
+		const y = r.y0 * CELL_SIZE;
+		const w = (r.x1 - r.x0 + 1) * CELL_SIZE;
+		const h = (r.y1 - r.y0 + 1) * CELL_SIZE;
+		g.rect(x, y, w, h)
+			.fill({ color: 0xffd84a, alpha: 0.09 })
+			.rect(x, y, w, h)
+			.stroke({ color: 0xffd84a, width: 2, alignment: 1 });
+	}
+	const cell = opts.cursor;
+	if (!cell || cell.x < 0 || cell.y < 0 || cell.x >= opts.mapW || cell.y >= opts.mapH) return;
 	const x = cell.x * CELL_SIZE;
 	const y = cell.y * CELL_SIZE;
 	g.rect(x, y, CELL_SIZE, CELL_SIZE)
@@ -744,6 +850,11 @@ function drawCursor(g: Graphics, cell: Cell | null, mapW: number, mapH: number):
 		.stroke({ color: 0xffd84a, width: 2, alignment: 1 });
 	g.rect(x + 5, y + 5, CELL_SIZE - 10, CELL_SIZE - 10)
 		.stroke({ color: 0x10131c, width: 1, alignment: 1 });
+}
+
+function isOverUI(container: Container, x: number, y: number): boolean {
+	const b = container.getBounds();
+	return x >= b.x && y >= b.y && x <= b.x + b.width && y <= b.y + b.height;
 }
 
 function diffBodyBytes(diff: import("@proto/editor-diff.js").EditorDiff): Uint8Array | null {

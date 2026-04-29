@@ -130,8 +130,9 @@ export class PaletteGrid extends Container {
 			this.drag = null;
 			this.scrollHandle.cursor = "grab";
 		});
-		this.on("wheel", (ev: { deltaY?: number; preventDefault?: () => void }) => {
+		this.on("wheel", (ev: { deltaY?: number; preventDefault?: () => void; stopPropagation?: () => void }) => {
 			this.setScroll(this.scrollY + (ev.deltaY ?? 0));
+			ev.stopPropagation?.();
 			ev.preventDefault?.();
 		});
 	}
