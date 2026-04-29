@@ -80,6 +80,12 @@ export class EditorApp {
 			worldViewH: h,
 			catalog: new StaticAssetCatalog({ entries: [] }),
 			background: opts.background ?? 0x10131c,
+			// Editor chrome is built with `@pixi/layout`. Without
+			// `autoUpdate: true`, the layout system never hooks
+			// `prerender`, the flex tree never resolves, and every
+			// chrome panel collapses to (0,0). throttle: 16 keeps
+			// it pinned to ~60Hz which matches our render rate.
+			layout: { autoUpdate: true, throttle: 16 },
 		});
 
 		const slots = buildEditorLayout({

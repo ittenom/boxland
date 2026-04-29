@@ -91,14 +91,19 @@ export function buildEditorLayout(opts: BuildLayoutOptions): EditorSlots {
 		paddingRight: 8,
 		gap: 6,
 	};
-	toolbar.addChildAt(makePanelBg(opts.theme, "frame_lite", opts.width, toolbarH), 0);
+	attachPanelBg(toolbar, opts.theme, "frame_lite", opts.width, toolbarH);
 	root.addChild(toolbar);
 
-	// Body — flex 1 row with three children.
+	// Body — fills remaining vertical space between toolbar and
+	// statusbar via flexGrow: 1. The `flex` shorthand is undocumented
+	// in @pixi/layout v3 (only flexGrow/flexShrink/flexBasis are
+	// listed in the styles guide); we use the explicit forms.
 	const body = new Container();
 	body.layout = {
 		width: "100%",
-		flex: 1,
+		flexGrow: 1,
+		flexShrink: 1,
+		flexBasis: 0,
 		flexDirection: "row",
 		minHeight: 0, // critical: lets the body shrink to its share
 	};
@@ -112,12 +117,14 @@ export function buildEditorLayout(opts: BuildLayoutOptions): EditorSlots {
 		padding: 8,
 		gap: 6,
 	};
-	sidebar.addChildAt(makePanelBg(opts.theme, "frame_standard", sidebarW, 100), 0);
+	attachPanelBg(sidebar, opts.theme, "frame_standard", sidebarW, opts.height);
 	body.addChild(sidebar);
 
 	const canvasWrap = new Container();
 	canvasWrap.layout = {
-		flex: 1,
+		flexGrow: 1,
+		flexShrink: 1,
+		flexBasis: 0,
 		height: "100%",
 		minWidth: 0,
 		minHeight: 0,
@@ -133,7 +140,7 @@ export function buildEditorLayout(opts: BuildLayoutOptions): EditorSlots {
 		padding: 8,
 		gap: 6,
 	};
-	inspector.addChildAt(makePanelBg(opts.theme, "frame_standard", inspectorW, 100), 0);
+	attachPanelBg(inspector, opts.theme, "frame_standard", inspectorW, opts.height);
 	body.addChild(inspector);
 
 	root.addChild(body);
@@ -150,7 +157,7 @@ export function buildEditorLayout(opts: BuildLayoutOptions): EditorSlots {
 		paddingRight: 8,
 		gap: 12,
 	};
-	statusbar.addChildAt(makePanelBg(opts.theme, "frame_lite", opts.width, statusbarH), 0);
+	attachPanelBg(statusbar, opts.theme, "frame_lite", opts.width, statusbarH);
 	root.addChild(statusbar);
 
 	// Modal overlay layer — sits on top of everything else,
@@ -206,8 +213,25 @@ export function resizeEditorLayout(slots: EditorSlots, width: number, height: nu
 
 // ---- helpers ----
 
-function makePanelBg(theme: Theme, role: string, w: number, h: number): NineSlice {
-	return new NineSlice({ theme, role, width: w, height: h, fallbackColor: 0x1a2030 });
+/** attachPanelBg adds a NineSlice background as the parent's first
+ *  child (so it draws behind every other child) and wires the
+ *  parent's `'layout'` event so the bg auto-resizes whenever Yoga
+ *  recomputes the parent's box. This is the documented pattern for
+ *  intrinsic-sized art tracking a flex container's resolved box —
+ *  see https://layout.pixijs.io/docs/guides/core/layout/. */
+function attachPanelBg(parent: Container, theme: Theme, role: string, seedW: number, seedH: number): NineSlice {
+	const bg = new NineSlice({ theme, role, width: seedW, height: seedH, fallbackColor: 0x1a2030 });
+	parent.addChildAt(bg, 0);
+	// `event.computedLayout` carries the resolved box. The bg sits
+	// at the parent's content origin (the parent's own padding
+	// already inset the content area for siblings), so we draw the
+	// bg at (0,0) covering the full padded box.
+	parent.on("layout", (event: { computedLayout: { width: number; height: number } }) => {
+		const w = Math.max(1, Math.floor(event.computedLayout.width));
+		const h = Math.max(1, Math.floor(event.computedLayout.height));
+		bg.resize(w, h);
+	});
+	return bg;
 }
 
 function resizeBg(parent: Container, w: number, h: number): void {

@@ -28,6 +28,26 @@ export interface BoxlandAppOptions extends SceneOptions {
 	background?: number;
 	/** Asset catalog used for texture lookups. */
 	catalog: AssetCatalog;
+	/**
+	 * `@pixi/layout` system options forwarded to `Application.init`.
+	 * Per the LayoutSystem docs, when `autoUpdate` is true the layout
+	 * system hooks into `prerender` and recomputes flexbox every frame
+	 * — without this, `.layout = {...}` on Containers is dead-lettered.
+	 *
+	 * Surfaces that use the editor harness (Mapmaker, Level Editor)
+	 * MUST pass `{ autoUpdate: true }` here. Surfaces that don't use
+	 * `.layout` at all (game / sandbox) can leave it undefined.
+	 *
+	 * Shape mirrors `LayoutSystemOptions` from `@pixi/layout`:
+	 *   - `autoUpdate`: hook the layout pass into `prerender`
+	 *   - `enableDebug`: overlay padding/border/flex/content rects
+	 *   - `throttle`: ms between layout passes (default: every frame)
+	 */
+	layout?: {
+		autoUpdate?: boolean;
+		enableDebug?: boolean;
+		throttle?: number;
+	};
 }
 
 export class BoxlandApp {
@@ -73,14 +93,22 @@ export class BoxlandApp {
 	 */
 	static async create(opts: BoxlandAppOptions): Promise<BoxlandApp> {
 		const pixi = new Application();
-		await pixi.init({
+		// `@pixi/layout` registers itself as a renderer system; pass
+		// its options here so `prerender` actually runs the flex pass.
+		// Without this the editor chrome's flex tree never resolves
+		// and the whole UI renders at (0,0) with zero size.
+		const initOpts: Parameters<Application["init"]>[0] = {
 			resizeTo: opts.host,
 			background: opts.background ?? 0x1a1733,
 			antialias: false,
 			roundPixels: true,
 			autoDensity: true,
 			resolution: window.devicePixelRatio || 1,
-		});
+		};
+		if (opts.layout) {
+			(initOpts as { layout?: typeof opts.layout }).layout = opts.layout;
+		}
+		await pixi.init(initOpts);
 		// Force nearest neighbor on every texture this Pixi app generates.
 		// Sources also set scaleMode in TextureCache; this is the belt to
 		// that suspenders.
