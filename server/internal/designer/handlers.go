@@ -1638,7 +1638,7 @@ func templHTMLEscape(s string) string {
 }
 
 // postAssetDraft persists an AssetDraft into the drafts table. The publish
-// pipeline applies it later via "Push to Live". For now we return a small
+// pipeline applies it later from the draft review modal. For now we return a small
 // toast confirming the save.
 func postAssetDraft(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -1696,7 +1696,7 @@ func postAssetDraft(d Deps) http.HandlerFunc {
 }
 
 // writeDraftSavedToast emits the canonical "draft saved" toast. The
-// markup is verbose (it nudges users toward Push to Live) but tagged
+// markup is verbose (it nudges users toward draft review) but tagged
 // `data-bx-draft-toast` so boot.js can shrink it to a quiet "Draft
 // saved" once the user has seen the verbose version once. The chrome's
 // running draft-count pill is the persistent surface for that
@@ -1707,7 +1707,7 @@ func writeDraftSavedToast(w http.ResponseWriter, kind string) {
 		`<div class="bx-toast bx-toast--success" data-bx-draft-toast data-copy-slot="` + kind + `.draft.saved">` +
 			`<span data-bx-draft-toast-verbose>` +
 			draftToastVerboseFor(kind) +
-			` <a href="#" hx-get="/design/publish/preview" hx-target="#publish-modal-host" hx-swap="innerHTML" style="text-decoration: underline;">Push to Live</a> ` +
+			` <a href="#" hx-get="/design/publish/preview" hx-target="#publish-modal-host" hx-swap="innerHTML" style="text-decoration: underline;">Review Drafts</a> ` +
 			draftToastTailFor(kind) +
 			`</span>` +
 			`<span data-bx-draft-toast-short hidden>Draft saved.</span>` +
@@ -2975,8 +2975,8 @@ func getMapmakerPage(d Deps) http.HandlerFunc {
 			}
 		}
 		// Count entity_type drafts so the palette can warn the designer
-		// that pending sprite/collider edits aren't visible until they
-		// Push to Live. Failure degrades quietly.
+		// that pending sprite/collider edits are waiting for draft
+		// review. Failure degrades quietly.
 		var entityDrafts int
 		_ = d.Maps.Pool.QueryRow(r.Context(),
 			`SELECT COUNT(*) FROM drafts WHERE artifact_kind = 'entity_type'`,
@@ -2991,6 +2991,20 @@ func getMapmakerPage(d Deps) http.HandlerFunc {
 				slog.Warn("locked cell count", "err", lerr, "map_id", m.ID)
 			} else {
 				lockedCount = n
+			}
+		}
+		levelEditorHref := "/design/levels"
+		if d.Levels != nil {
+			lvs, lerr := d.Levels.List(r.Context(), levels.ListOpts{Limit: 1024})
+			if lerr != nil {
+				slog.Warn("mapmaker level lookup", "err", lerr, "map_id", m.ID)
+			} else {
+				for _, lv := range lvs {
+					if lv.MapID == m.ID {
+						levelEditorHref = fmt.Sprintf("/design/levels/%d", lv.ID)
+						break
+					}
+				}
 			}
 		}
 
@@ -3021,6 +3035,7 @@ func getMapmakerPage(d Deps) http.HandlerFunc {
 			Layout:             layout,
 			Map:                *m,
 			Layers:             layers,
+			LevelEditorHref:    levelEditorHref,
 			PaletteEntityTypes: palette,
 			PaletteFolders:     paletteFolders,
 			EntityDraftCount:   entityDrafts,
@@ -3107,8 +3122,8 @@ func postMapPreview(d Deps) http.HandlerFunc {
 		}
 
 		res, err := d.Maps.GenerateProceduralPreview(r.Context(), mapsservice.ProceduralPreviewInput{
-			MapID:             m.ID,
-			Width:             width,
+			MapID:      m.ID,
+			Width:      width,
 			Height:     height,
 			Seed:       req.Seed,
 			Anchors:    anchors,
@@ -3300,7 +3315,7 @@ func postMapLocks(d Deps) http.HandlerFunc {
 }
 
 type deleteLocksRequest struct {
-	LayerID int64    `json:"layer_id"`
+	LayerID int64      `json:"layer_id"`
 	Points  [][2]int32 `json:"points"`
 	// All=true wipes every lock on the map (or layer when LayerID is set).
 	All bool `json:"all,omitempty"`
@@ -3438,7 +3453,7 @@ func deleteMapSamplePatch(d Deps) http.HandlerFunc {
 
 // constraintsResponse mirrors mapsservice.MapConstraint on the wire.
 type constraintsResponse struct {
-	MapID int64                  `json:"map_id"`
+	MapID int64                       `json:"map_id"`
 	Items []mapsservice.MapConstraint `json:"items"`
 }
 
@@ -3630,7 +3645,7 @@ func getMapSettingsModal(d Deps) http.HandlerFunc {
 }
 
 // postMapDraft persists a MapDraft into the drafts table. Mirrors
-// postEntityDraft / postAssetDraft. The publish pipeline (Push to Live)
+// postEntityDraft / postAssetDraft. The publish pipeline
 // applies it later via the existing maps.Handler in artifact.go, which
 // handles the public, instancing, persistence, spectator, and seed
 // columns. Tile placements are NOT routed through here; they go to the

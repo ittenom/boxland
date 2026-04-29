@@ -503,14 +503,14 @@ func LevelEditorPage(p LevelEditorProps) templ.Component {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 41, "</div><div class=\"bx-row\" style=\"gap: var(--bx-s2);\"><a href=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 41, "</div><div class=\"bx-row\" style=\"gap: var(--bx-s2);\"><button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" hx-get=\"/design/entities/new\" hx-target=\"#modal-host\" hx-swap=\"innerHTML\" title=\"Create an entity type, then assign its sprite and components\">+ Entity Type</button> <a href=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var20 templ.SafeURL
 			templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinURLErrs(templ.URL(fmt.Sprintf("/design/levels/%d/export", p.Level.ID)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/levels.templ`, Line: 234, Col: 75}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/levels.templ`, Line: 242, Col: 75}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 			if templ_7745c5c3_Err != nil {
@@ -531,13 +531,13 @@ func LevelEditorPage(p LevelEditorProps) templ.Component {
 			var templ_7745c5c3_Var21 templ.SafeURL
 			templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinURLErrs(templ.URL(fmt.Sprintf("/design/sandbox/launch/%d", p.Level.ID)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/levels.templ`, Line: 245, Col: 76}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/levels.templ`, Line: 253, Col: 76}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 44, "\" class=\"bx-btn bx-btn--primary bx-btn--small\">Sandbox →</a></div></header><div class=\"bx-level-editor__pane\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 44, "\" class=\"bx-btn bx-btn--primary bx-btn--small\" title=\"Run this configured level in the Sandbox\">Open in Sandbox</a></div></header><div class=\"bx-level-editor__pane\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -545,7 +545,7 @@ func LevelEditorPage(p LevelEditorProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 45, "</div></section>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 45, "</div></section><div id=\"modal-host\"></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -595,7 +595,7 @@ func levelEntitiesTab(p LevelEditorProps) templ.Component {
 			var templ_7745c5c3_Var23 string
 			templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d non-tile entity placement%s on this level.", p.PlacementCount, pluralS(p.PlacementCount)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/levels.templ`, Line: 268, Col: 111}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/levels.templ`, Line: 278, Col: 111}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 			if templ_7745c5c3_Err != nil {

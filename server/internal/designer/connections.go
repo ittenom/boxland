@@ -242,11 +242,11 @@ func ConnectionsForEntity(ctx context.Context, d Deps, entityID int64) (*views.R
 		})
 	}
 	rail.Suggestions = append(rail.Suggestions, views.RailCTA{
-		Label: "▶ Test on a map", Href: "/design/maps",
+		Label: "Configure in a level", Href: "/design/levels",
 	})
 	if len(rail.UsedBy) == 0 {
 		rail.Suggestions = append(rail.Suggestions, views.RailCTA{
-			Label: "+ Place on a map", Href: "/design/maps",
+			Label: "+ Place in a level", Href: "/design/levels",
 		})
 	}
 	return rail, nil

@@ -21,6 +21,9 @@ type MapmakerProps struct {
 	Layout LayoutProps
 	Map    maps.Map
 	Layers []maps.Layer
+	// LevelEditorHref is the next-step workflow link from a static map
+	// into a level configuration workspace. Empty falls back to /design/levels.
+	LevelEditorHref string
 	// PaletteEntityTypes is the flat palette list. The view groups it
 	// by folder via PaletteFolders + an entity → folder map below.
 	PaletteEntityTypes []PaletteEntry
@@ -33,7 +36,7 @@ type MapmakerProps struct {
 	// EntityDraftCount surfaces how many entity_type drafts exist in
 	// the project. The palette reads the LIVE entity_types table, so
 	// pending sprite assignments / collider tweaks won't appear until
-	// the designer hits Push to Live. The chip in the palette panel
+	// the designer applies staged changes. The chip in the palette panel
 	// makes that gap visible.
 	EntityDraftCount int
 
@@ -111,7 +114,7 @@ func MapmakerPage(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var3 string
 			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(p.Map.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 74, Col: 57}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 77, Col: 57}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 			if templ_7745c5c3_Err != nil {
@@ -124,7 +127,7 @@ func MapmakerPage(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var4 string
 			templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d × %d · %s", p.Map.Width, p.Map.Height, p.Map.Mode))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 76, Col: 76}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 79, Col: 76}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 			if templ_7745c5c3_Err != nil {
@@ -137,7 +140,7 @@ func MapmakerPage(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var5 string
 			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("/design/maps/%d/settings", p.Map.ID))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 90, Col: 64}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 93, Col: 64}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 			if templ_7745c5c3_Err != nil {
@@ -150,7 +153,7 @@ func MapmakerPage(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var6 templ.SafeURL
 			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinURLErrs(templ.URL(fmt.Sprintf("/design/maps/%d/export", p.Map.ID)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 97, Col: 71}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 100, Col: 71}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 			if templ_7745c5c3_Err != nil {
@@ -169,22 +172,22 @@ func MapmakerPage(p MapmakerProps) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var7 templ.SafeURL
-			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinURLErrs(templ.URL(fmt.Sprintf("/design/sandbox/launch/%d", p.Map.ID)))
+			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinURLErrs(templ.URL(mapmakerLevelEditorHref(p)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 109, Col: 74}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 112, Col: 50}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "\" class=\"bx-btn bx-btn--primary bx-btn--small\" title=\"Launch this map in Sandbox\" data-copy-slot=\"mapmaker.test\">▶ Test in Sandbox</a> <button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" data-bx-action=\"mapmaker-zoom-out\" data-copy-slot=\"mapmaker.zoomout\">−</button> <button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" data-bx-action=\"mapmaker-zoom-in\" data-copy-slot=\"mapmaker.zoomin\">+</button></div></header><main class=\"bx-pixi-editor-host\" data-bx-mapmaker-host data-map-id=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "\" class=\"bx-btn bx-btn--primary bx-btn--small\" title=\"Configure entities, automations, HUD, and level settings for this map\" data-copy-slot=\"mapmaker.openLevel\">Open in Level Editor</a> <button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" data-bx-action=\"mapmaker-zoom-out\" data-copy-slot=\"mapmaker.zoomout\">−</button> <button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" data-bx-action=\"mapmaker-zoom-in\" data-copy-slot=\"mapmaker.zoomin\">+</button></div></header><main class=\"bx-pixi-editor-host\" data-bx-mapmaker-host data-map-id=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var8 string
 			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", p.Map.ID))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 122, Col: 45}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 125, Col: 45}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 			if templ_7745c5c3_Err != nil {
@@ -197,7 +200,7 @@ func MapmakerPage(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var9 string
 			templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", p.Map.Width))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 123, Col: 47}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 126, Col: 47}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 			if templ_7745c5c3_Err != nil {
@@ -210,7 +213,7 @@ func MapmakerPage(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var10 string
 			templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", p.Map.Height))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 124, Col: 48}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 127, Col: 48}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 			if templ_7745c5c3_Err != nil {
@@ -223,7 +226,7 @@ func MapmakerPage(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var11 string
 			templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", defaultLayerID(p.Layers)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 125, Col: 71}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 128, Col: 71}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 			if templ_7745c5c3_Err != nil {
@@ -236,7 +239,7 @@ func MapmakerPage(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var12 string
 			templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(p.WSURL)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 126, Col: 28}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 129, Col: 28}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 			if templ_7745c5c3_Err != nil {
@@ -249,7 +252,7 @@ func MapmakerPage(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var13 string
 			templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(p.WSTicket)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 127, Col: 34}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 130, Col: 34}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 			if templ_7745c5c3_Err != nil {
@@ -267,6 +270,13 @@ func MapmakerPage(p MapmakerProps) templ.Component {
 		}
 		return nil
 	})
+}
+
+func mapmakerLevelEditorHref(p MapmakerProps) string {
+	if p.LevelEditorHref != "" {
+		return p.LevelEditorHref
+	}
+	return "/design/levels"
 }
 
 // defaultLayerID returns the first layer's id, or 0 if the map has no
@@ -324,7 +334,7 @@ func LayerYSortChip(l maps.Layer) templ.Component {
 		var templ_7745c5c3_Var16 string
 		templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("layer-ysort-%d", l.ID))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 168, Col: 42}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 178, Col: 42}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 		if templ_7745c5c3_Err != nil {
@@ -337,7 +347,7 @@ func LayerYSortChip(l maps.Layer) templ.Component {
 		var templ_7745c5c3_Var17 string
 		templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(templ.CSSClasses(templ_7745c5c3_Var15).String())
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 1, Col: 0}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 1, Col: 0}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 		if templ_7745c5c3_Err != nil {
@@ -350,7 +360,7 @@ func LayerYSortChip(l maps.Layer) templ.Component {
 		var templ_7745c5c3_Var18 string
 		templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("/design/maps/%d/layers/%d/y-sort?on=%t", l.MapID, l.ID, !l.YSortEntities))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 170, Col: 98}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 180, Col: 98}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 		if templ_7745c5c3_Err != nil {
@@ -363,7 +373,7 @@ func LayerYSortChip(l maps.Layer) templ.Component {
 		var templ_7745c5c3_Var19 string
 		templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(ysortChipTitle(l.YSortEntities))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 173, Col: 41}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 183, Col: 41}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 		if templ_7745c5c3_Err != nil {
@@ -376,7 +386,7 @@ func LayerYSortChip(l maps.Layer) templ.Component {
 		var templ_7745c5c3_Var20 string
 		templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(ysortAttr(l.YSortEntities))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 174, Col: 43}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 184, Col: 43}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 		if templ_7745c5c3_Err != nil {
@@ -483,7 +493,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var22 string
 			templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", l.ID))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 240, Col: 47}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 250, Col: 47}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 			if templ_7745c5c3_Err != nil {
@@ -496,7 +506,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var23 string
 			templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(l.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 241, Col: 32}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 251, Col: 32}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 			if templ_7745c5c3_Err != nil {
@@ -509,7 +519,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var24 string
 			templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(l.Kind)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 242, Col: 32}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 252, Col: 32}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
 			if templ_7745c5c3_Err != nil {
@@ -522,7 +532,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var25 string
 			templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(ysortAttr(l.YSortEntities))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 243, Col: 54}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 253, Col: 54}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 			if templ_7745c5c3_Err != nil {
@@ -550,7 +560,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var26 string
 			templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(l.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 245, Col: 19}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 255, Col: 19}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
 			if templ_7745c5c3_Err != nil {
@@ -563,7 +573,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var27 string
 			templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(l.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 247, Col: 19}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 257, Col: 19}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 			if templ_7745c5c3_Err != nil {
@@ -576,7 +586,7 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 			var templ_7745c5c3_Var28 string
 			templ_7745c5c3_Var28, templ_7745c5c3_Err = templ.JoinStringErrs(l.Kind)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 248, Col: 36}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 258, Col: 36}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var28))
 			if templ_7745c5c3_Err != nil {
@@ -602,20 +612,20 @@ func MapmakerToolbar(p MapmakerProps) templ.Component {
 			return templ_7745c5c3_Err
 		}
 		if p.EntityDraftCount > 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 36, "<button type=\"button\" class=\"bx-toast bx-toast--warn bx-small\" style=\"width: 100%; text-align: left; cursor: pointer; padding: var(--bx-s1) var(--bx-s2);\" hx-get=\"/design/publish/preview\" hx-target=\"#publish-modal-host\" hx-swap=\"innerHTML\" title=\"Open Push to Live to apply your staged entity changes\" data-copy-slot=\"mapmaker.palette.staged\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 36, "<button type=\"button\" class=\"bx-toast bx-toast--warn bx-small\" style=\"width: 100%; text-align: left; cursor: pointer; padding: var(--bx-s1) var(--bx-s2);\" hx-get=\"/design/publish/preview\" hx-target=\"#publish-modal-host\" hx-swap=\"innerHTML\" title=\"Review staged entity changes before applying them\" data-copy-slot=\"mapmaker.palette.staged\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var29 string
 			templ_7745c5c3_Var29, templ_7745c5c3_Err = templ.JoinStringErrs(stagedChipLabel(p.EntityDraftCount))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 270, Col: 41}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 280, Col: 41}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var29))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 37, " — push to apply</button>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 37, " - review staged changes</button>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -697,7 +707,7 @@ func MapmakerProceduralPanel(p MapmakerProps) templ.Component {
 		var templ_7745c5c3_Var31 string
 		templ_7745c5c3_Var31, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", p.Map.ID))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 348, Col: 43}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 358, Col: 43}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var31))
 		if templ_7745c5c3_Err != nil {
@@ -710,7 +720,7 @@ func MapmakerProceduralPanel(p MapmakerProps) templ.Component {
 		var templ_7745c5c3_Var32 string
 		templ_7745c5c3_Var32, templ_7745c5c3_Err = templ.JoinStringErrs(defaultTileLayerIDAttr(p))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 349, Col: 54}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 359, Col: 54}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var32))
 		if templ_7745c5c3_Err != nil {
@@ -723,7 +733,7 @@ func MapmakerProceduralPanel(p MapmakerProps) templ.Component {
 		var templ_7745c5c3_Var33 string
 		templ_7745c5c3_Var33, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", proceduralInitialSeed(p.Map)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 364, Col: 60}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 374, Col: 60}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var33))
 		if templ_7745c5c3_Err != nil {
@@ -736,7 +746,7 @@ func MapmakerProceduralPanel(p MapmakerProps) templ.Component {
 		var templ_7745c5c3_Var34 string
 		templ_7745c5c3_Var34, templ_7745c5c3_Err = templ.JoinStringErrs(lockedCountLabel(p.LockedCellCount))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 430, Col: 42}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 440, Col: 42}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var34))
 		if templ_7745c5c3_Err != nil {
@@ -910,7 +920,7 @@ func toolButton(id, hotkey, label string) templ.Component {
 		var templ_7745c5c3_Var36 string
 		templ_7745c5c3_Var36, templ_7745c5c3_Err = templ.JoinStringErrs(id)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 575, Col: 19}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 585, Col: 19}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var36))
 		if templ_7745c5c3_Err != nil {
@@ -923,7 +933,7 @@ func toolButton(id, hotkey, label string) templ.Component {
 		var templ_7745c5c3_Var37 string
 		templ_7745c5c3_Var37, templ_7745c5c3_Err = templ.JoinStringErrs(label + " (" + hotkey + ")")
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 576, Col: 37}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 586, Col: 37}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var37))
 		if templ_7745c5c3_Err != nil {
@@ -936,7 +946,7 @@ func toolButton(id, hotkey, label string) templ.Component {
 		var templ_7745c5c3_Var38 string
 		templ_7745c5c3_Var38, templ_7745c5c3_Err = templ.JoinStringErrs(label)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 578, Col: 9}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 588, Col: 9}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var38))
 		if templ_7745c5c3_Err != nil {
@@ -949,7 +959,7 @@ func toolButton(id, hotkey, label string) templ.Component {
 		var templ_7745c5c3_Var39 string
 		templ_7745c5c3_Var39, templ_7745c5c3_Err = templ.JoinStringErrs(hotkey)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mapmaker.templ`, Line: 579, Col: 67}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/mapmaker.templ`, Line: 589, Col: 67}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var39))
 		if templ_7745c5c3_Err != nil {
@@ -994,7 +1004,7 @@ func MapSettingsModal(p MapSettingsProps) templ.Component {
 			templ_7745c5c3_Var40 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 54, "<div class=\"bx-modal-backdrop\" data-bx-dismissible role=\"dialog\" aria-modal=\"true\"><div class=\"bx-modal\" style=\"width: min(560px, 95vw);\"><header class=\"bx-modal__header\"><div class=\"bx-row\" style=\"gap: var(--bx-s2);\"><span class=\"bx-dot bx-dot--map\"></span><h2 style=\"margin:0;\" data-copy-slot=\"mapmaker.settings.title\">Map settings</h2></div><button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" hx-on:click=\"this.closest('.bx-modal-backdrop').remove()\" aria-label=\"Close\">Esc</button></header><div class=\"bx-modal__body bx-stack\"><p class=\"bx-small bx-muted\" data-copy-slot=\"mapmaker.settings.lede\">Changes save as a draft. Push to Live to apply them. Tile placements save instantly and don't go through this form.</p>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 54, "<div class=\"bx-modal-backdrop\" data-bx-dismissible role=\"dialog\" aria-modal=\"true\"><div class=\"bx-modal\" style=\"width: min(560px, 95vw);\"><header class=\"bx-modal__header\"><div class=\"bx-row\" style=\"gap: var(--bx-s2);\"><span class=\"bx-dot bx-dot--map\"></span><h2 style=\"margin:0;\" data-copy-slot=\"mapmaker.settings.title\">Map settings</h2></div><button type=\"button\" class=\"bx-btn bx-btn--ghost bx-btn--small\" hx-on:click=\"this.closest('.bx-modal-backdrop').remove()\" aria-label=\"Close\">Esc</button></header><div class=\"bx-modal__body bx-stack\"><p class=\"bx-small bx-muted\" data-copy-slot=\"mapmaker.settings.lede\">Changes save as a draft. Review staged changes to apply them. Tile placements save instantly and don't go through this form.</p>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

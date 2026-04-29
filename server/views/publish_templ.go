@@ -10,9 +10,8 @@ import templruntime "github.com/a-h/templ/runtime"
 
 import "fmt"
 
-// PublishPreviewProps drives the diff preview modal. PLAN.md §134:
-// "Build the Push-to-Live diff preview modal in the shell, consuming
-// publish_diffs.summary_line".
+// PublishPreviewProps drives the staged-draft diff preview modal,
+// consuming publish_diffs.summary_line.
 type PublishPreviewProps struct {
 	Items []PublishOutcome
 }
@@ -54,12 +53,12 @@ func PublishPreviewModal(p PublishPreviewProps) templ.Component {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"bx-modal-backdrop\" data-bx-dismissible role=\"dialog\" aria-labelledby=\"publish-preview-title\"><div class=\"bx-modal\" style=\"max-width: 720px;\"><header class=\"bx-row bx-row--apart\"><h2 id=\"publish-preview-title\" data-copy-slot=\"publish.preview.title\">Push to Live</h2><button type=\"button\" class=\"bx-btn bx-btn--ghost bx-small\" onclick=\"this.closest('.bx-modal-backdrop').remove()\" data-copy-slot=\"publish.preview.cancel\">Cancel</button></header>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"bx-modal-backdrop\" data-bx-dismissible role=\"dialog\" aria-labelledby=\"publish-preview-title\"><div class=\"bx-modal\" style=\"max-width: 720px;\"><header class=\"bx-row bx-row--apart\"><h2 id=\"publish-preview-title\" data-copy-slot=\"publish.preview.title\">Review Drafts</h2><button type=\"button\" class=\"bx-btn bx-btn--ghost bx-small\" onclick=\"this.closest('.bx-modal-backdrop').remove()\" data-copy-slot=\"publish.preview.cancel\">Cancel</button></header>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		if len(p.Items) == 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<p class=\"bx-muted\" data-copy-slot=\"publish.preview.empty\">Nothing to publish. Every draft has already been pushed.</p>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<p class=\"bx-muted\" data-copy-slot=\"publish.preview.empty\">Nothing to apply. Every draft is already live.</p>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -71,7 +70,7 @@ func PublishPreviewModal(p PublishPreviewProps) templ.Component {
 			var templ_7745c5c3_Var2 string
 			templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d artifact(s) will be published", len(p.Items)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/publish.templ`, Line: 43, Col: 68}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/publish.templ`, Line: 42, Col: 68}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 			if templ_7745c5c3_Err != nil {
@@ -98,7 +97,7 @@ func PublishPreviewModal(p PublishPreviewProps) templ.Component {
 				var templ_7745c5c3_Var4 string
 				templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(templ.CSSClasses(templ_7745c5c3_Var3).String())
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/publish.templ`, Line: 1, Col: 0}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/publish.templ`, Line: 1, Col: 0}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 				if templ_7745c5c3_Err != nil {
@@ -111,7 +110,7 @@ func PublishPreviewModal(p PublishPreviewProps) templ.Component {
 				var templ_7745c5c3_Var5 string
 				templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(it.Kind)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/publish.templ`, Line: 52, Col: 83}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/publish.templ`, Line: 51, Col: 83}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 				if templ_7745c5c3_Err != nil {
@@ -124,7 +123,7 @@ func PublishPreviewModal(p PublishPreviewProps) templ.Component {
 				var templ_7745c5c3_Var6 string
 				templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", it.ArtifactID))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/publish.templ`, Line: 53, Col: 71}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/publish.templ`, Line: 52, Col: 71}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 				if templ_7745c5c3_Err != nil {
@@ -137,7 +136,7 @@ func PublishPreviewModal(p PublishPreviewProps) templ.Component {
 				var templ_7745c5c3_Var7 string
 				templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(it.Op)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/publish.templ`, Line: 54, Col: 36}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/publish.templ`, Line: 53, Col: 36}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 				if templ_7745c5c3_Err != nil {
@@ -150,7 +149,7 @@ func PublishPreviewModal(p PublishPreviewProps) templ.Component {
 				var templ_7745c5c3_Var8 string
 				templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(it.SummaryLine)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/publish.templ`, Line: 55, Col: 28}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/publish.templ`, Line: 54, Col: 28}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 				if templ_7745c5c3_Err != nil {
@@ -163,7 +162,7 @@ func PublishPreviewModal(p PublishPreviewProps) templ.Component {
 				var templ_7745c5c3_Var9 string
 				templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(it.Changes)))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/publish.templ`, Line: 56, Col: 74}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/publish.templ`, Line: 55, Col: 74}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 				if templ_7745c5c3_Err != nil {
@@ -192,7 +191,7 @@ func PublishPreviewModal(p PublishPreviewProps) templ.Component {
 						var templ_7745c5c3_Var10 string
 						templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(it.Kind)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/publish.templ`, Line: 70, Col: 42}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/publish.templ`, Line: 69, Col: 42}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 						if templ_7745c5c3_Err != nil {
@@ -205,7 +204,7 @@ func PublishPreviewModal(p PublishPreviewProps) templ.Component {
 						var templ_7745c5c3_Var11 string
 						templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", it.ArtifactID))
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/publish.templ`, Line: 70, Col: 79}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/publish.templ`, Line: 69, Col: 79}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 						if templ_7745c5c3_Err != nil {
@@ -218,7 +217,7 @@ func PublishPreviewModal(p PublishPreviewProps) templ.Component {
 						var templ_7745c5c3_Var12 string
 						templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(c.Path)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/publish.templ`, Line: 71, Col: 24}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/publish.templ`, Line: 70, Col: 24}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 						if templ_7745c5c3_Err != nil {
@@ -240,7 +239,7 @@ func PublishPreviewModal(p PublishPreviewProps) templ.Component {
 						var templ_7745c5c3_Var14 string
 						templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(templ.CSSClasses(templ_7745c5c3_Var13).String())
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/publish.templ`, Line: 1, Col: 0}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/publish.templ`, Line: 1, Col: 0}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 						if templ_7745c5c3_Err != nil {
@@ -253,7 +252,7 @@ func PublishPreviewModal(p PublishPreviewProps) templ.Component {
 						var templ_7745c5c3_Var15 string
 						templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(c.Op)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/publish.templ`, Line: 72, Col: 77}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/publish.templ`, Line: 71, Col: 77}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 						if templ_7745c5c3_Err != nil {
@@ -288,7 +287,7 @@ func PublishPreviewModal(p PublishPreviewProps) templ.Component {
 		var templ_7745c5c3_Var16 string
 		templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(confirmLabel(p.Items))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/publish.templ`, Line: 92, Col: 30}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/publish.templ`, Line: 91, Col: 30}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 		if templ_7745c5c3_Err != nil {
@@ -303,7 +302,7 @@ func PublishPreviewModal(p PublishPreviewProps) templ.Component {
 }
 
 // PublishResultProps drives the toast that replaces #publish-status
-// after a successful Push-to-Live.
+// after drafts are applied.
 type PublishResultProps struct {
 	Count       int
 	ChangesetID int64
@@ -347,7 +346,7 @@ func PublishResultToast(p PublishResultProps) templ.Component {
 			var templ_7745c5c3_Var18 string
 			templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("Published %d artifact(s); changeset %d.", p.Count, p.ChangesetID))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/publish.templ`, Line: 114, Col: 84}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/publish.templ`, Line: 113, Col: 84}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 			if templ_7745c5c3_Err != nil {
@@ -392,7 +391,7 @@ func confirmLabel(items []PublishOutcome) string {
 	if len(items) == 0 {
 		return "Nothing to publish"
 	}
-	return fmt.Sprintf("Push %d to Live", len(items))
+	return fmt.Sprintf("Apply %d Drafts", len(items))
 }
 
 var _ = templruntime.GeneratedTemplate

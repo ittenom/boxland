@@ -230,6 +230,14 @@ templ LevelEditorPage(p LevelEditorProps) {
 					}
 				</div>
 				<div class="bx-row" style="gap: var(--bx-s2);">
+					<button
+						type="button"
+						class="bx-btn bx-btn--ghost bx-btn--small"
+						hx-get="/design/entities/new"
+						hx-target="#modal-host"
+						hx-swap="innerHTML"
+						title="Create an entity type, then assign its sprite and components"
+					>+ Entity Type</button>
 					<a
 						href={ templ.URL(fmt.Sprintf("/design/levels/%d/export", p.Level.ID)) }
 						class="bx-btn bx-btn--ghost bx-btn--small bx-row"
@@ -244,8 +252,9 @@ templ LevelEditorPage(p LevelEditorProps) {
 					<a
 						href={ templ.URL(fmt.Sprintf("/design/sandbox/launch/%d", p.Level.ID)) }
 						class="bx-btn bx-btn--primary bx-btn--small"
+						title="Run this configured level in the Sandbox"
 					>
-						Sandbox →
+						Open in Sandbox
 					</a>
 				</div>
 			</header>
@@ -254,6 +263,7 @@ templ LevelEditorPage(p LevelEditorProps) {
 				@levelEntitiesTab(p)
 			</div>
 		</section>
+		<div id="modal-host"></div>
 	}
 }
 

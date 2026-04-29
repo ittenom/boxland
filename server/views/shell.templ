@@ -120,21 +120,16 @@ templ ShellHome(p ShellProps) {
 				</section>
 			}
 
-			// Build steps follow the canonical hierarchy: Library →
-			// Tilemaps → Maps → Entities → Levels → Worlds → Sandbox →
-			// Push. The first card jumps to the Library; the last is
-			// the publish modal hand-off.
+			// Build steps follow the user-facing game workflow. Supporting
+			// managers (tilemaps, entities, worlds) remain in the sidebar,
+			// but the dashboard should lead designers through the core loop.
 			<section>
 				<h3 data-copy-slot="home.steps">Build steps</h3>
 				<div class="bx-grid bx-grid--auto">
-					@stepCard("asset",   "1", "Library",     "Upload sprites, audio, and UI panels.", libraryTotal(p.Layout.Project),    "/design/library")
-					@stepCard("tilemap", "2", "Tilemaps",    "Slice tile sheets into tiles.",         p.Layout.Project.TilemapCount,     "/design/tilemaps")
-					@stepCard("map",     "3", "Maps",        "Paint geometry with tiles.",            p.Layout.Project.MapCount,         "/design/maps")
-					@stepCard("entity",  "4", "Entities",    "Define NPCs, PCs, and game logic.",     p.Layout.Project.EntityCount,      "/design/entities")
-					@stepCard("level",   "5", "Levels",      "Place entities into a map.",            p.Layout.Project.LevelCount,       "/design/levels")
-					@stepCard("world",   "6", "Worlds",      "Connect levels into a campaign.",       p.Layout.Project.WorldCount,       "/design/worlds")
-					@stepCard("kind",    "7", "Sandbox",     "Test against drafts.",                  0,                                 "/design/sandbox")
-					@stepCard("draft",   "8", "Push to live","Promote drafts to live.",               p.Layout.Project.DraftCount,       "")
+					@stepCard("asset", "1", "Assets",  "Upload sprites, audio, tile sheets, and UI panels.", libraryTotal(p.Layout.Project), "/design/library")
+					@stepCard("map",   "2", "Maps",    "Paint static level geometry.",                        p.Layout.Project.MapCount,      "/design/maps")
+					@stepCard("level", "3", "Levels",  "Place entities and configure behavior.",              p.Layout.Project.LevelCount,    "/design/levels")
+					@stepCard("kind",  "4", "Sandbox", "Run and debug configured levels.",                    0,                              "/design/sandbox")
 				</div>
 			</section>
 

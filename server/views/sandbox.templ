@@ -7,11 +7,7 @@ import (
 )
 
 // SandboxIndexProps drives /design/sandbox -- the picker page where a
-// designer chooses a map to sandbox-test. PLAN.md §131.
-//
-// Note: any map card on /design/maps also has a "▶ Test" CTA that
-// launches sandbox directly; this page is the cross-map entry point
-// when you don't know which map you want yet.
+// designer chooses a configured level/map surface to test. PLAN.md §131.
 type SandboxIndexProps struct {
 	Layout LayoutProps
 	Items  []maps.Map

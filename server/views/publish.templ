@@ -2,9 +2,8 @@ package views
 
 import "fmt"
 
-// PublishPreviewProps drives the diff preview modal. PLAN.md §134:
-// "Build the Push-to-Live diff preview modal in the shell, consuming
-// publish_diffs.summary_line".
+// PublishPreviewProps drives the staged-draft diff preview modal,
+// consuming publish_diffs.summary_line.
 type PublishPreviewProps struct {
 	Items []PublishOutcome
 }
@@ -29,14 +28,14 @@ templ PublishPreviewModal(p PublishPreviewProps) {
 	<div class="bx-modal-backdrop" data-bx-dismissible role="dialog" aria-labelledby="publish-preview-title">
 		<div class="bx-modal" style="max-width: 720px;">
 			<header class="bx-row bx-row--apart">
-				<h2 id="publish-preview-title" data-copy-slot="publish.preview.title">Push to Live</h2>
+				<h2 id="publish-preview-title" data-copy-slot="publish.preview.title">Review Drafts</h2>
 				<button type="button" class="bx-btn bx-btn--ghost bx-small" onclick="this.closest('.bx-modal-backdrop').remove()" data-copy-slot="publish.preview.cancel">
 					Cancel
 				</button>
 			</header>
 			if len(p.Items) == 0 {
 				<p class="bx-muted" data-copy-slot="publish.preview.empty">
-					Nothing to publish. Every draft has already been pushed.
+					Nothing to apply. Every draft is already live.
 				</p>
 			} else {
 				<p class="bx-muted bx-small" data-copy-slot="publish.preview.lede">
@@ -99,7 +98,7 @@ templ PublishPreviewModal(p PublishPreviewProps) {
 }
 
 // PublishResultProps drives the toast that replaces #publish-status
-// after a successful Push-to-Live.
+// after drafts are applied.
 type PublishResultProps struct {
 	Count       int
 	ChangesetID int64
@@ -143,5 +142,5 @@ func confirmLabel(items []PublishOutcome) string {
 	if len(items) == 0 {
 		return "Nothing to publish"
 	}
-	return fmt.Sprintf("Push %d to Live", len(items))
+	return fmt.Sprintf("Apply %d Drafts", len(items))
 }

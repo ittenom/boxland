@@ -363,17 +363,6 @@ templ Chrome(p LayoutProps) {
 
 		<button
 			type="button"
-			class="bx-chrome__push"
-			hx-get="/design/publish/preview"
-			hx-target="#publish-modal-host"
-			hx-swap="innerHTML"
-			data-copy-slot="chrome.push"
-		>
-			Push to Live
-		</button>
-
-		<button
-			type="button"
 			class="bx-chrome__theme"
 			onclick="bxToggleTheme()"
 			aria-label="Toggle theme"

@@ -113,8 +113,7 @@ templ MapsGrid(p MapsListProps) {
 
 // MapCard is the visual entry for one map. The thumbnail is a placeholder
 // for now (server-rendered downsample of map_tiles is the next iteration);
-// the card already surfaces size, mode, public/private, and inline
-// "Test in Sandbox" and "Edit" CTAs.
+// the card already surfaces size, mode, and the mapmaker entry point.
 templ MapCard(m maps.Map) {
 	<div class="bx-map-card">
 		<div class="bx-map-card__thumb">
@@ -132,11 +131,8 @@ templ MapCard(m maps.Map) {
 				// page for the matching badge.
 			</div>
 			<div class="bx-map-card__actions">
-				<a class="bx-btn bx-btn--small" href={ templ.URL(fmt.Sprintf("/design/maps/%d", m.ID)) }>
-					Edit
-				</a>
-				<a class="bx-btn bx-btn--primary bx-btn--small" href={ templ.URL(fmt.Sprintf("/design/sandbox/launch/%d", m.ID)) }>
-					▶ Test
+				<a class="bx-btn bx-btn--primary bx-btn--small" href={ templ.URL(fmt.Sprintf("/design/maps/%d", m.ID)) }>
+					Open Mapmaker
 				</a>
 				<button
 					type="button"
