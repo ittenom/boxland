@@ -9,8 +9,9 @@
 // the WebGPU/WebGL2 hybrid renderer; these helpers wrap that surface so
 // callers don't have to think about it.
 
-import { Assets, Rectangle, Texture } from "pixi.js";
+import { Rectangle, Texture } from "pixi.js";
 
+import { loadTextureAsset } from "./asset-texture";
 import type { AnimationFrame, AssetCatalog, AssetId, AnimId } from "./types";
 
 /**
@@ -26,13 +27,19 @@ export class TextureCache {
 	/** Load (or return cached) base texture for an asset+variant. */
 	async base(asset_id: AssetId, variant_id = 0): Promise<Texture> {
 		const url = this.catalog.urlFor(asset_id, variant_id);
+		if (!url) {
+			throw new Error(`TextureCache: missing URL for asset ${asset_id}`);
+		}
 		let p = this.bases.get(url);
 		if (!p) {
-			p = Assets.load<Texture>(url).then((t) => {
+			p = loadTextureAsset(url).then((t) => {
 				// Force nearest-neighbor at the source so every derived texture
 				// inherits crisp pixel sampling.
 				t.source.scaleMode = "nearest";
 				return t;
+			}).catch((err) => {
+				this.bases.delete(url);
+				throw err;
 			});
 			this.bases.set(url, p);
 		}
@@ -48,11 +55,17 @@ export class TextureCache {
 	): Promise<Texture | undefined> {
 		const def: AnimationFrame | undefined = this.catalog.frame(asset_id, anim_id, frame);
 		if (!def) return undefined;
+		if (!this.catalog.urlFor(asset_id, variant_id)) return undefined;
 		const key = `${asset_id}:${anim_id}:${frame}:${variant_id}`;
 		const cached = this.frames.get(key);
 		if (cached) return cached;
 
-		const base = await this.base(asset_id, variant_id);
+		let base: Texture;
+		try {
+			base = await this.base(asset_id, variant_id);
+		} catch {
+			return undefined;
+		}
 		const tex = new Texture({
 			source: base.source,
 			frame: new Rectangle(def.sx, def.sy, def.sw, def.sh),

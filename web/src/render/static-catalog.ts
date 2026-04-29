@@ -124,7 +124,7 @@ export class StaticAssetCatalog implements AssetCatalog {
 	}
 
 	/** Iterate every URL in the catalog. The caller can pass the
-	 *  result to `Promise.all(urls.map(u => Assets.load(u)))` to warm
+	 *  result to `Promise.all(urls.map(loadTextureAsset))` to warm
 	 *  Pixi's texture cache before the first frame, so the editor
 	 *  doesn't flash empty cells while textures stream in. */
 	urls(): readonly string[] {

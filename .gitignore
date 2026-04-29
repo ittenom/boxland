@@ -1,6 +1,8 @@
 # Build artifacts
 /server/boxland
 /server/boxland.exe
+/boxland.exe
+/bin/
 /server/dist/
 /web/dist/
 /web/node_modules/

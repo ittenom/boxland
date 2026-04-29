@@ -2,13 +2,13 @@
 //
 // The flow is split into two phases on purpose:
 //
-//   Phase 1 (this binary, pre-pull):
-//     guards (clean tree, on main, latest known) → backup → git pull
-//     → handoff to the post-pull binary via `go run`.
+//	Phase 1 (this binary, pre-pull):
+//	  guards (clean tree, on main, latest known) → backup → git pull
+//	  → handoff to the post-pull binary via `go run`.
 //
-//   Phase 2 (post-pull, --resume):
-//     install (deps + codegen + binary rebuild) → migrate up → web
-//     build + stage → done.
+//	Phase 2 (post-pull, --resume):
+//	  install (deps + codegen) → migrate up → web
+//	  build + stage → done.
 //
 // Why two phases? After `git pull` the running binary is whatever
 // version we started with. Generators (templ/sqlc/flatc), the
@@ -36,7 +36,7 @@
 //   - If install/migrate/web fails, the source tree is at the new
 //     commit but the database may have been partially migrated.
 //     Restore from the printed backup path:
-//       boxland backup import backups/pre-update-….tar.gz --yes
+//     boxland backup import backups/pre-update-….tar.gz --yes
 //     and `git checkout <prev-commit>` to undo the source move.
 package main
 
@@ -229,8 +229,8 @@ func runUpdateResume(_ updateFlags) error {
 	fmt.Println("Phase 2: installing dependencies, regenerating code, applying migrations.")
 	fmt.Println()
 
-	// install: deps + codegen + binary rebuild. Idempotent and the
-	// authoritative way to bring a working tree to a runnable state.
+	// install: deps + codegen. Idempotent and the authoritative way to
+	// bring a working tree to a runnable state.
 	if err := runInstall(); err != nil {
 		return fmt.Errorf("install: %w", err)
 	}

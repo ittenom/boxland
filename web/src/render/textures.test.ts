@@ -8,12 +8,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Mock pixi.js Assets BEFORE importing TextureCache so the module
 // captures the mocked symbol.
 const loaded: string[] = [];
+const loadedRaw: unknown[] = [];
 vi.mock("pixi.js", async () => {
 	const actual = await vi.importActual<Record<string, unknown>>("pixi.js");
 	return {
 		...actual,
 		Assets: {
-			load: vi.fn(async (url: string) => {
+			load: vi.fn(async (asset: string | { src: string }) => {
+				loadedRaw.push(asset);
+				const url = typeof asset === "string" ? asset : asset.src;
 				loaded.push(url);
 				return {
 					source: { scaleMode: "" as string },
@@ -29,6 +32,7 @@ import type { AssetCatalog } from "./types";
 describe("TextureCache variant pipeline", () => {
 	beforeEach(() => {
 		loaded.length = 0;
+		loadedRaw.length = 0;
 	});
 
 	it("urlFor receives variant_id and the result is what gets loaded", async () => {
@@ -64,5 +68,37 @@ describe("TextureCache variant pipeline", () => {
 		expect(loaded.length).toBe(2);
 		expect(loaded).toContain("https://cdn/1-0.png");
 		expect(loaded).toContain("https://cdn/1-5.png");
+	});
+
+	it("frame() treats an empty URL as a missing texture without calling Assets.load", async () => {
+		const catalog: AssetCatalog = {
+			urlFor: () => "",
+			frame: (asset_id, anim_id, frame) => ({
+				asset_id, anim_id, frame,
+				sx: 0, sy: 0, sw: 32, sh: 32,
+				ax: 0, ay: 0,
+			}),
+		};
+		const cache = new TextureCache(catalog);
+		await expect(cache.frame(1, 0, 0)).resolves.toBeUndefined();
+		expect(loaded).toHaveLength(0);
+	});
+
+	it("forces the texture parser for extensionless designer blob URLs", async () => {
+		const catalog: AssetCatalog = {
+			urlFor: () => "/design/assets/blob/42",
+			frame: (asset_id, anim_id, frame) => ({
+				asset_id, anim_id, frame,
+				sx: 0, sy: 0, sw: 32, sh: 32,
+				ax: 0, ay: 0,
+			}),
+		};
+		const cache = new TextureCache(catalog);
+		await cache.base(1, 0);
+		expect(loadedRaw[0]).toEqual({
+			alias: "/design/assets/blob/42",
+			src: "/design/assets/blob/42",
+			parser: "texture",
+		});
 	});
 });

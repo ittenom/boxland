@@ -5,7 +5,7 @@
 // through; uses `@pixi/ui` FancyButton with theme-skinned states.
 
 import "./layout-init";
-import { Container } from "pixi.js";
+import { Container, Text } from "pixi.js";
 import { FancyButton } from "@pixi/ui";
 
 import { NineSlice, Theme, Roles } from "../ui";
@@ -25,7 +25,6 @@ export class Toolbar {
 	private readonly slot: Container;
 	private readonly height: number;
 	private readonly handlers = new Map<string, () => void>();
-	private readonly title = new Container(); // optional title bar item; reserved for future
 
 	constructor(opts: ToolbarOptions) {
 		this.theme = opts.theme;
@@ -51,7 +50,6 @@ export class Toolbar {
 			this.slot.removeChild(c);
 			c.destroy();
 		}
-		this.slot.addChild(this.title);
 		for (const a of actions) {
 			this.slot.addChild(this.makeButton(a));
 		}
@@ -64,22 +62,34 @@ export class Toolbar {
 				? Roles.ButtonSmPressA
 				: Roles.ButtonSmReleaseA;
 		const entry = this.theme.get(role);
-		const w = entry?.width ?? 64;
+		const label = action.hotkey ? `${action.label} ${action.hotkey}` : action.label;
+		const w = Math.max(entry?.width ?? 64, 18 + label.length * 7);
 		const h = entry?.height ?? this.height;
+		const text = new Text({
+			text: label,
+			style: {
+				fontFamily: "DM Mono, Consolas, monospace",
+				fontSize: 11,
+				fontWeight: "700",
+				fill: action.disabled ? 0x6f7b91 : action.active ? 0x10131c : 0xe8ecf2,
+				letterSpacing: 0,
+			},
+		});
 
 		// FancyButton expects defaultView/pressedView/hoverView/
 		// disabledView Containers. We give it three NineSlice bgs
 		// keyed off the theme so each state has its own art.
 		const btn = new FancyButton({
-			defaultView: this.bg(Roles.ButtonSmReleaseA, w, h),
+			defaultView: this.bg(role, w, h),
 			hoverView: this.bg(Roles.ButtonSmReleaseA, w, h),
 			pressedView: this.bg(Roles.ButtonSmPressA, w, h),
 			disabledView: this.bg(Roles.ButtonSmLockA, w, h),
-			text: action.label,
-			textOffset: { x: 0, y: -2 },
+			text,
+			padding: 5,
+			textOffset: { x: 0, y: -1 },
 			animations: {
-				hover: { props: { scale: { x: 1.02, y: 1.02 } }, duration: 80 },
-				pressed: { props: { scale: { x: 0.98, y: 0.98 } }, duration: 60 },
+				hover: { props: { scale: { x: 1, y: 1 } }, duration: 1 },
+				pressed: { props: { scale: { x: 1, y: 1 } }, duration: 1 },
 			},
 		});
 		btn.enabled = !action.disabled;

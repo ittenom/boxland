@@ -36,7 +36,6 @@ export interface RenderBridgeState {
 	activeLayer: number;
 	mapWidth: number;
 	mapHeight: number;
-	knownAssetIDs: ReadonlySet<number>;
 }
 
 const ID_GHOST = -1;
@@ -48,7 +47,6 @@ export function buildRenderables(s: RenderBridgeState): Renderable[] {
 	// 1) Painted tiles. layer = the map's layer ordinal so the
 	//    renderer's painter algorithm matches the runtime exactly.
 	for (const t of s.tiles) {
-		if (!s.knownAssetIDs.has(t.entityTypeId)) continue;
 		out.push({
 			id: encodeTileID(t),
 			asset_id: t.entityTypeId,
@@ -66,7 +64,6 @@ export function buildRenderables(s: RenderBridgeState): Renderable[] {
 	//    halfway-white as a visual "this isn't permanent yet" cue.
 	if (s.procPreview) {
 		for (const t of s.procPreview) {
-			if (!s.knownAssetIDs.has(t.entityTypeId)) continue;
 			out.push({
 				id: encodeProcID(t),
 				asset_id: t.entityTypeId,
@@ -85,7 +82,7 @@ export function buildRenderables(s: RenderBridgeState): Renderable[] {
 	//    show this; eraser/eyedrop don't.
 	if (s.stampGhost && s.cursorCell && inBounds(s.cursorCell, s.mapWidth, s.mapHeight)) {
 		const showGhost = s.tool === "brush" || s.tool === "lock" || s.tool === "rect";
-		if (showGhost && s.knownAssetIDs.has(s.stampGhost.entityID)) {
+		if (showGhost) {
 			out.push({
 				id: ID_GHOST,
 				asset_id: s.stampGhost.entityID,
@@ -106,7 +103,6 @@ export function buildRenderables(s: RenderBridgeState): Renderable[] {
 	//    visualize the lock corner brackets without a custom layer.
 	if (s.locks.length > 0) {
 		for (const c of s.locks) {
-			if (!s.knownAssetIDs.has(c.entityTypeId)) continue;
 			out.push({
 				id: encodeLockID(c),
 				asset_id: c.entityTypeId,

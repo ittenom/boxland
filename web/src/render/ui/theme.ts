@@ -17,8 +17,9 @@
 // same role share one GPU texture. The cache lifetime is tied to
 // the BoxlandApp; tearing the editor down releases everything.
 
-import { Assets, Texture } from "pixi.js";
+import { Texture } from "pixi.js";
 
+import { loadTextureAsset } from "../asset-texture";
 import type { TextureCache } from "../textures";
 
 /** One role → texture mapping. Roles are stable strings the editor
@@ -80,7 +81,7 @@ export class Theme {
 		if (!entry || !entry.assetUrl) return null;
 		const cached = this.textures.get(entry.assetUrl);
 		if (cached) return cached;
-		const p = Assets.load<Texture>(entry.assetUrl).then((tex) => {
+		const p = loadTextureAsset(entry.assetUrl).then((tex) => {
 			// Pixel-art convention: nearest-neighbor + roundPixels.
 			// `tex` can be null in jsdom (no PNG decoder); guard so
 			// the unhandled-rejection doesn't leak into tests that

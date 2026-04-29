@@ -25,6 +25,11 @@ import { Container, Graphics } from "pixi.js";
 import type { Theme } from "../ui";
 import { NineSlice } from "../ui";
 
+const SURFACE = 0x0f141f;
+const PANEL = 0x121928;
+const PANEL_ALT = 0x151d2c;
+const STROKE = 0x263653;
+
 /** Public slot container set. Surface entry scripts receive these
  *  and add their widgets directly. */
 export interface EditorSlots {
@@ -69,8 +74,8 @@ export interface BuildLayoutOptions {
 export function buildEditorLayout(opts: BuildLayoutOptions): EditorSlots {
 	const sidebarW = opts.sidebarWidth ?? 240;
 	const inspectorW = opts.inspectorWidth ?? 320;
-	const toolbarH = opts.toolbarHeight ?? 32;
-	const statusbarH = opts.statusbarHeight ?? 24;
+	const toolbarH = opts.toolbarHeight ?? 40;
+	const statusbarH = opts.statusbarHeight ?? 28;
 
 	const root = new Container();
 	root.layout = {
@@ -87,11 +92,13 @@ export function buildEditorLayout(opts: BuildLayoutOptions): EditorSlots {
 		flexShrink: 0,
 		flexDirection: "row",
 		alignItems: "center",
-		paddingLeft: 8,
-		paddingRight: 8,
-		gap: 6,
+		paddingLeft: 10,
+		paddingRight: 10,
+		paddingTop: 5,
+		paddingBottom: 5,
+		gap: 8,
 	};
-	attachPanelBg(toolbar, opts.theme, "frame_lite", opts.width, toolbarH);
+	attachSolidBg(toolbar, opts.width, toolbarH, PANEL_ALT, STROKE);
 	root.addChild(toolbar);
 
 	// Body — fills remaining vertical space between toolbar and
@@ -105,8 +112,11 @@ export function buildEditorLayout(opts: BuildLayoutOptions): EditorSlots {
 		flexShrink: 1,
 		flexBasis: 0,
 		flexDirection: "row",
+		padding: 10,
+		gap: 10,
 		minHeight: 0, // critical: lets the body shrink to its share
 	};
+	attachSolidBg(body, opts.width, opts.height - toolbarH - statusbarH, SURFACE, SURFACE);
 
 	const sidebar = new Container();
 	sidebar.layout = {
@@ -114,10 +124,10 @@ export function buildEditorLayout(opts: BuildLayoutOptions): EditorSlots {
 		height: "100%",
 		flexShrink: 0,
 		flexDirection: "column",
-		padding: 8,
-		gap: 6,
+		padding: 10,
+		gap: 8,
 	};
-	attachPanelBg(sidebar, opts.theme, "frame_standard", sidebarW, opts.height);
+	attachSolidBg(sidebar, sidebarW, opts.height, PANEL, STROKE);
 	body.addChild(sidebar);
 
 	const canvasWrap = new Container();
@@ -129,6 +139,7 @@ export function buildEditorLayout(opts: BuildLayoutOptions): EditorSlots {
 		minWidth: 0,
 		minHeight: 0,
 	};
+	attachSolidBg(canvasWrap, 1, 1, SURFACE, SURFACE);
 	body.addChild(canvasWrap);
 
 	const inspector = new Container();
@@ -137,10 +148,10 @@ export function buildEditorLayout(opts: BuildLayoutOptions): EditorSlots {
 		height: "100%",
 		flexShrink: 0,
 		flexDirection: "column",
-		padding: 8,
-		gap: 6,
+		padding: 10,
+		gap: 8,
 	};
-	attachPanelBg(inspector, opts.theme, "frame_standard", inspectorW, opts.height);
+	attachSolidBg(inspector, inspectorW, opts.height, PANEL, STROKE);
 	body.addChild(inspector);
 
 	root.addChild(body);
@@ -153,11 +164,11 @@ export function buildEditorLayout(opts: BuildLayoutOptions): EditorSlots {
 		flexShrink: 0,
 		flexDirection: "row",
 		alignItems: "center",
-		paddingLeft: 8,
-		paddingRight: 8,
+		paddingLeft: 10,
+		paddingRight: 10,
 		gap: 12,
 	};
-	attachPanelBg(statusbar, opts.theme, "frame_lite", opts.width, statusbarH);
+	attachSolidBg(statusbar, opts.width, statusbarH, PANEL_ALT, STROKE);
 	root.addChild(statusbar);
 
 	// Modal overlay layer — sits on top of everything else,
@@ -240,5 +251,28 @@ function resizeBg(parent: Container, w: number, h: number): void {
 		bg.resize(Math.max(1, Math.floor(w)), Math.max(1, Math.floor(h)));
 	} else if (bg && bg instanceof Graphics) {
 		bg.clear().rect(0, 0, w, h).fill(0x1a2030);
+	}
+}
+
+function attachSolidBg(parent: Container, seedW: number, seedH: number, fill: number, stroke: number): Graphics {
+	const bg = new Graphics();
+	drawSolidBg(bg, seedW, seedH, fill, stroke);
+	parent.addChildAt(bg, 0);
+	parent.on("layout", (event: { computedLayout: { width: number; height: number } }) => {
+		drawSolidBg(
+			bg,
+			Math.max(1, Math.floor(event.computedLayout.width)),
+			Math.max(1, Math.floor(event.computedLayout.height)),
+			fill,
+			stroke,
+		);
+	});
+	return bg;
+}
+
+function drawSolidBg(g: Graphics, w: number, h: number, fill: number, stroke: number): void {
+	g.clear().rect(0, 0, w, h).fill(fill);
+	if (stroke !== fill) {
+		g.rect(0, 0, w, h).stroke({ color: stroke, width: 1, alignment: 1 });
 	}
 }

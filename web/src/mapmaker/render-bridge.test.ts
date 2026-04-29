@@ -17,7 +17,6 @@ type TestRBState = {
 	activeLayer: number;
 	mapWidth: number;
 	mapHeight: number;
-	knownAssetIDs: Set<number>;
 };
 
 function makeBase(): TestRBState {
@@ -34,7 +33,6 @@ function makeBase(): TestRBState {
 		activeLayer: 1,
 		mapWidth: 10,
 		mapHeight: 10,
-		knownAssetIDs: known,
 	};
 }
 
@@ -66,10 +64,11 @@ describe("buildRenderables — tiles", () => {
 		expect(r.layer).toBe(5);
 	});
 
-	it("skips tiles whose entity_type isn't in the catalog", () => {
+	it("keeps tiles whose entity_type is not in the current palette", () => {
 		const s = makeBase();
 		s.tiles = [tile(1, 0, 0, 999)]; // 999 not in known set
-		expect(buildRenderables(s)).toHaveLength(0);
+		expect(buildRenderables(s)).toHaveLength(1);
+		expect(buildRenderables(s)[0]?.asset_id).toBe(999);
 	});
 });
 

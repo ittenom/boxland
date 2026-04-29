@@ -11,9 +11,10 @@
 // into a "set active palette entry" state change.
 
 import "./layout-init";
-import { Container, Graphics, Sprite, Texture, Rectangle, Assets } from "pixi.js";
+import { Container, Graphics, Sprite, Texture, Rectangle } from "pixi.js";
 import { OutlineFilter } from "pixi-filters";
 
+import { loadTextureAsset } from "../asset-texture";
 import type { Theme } from "../ui";
 import { NineSlice, Roles } from "../ui";
 
@@ -49,6 +50,7 @@ export class PaletteGrid extends Container {
 	private readonly cells = new Map<number, PaletteCell>();
 	private selectedID: number | null = null;
 	private bg: NineSlice;
+	private readonly clip = new Graphics();
 
 	constructor(opts: PaletteGridOptions) {
 		super();
@@ -79,6 +81,9 @@ export class PaletteGrid extends Container {
 			left: 0,
 		};
 		this.addChild(this.bg);
+		this.redrawClip(opts.width, opts.height);
+		this.addChild(this.clip);
+		this.mask = this.clip;
 	}
 
 	/** Replace the entry list. Existing cell containers are reused
@@ -144,6 +149,11 @@ export class PaletteGrid extends Container {
 			padding: 6,
 		};
 		this.bg.resize(width, height);
+		this.redrawClip(width, height);
+	}
+
+	private redrawClip(width: number, height: number): void {
+		this.clip.clear().rect(0, 0, width, height).fill(0xffffff);
 	}
 }
 
@@ -156,6 +166,7 @@ interface PaletteCellOptions {
 
 class PaletteCell extends Container {
 	entry: PaletteEntry;
+	private readonly theme: Theme;
 	private readonly size: number;
 	private readonly thumb: Sprite;
 	private readonly halo: Graphics;
@@ -164,6 +175,7 @@ class PaletteCell extends Container {
 
 	constructor(opts: PaletteCellOptions) {
 		super();
+		this.theme = opts.theme;
 		this.size = opts.size;
 		this.entry = opts.entry;
 
@@ -209,7 +221,7 @@ class PaletteCell extends Container {
 		this.removeChild(this.bg);
 		this.bg.destroy();
 		this.bg = new NineSlice({
-			theme: (this as unknown as { __bxTheme?: Theme }).__bxTheme ?? (this.children[0] as unknown as { theme: Theme })?.theme ?? null as unknown as Theme,
+			theme: this.theme,
 			role,
 			width: this.size,
 			height: this.size,
@@ -229,7 +241,7 @@ class PaletteCell extends Container {
 
 	private loadThumb(entry: PaletteEntry): void {
 		if (!entry.spriteUrl) return;
-		void Assets.load<Texture>(entry.spriteUrl).then((base) => {
+		void loadTextureAsset(entry.spriteUrl).then((base) => {
 			if (this.destroyed || !base || !base.source) return;
 			base.source.scaleMode = "nearest";
 			const ts = entry.tileSize || 32;

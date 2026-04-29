@@ -14,7 +14,7 @@
 // The host element's data-bx-* attributes carry the level/map ids;
 // the meta tags carry the WS url + ticket the gateway minted.
 
-import { Container, Sprite, Texture, Rectangle as PixiRectangle, Assets } from "pixi.js";
+import { Container, Sprite, Texture, Rectangle as PixiRectangle } from "pixi.js";
 
 // Rectangle is referenced once below (texture frame); aliasing
 // avoids a name clash with any future local Rect type and keeps
@@ -33,6 +33,7 @@ import {
 	type PaletteEntry as HarnessPaletteEntry,
 	type ToolbarAction,
 } from "@render";
+import { loadTextureAsset } from "@render/asset-texture";
 import { EditorKind } from "@proto/editor-kind.js";
 
 import { EditorState } from "./state";
@@ -363,7 +364,7 @@ async function loadSpriteTextureFor(
 	const entry = pal.get(placement.entityTypeId);
 	if (!entry || !entry.sprite_url) return;
 	try {
-		const base = await Assets.load<Texture>(entry.sprite_url);
+		const base = await loadTextureAsset(entry.sprite_url);
 		if (!base || !base.source) return;
 		base.source.scaleMode = "nearest";
 		const ts = entry.tile_size || 32;

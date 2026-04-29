@@ -94,7 +94,11 @@ export class NineSlice extends Container {
 		// Placeholder Graphics — clear and re-draw at the new size.
 		const g = this.bg;
 		g.clear();
-		g.rect(0, 0, this._width, this._height).fill(this.fallbackColor);
+		g
+			.rect(0, 0, this._width, this._height)
+			.fill(this.fallbackColor)
+			.rect(0, 0, this._width, this._height)
+			.stroke({ color: 0x34415c, width: 1, alignment: 1 });
 	}
 
 	/** Override Container.width/height to surface the configured
@@ -106,7 +110,11 @@ export class NineSlice extends Container {
 
 	private makePlaceholder(): Graphics {
 		const g = new Graphics();
-		g.rect(0, 0, this._width, this._height).fill(this.fallbackColor);
+		g
+			.rect(0, 0, this._width, this._height)
+			.fill(this.fallbackColor)
+			.rect(0, 0, this._width, this._height)
+			.stroke({ color: 0x34415c, width: 1, alignment: 1 });
 		return g;
 	}
 }

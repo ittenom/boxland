@@ -10,7 +10,7 @@
 // directory are unchanged; we just inject a WS-backed wire instead
 // of the legacy REST one.
 
-import { Container, Sprite, Texture, Rectangle as PixiRectangle, Assets } from "pixi.js";
+import { Container, Graphics, Text } from "pixi.js";
 
 import {
 	EditorApp,
@@ -18,7 +18,11 @@ import {
 	Theme,
 	Toolbar,
 	Statusbar,
+	PaletteGrid,
+	StaticAssetCatalog,
 	type ThemeEntry,
+	type PaletteEntry as HarnessPaletteEntry,
+	type StaticCatalogEntry,
 	type ToolbarAction,
 } from "@render";
 import { EditorKind } from "@proto/editor-kind.js";
@@ -37,8 +41,14 @@ import {
 	type MapLayer,
 	tileFromWire,
 } from "./types";
+import { buildRenderables } from "./render-bridge";
+import { MapmakerRenderableLayer } from "./render-layer";
 
-const Rectangle = PixiRectangle;
+const CELL_SIZE = 32;
+const MAP_ORIGIN_X = 18;
+const MAP_ORIGIN_Y = 18;
+const MIN_ZOOM = 0.5;
+const MAX_ZOOM = 4;
 
 interface MapmakerBoot {
 	mapId: number;
@@ -160,6 +170,32 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 	// 5) Wire WS-backed wire.
 	const placementWire = new WSMapmakerWire(wire, boot.mapId);
 
+	// Snapshot palette. The same records feed the left rail and
+	// texture lookup for the map surface.
+	const paletteEntries: HarnessPaletteEntry[] = [];
+	const catalogEntries: StaticCatalogEntry[] = [];
+	for (let i = 0; i < snapshot.paletteLength(); i++) {
+		const e = snapshot.palette(i);
+		if (!e) continue;
+		const entry: HarnessPaletteEntry = {
+			id: Number(e.entityTypeId()),
+			name: e.name() ?? "",
+			spriteUrl: e.spriteUrl() ?? "",
+			atlasIndex: e.atlasIndex(),
+			atlasCols: e.atlasCols(),
+			tileSize: e.tileSize(),
+		};
+		paletteEntries.push(entry);
+		catalogEntries.push({
+			id: entry.id,
+			url: entry.spriteUrl,
+			atlasIndex: entry.atlasIndex,
+			atlasCols: entry.atlasCols,
+			tileSize: entry.tileSize,
+		});
+	}
+	if (paletteEntries[0]) state.setActiveEntity(paletteEntries[0].id);
+
 	// 6) Toolbar — five tools + undo/redo. v1 wires brush + eraser
 	//    end-to-end; rect / fill / eyedrop / lock / sample land in
 	//    follow-up passes (the local stamp() function already
@@ -172,10 +208,11 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 			...tools.map<ToolbarAction>((t) => ({
 				id: t,
 				label: t.charAt(0).toUpperCase() + t.slice(1),
+				hotkey: hotkeyForTool(t),
 				active: state.tool === t,
 			})),
-			{ id: "undo", label: "Undo" },
-			{ id: "redo", label: "Redo" },
+			{ id: "undo", label: "Undo", hotkey: "Ctrl+Z", disabled: !state.canUndo() },
+			{ id: "redo", label: "Redo", hotkey: "Shift+Z", disabled: !state.canRedo() },
 		]);
 	};
 	for (const t of tools) {
@@ -191,6 +228,48 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 	toolbar.onAction("redo", () => { /* same: see undo above */ });
 	renderToolbar();
 
+	// 6b) Left/right rails. These are intentionally simple, but
+	// already use the Gradient slot/frame primitives through the
+	// shared PaletteGrid and framed layout slots.
+	app.slots.sidebar.addChild(sectionLabel("Layers"));
+	const layerList = new Container();
+	layerList.layout = { width: "100%", flexDirection: "column", gap: 4 };
+	app.slots.sidebar.addChild(layerList);
+	const renderLayers = (): void => renderLayerList(layerList, state, renderToolbar);
+	state.subscribe(renderLayers);
+	renderLayers();
+
+	app.slots.sidebar.addChild(sectionLabel("Palette"));
+	const palette = new PaletteGrid({
+		theme,
+		width: 224,
+		height: 680,
+		cellSize: 36,
+		onSelect: (e) => state.setActiveEntity(e.id),
+	});
+	palette.setEntries(paletteEntries);
+	if (paletteEntries[0]) palette.select(paletteEntries[0].id);
+	app.slots.sidebar.addChild(palette);
+
+	app.slots.inspector.addChild(sectionLabel("Mapmaker"));
+	const inspectorText = new Text({ text: "", style: pixelTextStyle(11, 0xa9b0c0) });
+	inspectorText.layout = { width: "100%", alignSelf: "flex-start" };
+	app.slots.inspector.addChild(inspectorText);
+	const renderInspector = (): void => {
+		const active = paletteEntries.find((p) => p.id === state.activeEntity);
+		inspectorText.text = [
+			`Map: ${state.mapWidth()} x ${state.mapHeight()}`,
+			`Layer: ${state.allLayers().find((l) => l.id === state.activeLayer)?.name ?? "none"}`,
+			`Brush: ${active?.name ?? "none"}`,
+			`Cell: ${state.cursorCell ? `${state.cursorCell.x}, ${state.cursorCell.y}` : "--"}`,
+			`Rotation: ${state.activeRotation} deg`,
+			`Tiles: ${state.tileCount()}`,
+			`Locks: ${state.lockCount()}`,
+		].join("\n");
+	};
+	state.subscribe(renderInspector);
+	renderInspector();
+
 	// 7) Statusbar.
 	const statusbar = new Statusbar({ theme, slot: app.slots.statusbar });
 	const renderStatus = (): void => {
@@ -198,6 +277,7 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 		statusbar.render([
 			{ id: "tool", text: `Tool: ${state.tool}` },
 			{ id: "layer", text: `Layer: ${layer?.name ?? state.activeLayer}` },
+			{ id: "cell", text: state.cursorCell ? `Cell: ${state.cursorCell.x},${state.cursorCell.y}` : "Cell: --" },
 			{ id: "count", text: `${state.tileCount()} tile(s) · ${state.lockCount()} locked` },
 			{ id: "saving", text: state.pending > 0 ? "saving…" : "" },
 		]);
@@ -205,37 +285,42 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 	state.subscribe(renderStatus);
 	renderStatus();
 
-	// 8) In-canvas tile renderer. Per-tile Sprite atlas-sliced from
-	//    the entity_type's sheet. We keep a sprite per (layer, x, y)
-	//    cell and tear/rebuild as state changes.
-	const inCanvasContainer = new Container();
-	app.slots.canvasWrap.addChild(inCanvasContainer);
-	const cellSize = 32;
-	const sprites = new Map<string, Sprite>();
-	const tileKeyOf = (t: MapTile): string => `${t.layerId}:${t.x}:${t.y}`;
-
+	// 8) In-canvas tile renderer. The Mapmaker state is adapted
+	//    through render-bridge.ts into the shared renderer's
+	//    Renderable[] contract; this layer paints those renderables
+	//    inside the editor viewport's pan/zoom surface.
+	const mapSurface = new Container();
+	mapSurface.position.set(MAP_ORIGIN_X, MAP_ORIGIN_Y);
+	app.slots.canvasWrap.addChild(mapSurface);
+	const grid = new Graphics();
+	drawMapGrid(grid, boot.mapWidth, boot.mapHeight);
+	mapSurface.addChild(grid);
+	const renderLayer = new MapmakerRenderableLayer(
+		new StaticAssetCatalog({ entries: catalogEntries }),
+		state.mapWidth(),
+		state.mapHeight(),
+	);
+	mapSurface.addChild(renderLayer);
+	const cursorOverlay = new Graphics();
+	mapSurface.addChild(cursorOverlay);
+	const renderCursor = (): void => drawCursor(cursorOverlay, state.cursorCell, state.mapWidth(), state.mapHeight());
+	state.subscribe(renderCursor);
+	renderCursor();
 	const refreshCanvas = (): void => {
-		const present = new Set<string>();
-		for (const t of state.allTiles()) {
-			const key = tileKeyOf(t);
-			present.add(key);
-			let sprite = sprites.get(key);
-			if (!sprite) {
-				sprite = new Sprite();
-				sprites.set(key, sprite);
-				inCanvasContainer.addChild(sprite);
-				void loadTileTextureFor(sprite, t, snapshot);
-			}
-			sprite.position.set(t.x * cellSize, t.y * cellSize);
-			sprite.angle = t.rotation;
-		}
-		for (const [key, sprite] of sprites) {
-			if (!present.has(key)) {
-				inCanvasContainer.removeChild(sprite);
-				sprite.destroy();
-				sprites.delete(key);
-			}
-		}
+		void renderLayer.setRenderables(buildRenderables({
+			tiles: state.allTiles(),
+			procPreview: state.procPreview,
+			stampGhost: state.activeEntity > 0 ? { entityID: state.activeEntity, rotation: state.activeRotation } : null,
+			cursorCell: state.cursorCell,
+			dragRectFrom: state.dragRectFrom,
+			dragRectTo: state.dragRectTo,
+			sampleRect: state.sampleRect,
+			locks: state.allLocks(),
+			tool: state.tool,
+			activeLayer: state.activeLayer,
+			mapWidth: state.mapWidth(),
+			mapHeight: state.mapHeight(),
+		}));
 	};
 	state.subscribe(refreshCanvas);
 	refreshCanvas();
@@ -247,12 +332,14 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 	let strokeCtx: StrokeCtx | null = null;
 	let isStroking = false;
 	let rectStart: Cell | null = null;
+	let spaceDown = false;
+	let panStart: { x: number; y: number; surfaceX: number; surfaceY: number } | null = null;
 
 	const cellAt = (e: { global: { x: number; y: number } }): Cell => {
-		const localPos = app.slots.canvasWrap.toLocal(e.global);
+		const localPos = mapSurface.toLocal(e.global);
 		return {
-			x: Math.max(0, Math.min(state.mapWidth() - 1, Math.floor(localPos.x / cellSize))),
-			y: Math.max(0, Math.min(state.mapHeight() - 1, Math.floor(localPos.y / cellSize))),
+			x: Math.max(0, Math.min(state.mapWidth() - 1, Math.floor(localPos.x / CELL_SIZE))),
+			y: Math.max(0, Math.min(state.mapHeight() - 1, Math.floor(localPos.y / CELL_SIZE))),
 		};
 	};
 
@@ -318,16 +405,63 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 
 	app.slots.canvasWrap.on("pointerdown", (e) => {
 		const cell = cellAt(e);
+		state.setCursorCell(cell);
+		if (spaceDown || e.button === 1) {
+			panStart = {
+				x: e.global.x,
+				y: e.global.y,
+				surfaceX: mapSurface.position.x,
+				surfaceY: mapSurface.position.y,
+			};
+			app.slots.canvasWrap.cursor = "grabbing";
+			return;
+		}
 		const mods = { shift: e.shiftKey, alt: e.altKey };
 		beginStroke(cell, mods);
 	});
 	app.slots.canvasWrap.on("pointermove", (e) => {
+		if (panStart) {
+			mapSurface.position.set(
+				panStart.surfaceX + (e.global.x - panStart.x),
+				panStart.surfaceY + (e.global.y - panStart.y),
+			);
+			return;
+		}
 		const cell = cellAt(e);
+		state.setCursorCell(cell);
 		const mods = { shift: e.shiftKey, alt: e.altKey };
 		continueStroke(cell, mods);
 	});
-	app.slots.canvasWrap.on("pointerup", (e) => endStroke(cellAt(e)));
-	app.slots.canvasWrap.on("pointerupoutside", (e) => endStroke(cellAt(e)));
+	app.slots.canvasWrap.on("pointerout", () => state.setCursorCell(null));
+	app.slots.canvasWrap.on("pointerup", (e) => {
+		if (panStart) {
+			panStart = null;
+			app.slots.canvasWrap.cursor = spaceDown ? "grab" : "crosshair";
+			return;
+		}
+		endStroke(cellAt(e));
+	});
+	app.slots.canvasWrap.on("pointerupoutside", (e) => {
+		if (panStart) {
+			panStart = null;
+			app.slots.canvasWrap.cursor = spaceDown ? "grab" : "crosshair";
+			return;
+		}
+		endStroke(cellAt(e));
+	});
+	app.pixi.pixi.canvas.addEventListener("wheel", (e) => {
+		if (!host.contains(e.target as Node)) return;
+		const global = { x: e.offsetX, y: e.offsetY };
+		const before = mapSurface.toLocal(global);
+		const factor = e.deltaY < 0 ? 1.1 : 0.9;
+		const next = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, mapSurface.scale.x * factor));
+		if (next === mapSurface.scale.x) return;
+		mapSurface.scale.set(next);
+		const after = mapSurface.toGlobal(before);
+		mapSurface.position.x += global.x - after.x;
+		mapSurface.position.y += global.y - after.y;
+		e.preventDefault();
+	}, { passive: false });
 
 	// 10) Keyboard shortcuts.
 	const onKey = (e: KeyboardEvent): void => {
@@ -335,6 +469,12 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 		if (isText) return;
 		const k = e.key.toLowerCase();
 		const mod = e.ctrlKey || e.metaKey;
+		if (e.code === "Space") {
+			spaceDown = true;
+			app.slots.canvasWrap.cursor = "grab";
+			e.preventDefault();
+			return;
+		}
 		if (mod) return;
 		const map: Record<string, Tool> = { b: "brush", r: "rect", f: "fill", i: "eyedrop", e: "eraser", l: "lock", s: "sample" };
 		if (map[k]) {
@@ -344,38 +484,108 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 		}
 	};
 	document.addEventListener("keydown", onKey);
+	document.addEventListener("keyup", (e) => {
+		if (e.code !== "Space") return;
+		spaceDown = false;
+		if (!panStart) app.slots.canvasWrap.cursor = "crosshair";
+	});
+	app.relayout();
 
 	return app;
 }
 
-async function loadTileTextureFor(
-	sprite: Sprite,
-	tile: MapTile,
-	snapshot: import("@proto/editor-snapshot.js").EditorSnapshot,
-): Promise<void> {
-	// Look up the palette entry for this tile's entity_type from
-	// the snapshot's palette.
-	for (let i = 0; i < snapshot.paletteLength(); i++) {
-		const e = snapshot.palette(i);
-		if (!e) continue;
-		if (Number(e.entityTypeId()) !== tile.entityTypeId) continue;
-		const url = e.spriteUrl() ?? "";
-		if (!url) return;
-		try {
-			const base = await Assets.load<Texture>(url);
-			if (!base || !base.source) return;
-			base.source.scaleMode = "nearest";
-			const ts = e.tileSize() || 32;
-			const cols = Math.max(1, e.atlasCols());
-			const sx = (e.atlasIndex() % cols) * ts;
-			const sy = Math.floor(e.atlasIndex() / cols) * ts;
-			sprite.texture = new Texture({
-				source: base.source,
-				frame: new Rectangle(sx, sy, ts, ts),
-			});
-		} catch { /* placeholder remains empty */ }
-		return;
+function hotkeyForTool(t: Tool): string {
+	switch (t) {
+		case "brush": return "B";
+		case "rect": return "R";
+		case "fill": return "F";
+		case "eyedrop": return "I";
+		case "eraser": return "E";
+		case "lock": return "L";
+		case "sample": return "S";
 	}
+}
+
+function pixelTextStyle(size: number, fill: number) {
+	return {
+		fontFamily: "DM Mono, Consolas, monospace",
+		fontSize: size,
+		fontWeight: "700" as const,
+		fill,
+		letterSpacing: 0,
+	};
+}
+
+function sectionLabel(text: string): Text {
+	const t = new Text({ text, style: pixelTextStyle(12, 0xffd84a) });
+	t.layout = { width: "100%", alignSelf: "flex-start", marginTop: 2, marginBottom: 2 };
+	return t;
+}
+
+function renderLayerList(root: Container, state: MapmakerState, onChange: () => void): void {
+	root.removeChildren().forEach((c) => c.destroy());
+	for (const layer of state.allLayers()) {
+		const row = new Container();
+		row.layout = { width: 220, height: 24 };
+		row.eventMode = "static";
+		row.cursor = "pointer";
+		const active = layer.id === state.activeLayer;
+		const bg = new Graphics();
+		bg
+			.rect(0, 0, 220, 24)
+			.fill(active ? 0x4f7fcf : 0x161d2a)
+			.rect(0, 0, 220, 24)
+			.stroke({ color: active ? 0xffd84a : 0x34415c, width: 1, alignment: 1 });
+		row.addChild(bg);
+		const label = new Text({
+			text: `${layer.name}  ${layer.kind}`,
+			style: pixelTextStyle(10, active ? 0x10131c : 0xd8e1f0),
+		});
+		label.position.set(6, 5);
+		row.addChild(label);
+		row.on("pointertap", () => {
+			state.setActiveLayer(layer.id);
+			onChange();
+		});
+		root.addChild(row);
+	}
+}
+
+function drawMapGrid(g: Graphics, mapW: number, mapH: number): void {
+	const w = mapW * CELL_SIZE;
+	const h = mapH * CELL_SIZE;
+	g.clear();
+	g.rect(-8, -8, w + 16, h + 16).fill(0x0b0f18);
+	g.rect(0, 0, w, h).fill(0x111827);
+	for (let y = 0; y < mapH; y++) {
+		for (let x = 0; x < mapW; x++) {
+			if ((x + y) % 2 === 0) {
+				g.rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE).fill(0x131d2b);
+			}
+		}
+	}
+	for (let x = 0; x <= mapW; x++) {
+		const px = x * CELL_SIZE;
+		g.moveTo(px, 0).lineTo(px, h).stroke({ color: x % 4 === 0 ? 0x2d3b55 : 0x1e2a3d, width: 1 });
+	}
+	for (let y = 0; y <= mapH; y++) {
+		const py = y * CELL_SIZE;
+		g.moveTo(0, py).lineTo(w, py).stroke({ color: y % 4 === 0 ? 0x2d3b55 : 0x1e2a3d, width: 1 });
+	}
+	g.rect(0, 0, w, h).stroke({ color: 0xffd84a, width: 2, alignment: 1 });
+}
+
+function drawCursor(g: Graphics, cell: Cell | null, mapW: number, mapH: number): void {
+	g.clear();
+	if (!cell || cell.x < 0 || cell.y < 0 || cell.x >= mapW || cell.y >= mapH) return;
+	const x = cell.x * CELL_SIZE;
+	const y = cell.y * CELL_SIZE;
+	g.rect(x, y, CELL_SIZE, CELL_SIZE)
+		.fill({ color: 0xffd84a, alpha: 0.12 })
+		.rect(x, y, CELL_SIZE, CELL_SIZE)
+		.stroke({ color: 0xffd84a, width: 2, alignment: 1 });
+	g.rect(x + 5, y + 5, CELL_SIZE - 10, CELL_SIZE - 10)
+		.stroke({ color: 0x10131c, width: 1, alignment: 1 });
 }
 
 if (typeof document !== "undefined" && document.body?.dataset.surface === "mapmaker") {

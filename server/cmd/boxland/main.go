@@ -45,9 +45,9 @@ import (
 	mapsservice "boxland/server/internal/maps"
 	"boxland/server/internal/persistence"
 	"boxland/server/internal/playerweb"
-	"boxland/server/internal/setup"
 	"boxland/server/internal/publishing/artifact"
 	"boxland/server/internal/settings"
+	"boxland/server/internal/setup"
 	"boxland/server/internal/sim/editor"
 	"boxland/server/internal/sim/runtime"
 	"boxland/server/internal/tilemaps"
@@ -249,21 +249,7 @@ func runInstall() error {
 		return err
 	}
 	fmt.Println()
-	fmt.Println("Building Boxland CLI to repo root and ./bin ...")
-	if err := os.MkdirAll("bin", 0o755); err != nil {
-		return err
-	}
-	rootOut := executableName("boxland")
-	binOut := filepath.Join("bin", executableName("boxland"))
-	if err := runExternal("go", "build", "-o", rootOut, "./server/cmd/boxland"); err != nil {
-		return err
-	}
-	if err := runExternal("go", "build", "-o", binOut, "./server/cmd/boxland"); err != nil {
-		return err
-	}
-	fmt.Printf("\nInstalled local CLI: ./%s\n", rootOut)
-	fmt.Printf("Copy also available: %s\n", binOut)
-	fmt.Println("Run `./boxland` from macOS/Linux, `boxland` from Windows, or add ./bin to PATH.")
+	fmt.Println("Install complete. Use ./boxland on macOS/Linux or boxland.cmd on Windows to run from source.")
 	return nil
 }
 
@@ -600,13 +586,6 @@ func prependPath(dir string) {
 		return
 	}
 	_ = os.Setenv("PATH", dir+string(os.PathListSeparator)+cur)
-}
-
-func executableName(base string) string {
-	if goruntime.GOOS == "windows" {
-		return base + ".exe"
-	}
-	return base
 }
 
 func hyperlink(url, label string) string {
@@ -1103,5 +1082,3 @@ func runServe() error {
 	slog.Info("boxland stopped")
 	return nil
 }
-
-

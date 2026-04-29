@@ -10,11 +10,8 @@ describe("StaticAssetCatalog.urlFor", () => {
 	});
 
 	it("returns empty string for an unknown id rather than throwing", () => {
-		// Empty string matches RemoteAssetCatalog's contract — Pixi's
-		// Assets.load handles the empty case as "no texture", which
-		// the Scene then renders as an empty sprite (sized 0). That's
-		// the right failure mode in an editor: a missing asset shows
-		// a blank cell rather than crashing the canvas.
+		// Empty string matches RemoteAssetCatalog's contract. TextureCache
+		// treats it as "no texture" without asking Pixi to load a bogus URL.
 		const cat = new StaticAssetCatalog({ entries: [] });
 		expect(cat.urlFor(123)).toBe("");
 	});
