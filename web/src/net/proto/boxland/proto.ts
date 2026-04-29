@@ -2,19 +2,31 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-export { ArtifactDiff } from './proto/artifact-diff.js';
-export { ArtifactKind } from './proto/artifact-kind.js';
 export { AudioEvent } from './proto/audio-event.js';
 export { ChunkVersion } from './proto/chunk-version.js';
 export { CollisionShape } from './proto/collision-shape.js';
 export { Diff } from './proto/diff.js';
-export { DiffOp } from './proto/diff-op.js';
+export { EditorDiff } from './proto/editor-diff.js';
+export { EditorDiffKind } from './proto/editor-diff-kind.js';
+export { EditorHistoryDepth } from './proto/editor-history-depth.js';
+export { EditorKind } from './proto/editor-kind.js';
+export { EditorLevelEditorBody } from './proto/editor-level-editor-body.js';
+export { EditorLevelPlacement } from './proto/editor-level-placement.js';
+export { EditorLevelPlacementMove } from './proto/editor-level-placement-move.js';
+export { EditorMapLayer } from './proto/editor-map-layer.js';
+export { EditorMapTile } from './proto/editor-map-tile.js';
+export { EditorMapTilePoint } from './proto/editor-map-tile-point.js';
+export { EditorMapmakerBody } from './proto/editor-mapmaker-body.js';
+export { EditorPaletteEntry } from './proto/editor-palette-entry.js';
+export { EditorPlacementID } from './proto/editor-placement-id.js';
+export { EditorPlacementOverrides } from './proto/editor-placement-overrides.js';
+export { EditorSnapshot } from './proto/editor-snapshot.js';
+export { EditorThemeEntry } from './proto/editor-theme-entry.js';
 export { EntityState } from './proto/entity-state.js';
 export { HudDataDelta } from './proto/hud-data-delta.js';
 export { HudLayoutFrame } from './proto/hud-layout-frame.js';
 export { HudValueKind } from './proto/hud-value-kind.js';
 export { LightingCell } from './proto/lighting-cell.js';
-export { LivePublish } from './proto/live-publish.js';
 export { MapState } from './proto/map-state.js';
 export { Mutation } from './proto/mutation.js';
 export { MutationKind } from './proto/mutation-kind.js';

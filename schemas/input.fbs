@@ -134,6 +134,25 @@ enum DesignerOpcode:uint16 {
     PlaceTiles         = 200,  // payload: PlaceTilesPayload
     EraseTiles         = 201,  // payload: EraseTilesPayload
     PlaceLighting      = 202,  // payload: PlaceLightingPayload
+
+    // 3xx range: editor session control. Gateway routes these to
+    // server/internal/sim/editor/Session per (kind, target_id).
+    EditorJoinMapmaker     = 300,  // payload: EditorJoinPayload
+    EditorJoinLevelEditor  = 301,  // payload: EditorJoinPayload
+    EditorLeave            = 302,  // payload: empty
+    EditorUndo             = 303,  // payload: empty
+    EditorRedo             = 304,  // payload: empty
+
+    // 4xx range: level-editor placement ops.
+    PlaceLevelEntity        = 400,  // payload: PlaceLevelEntityPayload
+    MoveLevelEntity         = 401,  // payload: MoveLevelEntityPayload
+    RemoveLevelEntity       = 402,  // payload: RemoveLevelEntityPayload
+    SetLevelEntityOverrides = 403,  // payload: SetLevelEntityOverridesPayload
+
+    // 5xx range: mapmaker ops not yet on the wire.
+    LockTiles          = 500,  // payload: PlaceTilesPayload (cells re-used)
+    UnlockTiles        = 501,  // payload: EraseTilesPayload
+    SetTileRotation    = 502,  // payload: SetTileRotationPayload
 }
 
 table DesignerCommandPayload {
@@ -180,6 +199,58 @@ table LightingCellPayload {
 table PlaceLightingPayload {
     map_id:uint32;
     cells:[LightingCellPayload];
+}
+
+// ---- Editor session payloads ----
+
+// EditorJoinPayload accompanies EditorJoinMapmaker /
+// EditorJoinLevelEditor. The target_id is the map id (mapmaker) or
+// level id (level editor). Server replies with an EditorSnapshot
+// (see schemas/design.fbs).
+table EditorJoinPayload {
+    target_id:uint64;
+    instance_hint:string;
+}
+
+// ---- Level editor placement payloads ----
+
+table PlaceLevelEntityPayload {
+    level_id:uint64;
+    entity_type_id:uint64;
+    x:int32;
+    y:int32;
+    rotation_degrees:int16 = 0;     // 0/90/180/270; validated server-side
+    instance_overrides_json:string; // canonicalized JSON string; "" = default
+    tags:[string];
+}
+
+table MoveLevelEntityPayload {
+    level_id:uint64;
+    placement_id:uint64;
+    x:int32;
+    y:int32;
+    rotation_degrees:int16 = 0;
+}
+
+table RemoveLevelEntityPayload {
+    level_id:uint64;
+    placement_id:uint64;
+}
+
+table SetLevelEntityOverridesPayload {
+    level_id:uint64;
+    placement_id:uint64;
+    instance_overrides_json:string;
+}
+
+// ---- Mapmaker extra payloads ----
+
+table SetTileRotationPayload {
+    map_id:uint64;
+    layer_id:uint32;
+    x:int32;
+    y:int32;
+    rotation_degrees:int16;          // 0/90/180/270
 }
 
 table HeartbeatPayload {

@@ -20,6 +20,31 @@ export { StaticAssetCatalog } from "./static-catalog";
 export type { StaticAssetCatalogOptions, StaticCatalogEntry } from "./static-catalog";
 export { EditorHarness } from "./editor-harness";
 export type { EditorHarnessOptions, FrameScheduler } from "./editor-harness";
+
+// UI primitives layer (theme + 9-slice + widgets). See ./ui.
+export {
+	Theme, Roles, NineSlice,
+	bindThemeToTextureCache,
+} from "./ui";
+export type {
+	Role, ThemeEntry, NineSliceInsets, NineSliceOptions,
+} from "./ui";
+
+// Editor harness (Pixi-rendered editor scenes). See ./editors.
+export {
+	EditorApp, Toolbar, Statusbar, ModalManager,
+	PaletteGrid, Inspector, EditorWire,
+	buildEditorLayout, resizeEditorLayout,
+} from "./editors";
+export type {
+	EditorAppOptions, EditorSlots,
+	ToolbarOptions, StatusbarOptions, ModalManagerOptions,
+	PaletteGridOptions, PaletteEntry,
+	InspectorOptions, EditorWireOptions, DiffHandler,
+	EditorKind, EditorSnapshot as EditorSnapshotProps, ViewportDims,
+	ToolbarAction, StatusbarSlot, ModalSpec, ModalButton,
+	FieldDescriptor, FieldKind, EnumOption,
+} from "./editors";
 export type {
 	AnimationFrame,
 	AssetCatalog,

@@ -45,8 +45,10 @@ import (
 	mapsservice "boxland/server/internal/maps"
 	"boxland/server/internal/persistence"
 	"boxland/server/internal/playerweb"
+	"boxland/server/internal/setup"
 	"boxland/server/internal/publishing/artifact"
 	"boxland/server/internal/settings"
+	"boxland/server/internal/sim/editor"
 	"boxland/server/internal/sim/runtime"
 	"boxland/server/internal/tilemaps"
 	"boxland/server/internal/tli"
@@ -135,8 +137,10 @@ func main() {
 			os.Exit(1)
 		}
 	case "seed":
-		slog.Info("subcommand not yet implemented", "cmd", "seed")
-		os.Exit(1)
+		if err := runSeed(os.Args[2:]); err != nil {
+			slog.Error("seed failed", "err", err)
+			os.Exit(1)
+		}
 	case "update":
 		if err := runUpdate(os.Args[2:]); err != nil {
 			slog.Error("update failed", "err", err)
@@ -740,6 +744,75 @@ func runMigrate(args []string) error {
 	}
 }
 
+// runSeed populates the database with default content. v1 ships one
+// seeder: the Crusenho gradient UI pack import, which creates one
+// `assets` row + one `entity_types` row (Class=ui) per UI sprite.
+//
+// Re-running is a no-op (the seeder is idempotent). Subcommands may
+// land later (`boxland seed --only=uipack`); for now there's only
+// one default content pack to seed.
+func runSeed(args []string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	pgPool, err := persistence.NewPool(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("postgres: %w", err)
+	}
+	defer pgPool.Close()
+
+	objStore, err := persistence.NewObjectStore(ctx, persistence.ObjectStoreConfig{
+		Endpoint:        cfg.S3Endpoint,
+		Region:          cfg.S3Region,
+		Bucket:          cfg.S3Bucket,
+		AccessKeyID:     cfg.S3AccessKeyID,
+		SecretAccessKey: cfg.S3SecretAccessKey,
+		UsePathStyle:    cfg.S3UsePathStyle,
+		PublicBaseURL:   cfg.S3PublicBaseURL,
+	})
+	if err != nil {
+		return fmt.Errorf("object store: %w", err)
+	}
+
+	assetSvc := assets.New(pgPool)
+	componentRegistry := components.Default()
+	entitySvc := entities.New(pgPool, componentRegistry)
+
+	// We attribute the seeded rows to the first owner-role designer
+	// in the system. If none exist (fresh DB before signup), we fail
+	// loudly: the operator should sign up the first designer first
+	// (which auto-assigns Owner) and then run `boxland seed`. We
+	// don't auto-create a synthetic "system" designer because that
+	// would need a password we'd then have to communicate.
+	var ownerID int64
+	if err := pgPool.QueryRow(ctx, `
+		SELECT id FROM designers WHERE role = 'owner' ORDER BY id ASC LIMIT 1
+	`).Scan(&ownerID); err != nil {
+		return fmt.Errorf("no owner-role designer exists yet; sign up via /design/signup first, then re-run `boxland seed`: %w", err)
+	}
+
+	res, err := setup.ImportUIKitGradient(ctx, setup.UIKitDeps{
+		Assets:   assetSvc,
+		Entities: entitySvc,
+		Store:    objStore,
+	}, ownerID)
+	if err != nil {
+		return fmt.Errorf("import ui kit: %w", err)
+	}
+	slog.Info("seed: ui-kit gradient",
+		"total", res.Total, "created", res.Created,
+		"skipped", res.Skipped, "failed", res.Failed,
+	)
+
+	// Future packs add additional ImportUIKit* calls here.
+	_ = args
+	return nil
+}
+
 func runServe() error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -895,10 +968,14 @@ func runServe() error {
 	wsAuth := &ws.LiveAuthBackend{Player: playerAuthSvc, Designer: authSvc}
 	wsDispatcher := ws.NewDispatcher()
 	ws.RegisterDefaultVerbs(wsDispatcher)
+	editorSessions := editor.NewManager()
 	authoringDeps := ws.AuthoringDeps{
-		MapsService:   mapsSvc,
-		LevelsService: levelsSvc,
-		Instances:     instanceMgr,
+		MapsService:    mapsSvc,
+		LevelsService:  levelsSvc,
+		Instances:      instanceMgr,
+		EditorSessions: editorSessions,
+		Entities:       entitySvc,
+		Assets:         assetSvc,
 	}
 	ws.RegisterAuthoringVerbs(wsDispatcher, authoringDeps)
 	ws.RegisterSpectatorVerb(wsDispatcher, authoringDeps)

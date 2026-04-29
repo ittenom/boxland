@@ -15,6 +15,7 @@ func TestDefault_RegistersBuiltins(t *testing.T) {
 		components.KindVelocity,
 		components.KindSprite,
 		components.KindCollider,
+		components.KindNineSlice,
 		// Automation-driven components (PLAN.md §128).
 		components.KindHealth,
 		components.KindInventory,

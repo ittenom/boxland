@@ -73,6 +73,22 @@ export interface HudOptions {
 	onButton?: HudButtonHandler;
 	/** Optional: override the default font family ("C64esque"). */
 	font?: string;
+	/**
+	 * Optional resolver: returns the 9-slice insets for an
+	 * entity_type id (the `skin` field on a widget). When omitted
+	 * or returning null, the renderer falls back to symmetric 8-px
+	 * insets (the historical default that worked for the previous
+	 * generation of skin frames).
+	 *
+	 * Production wiring: the page boot reads the `nine_slice`
+	 * component from the entity_type's components row and passes
+	 * a resolver here so designer-uploaded UI panels can declare
+	 * arbitrary insets and the HUD honors them. The same resolver
+	 * is used in the editor harness's NineSlice helper, closing
+	 * the dogfood loop: the same entity_type renders identically
+	 * in editor chrome and in-game HUDs.
+	 */
+	sliceInsetsFor?: (entityTypeId: number) => { left: number; top: number; right: number; bottom: number } | null;
 }
 
 /**
@@ -625,16 +641,24 @@ function buildDialogFrame(w: Widget, opts: HudOptions): WidgetHandle {
 	const heightPx = (cfg.height_px || 32) * widgetSizePx(w.size);
 	const root = new Container();
 	if (w.skin && w.skin > 0) {
+		const skinID = w.skin;
 		// Pixi 8 NineSliceSprite: load the texture lazily, default to a
 		// flat fill until it arrives so the frame doesn't pop in mid-tick.
 		const flat = new Graphics();
 		flat.rect(0, 0, widthPx, heightPx).fill(0x222244);
 		root.addChild(flat);
-		void opts.textures.base(w.skin).then((tex) => {
-			const slice = 8;
+		void opts.textures.base(skinID).then((tex) => {
+			// Resolve insets from the entity_type's nine_slice
+			// component. Falls back to symmetric 8 px when no
+			// resolver was wired or the entity has no component.
+			const insets = opts.sliceInsetsFor?.(skinID) ?? null;
+			const left = insets?.left ?? 8;
+			const top = insets?.top ?? 8;
+			const right = insets?.right ?? 8;
+			const bottom = insets?.bottom ?? 8;
 			const nine = new NineSliceSprite({
 				texture: tex as Texture,
-				leftWidth: slice, topHeight: slice, rightWidth: slice, bottomHeight: slice,
+				leftWidth: left, topHeight: top, rightWidth: right, bottomHeight: bottom,
 				width: widthPx, height: heightPx,
 			});
 			nine.roundPixels = true;

@@ -108,6 +108,7 @@
     --bx-kind-sprite:    #FFDD4A;
     --bx-kind-audio:     #5ADBFF;
     --bx-kind-ui_panel:  #5ADFB0;
+    --bx-kind-ui:        #5ADFB0; /* same family as ui_panel — UI entities wrap UI panel assets */
 
     /* checker pattern under previews */
     --bx-checker-a: #04162a;
@@ -167,6 +168,7 @@
     --bx-kind-sprite:    #FE9000;
     --bx-kind-audio:     #094074;
     --bx-kind-ui_panel:  #2fa56b;
+    --bx-kind-ui:        #2fa56b;
 
     --bx-checker-a: #ffffff;
     --bx-checker-b: #e4ecf4;
@@ -1069,6 +1071,7 @@ p, li { font-size: 13px; line-height: 1.55; }
 .bx-dot--sprite   { background: var(--bx-kind-sprite); }
 .bx-dot--audio    { background: var(--bx-kind-audio); }
 .bx-dot--ui_panel { background: var(--bx-kind-ui_panel); }
+.bx-dot--ui       { background: var(--bx-kind-ui); }
 
 
 /* -- Command palette ------------------------------------------------- */
@@ -1504,6 +1507,62 @@ p, li { font-size: 13px; line-height: 1.55; }
        the CSS background pattern that mapmaker.css applies — we want
        a flat dark surface to make placements pop. */
     background-image: none;
+}
+
+/* -- Pixi-mounted canvas hosts (level editor + mapmaker) --------------
+ * The legacy .bx-mapmaker__canvas rules above were written for an
+ * actual <canvas> element with intrinsic width/height attributes
+ * (`flex: 0 0 auto; width: auto; height: auto`). Pixi mounts its own
+ * canvas inside a <div> we provide; that div needs to fill the parent
+ * wrapper exactly so `pixi.init({ resizeTo: host })` reads stable
+ * bounds and doesn't enter an unbounded grow loop.
+ *
+ * These selectors target the .bx-..__pixi-host marker classes the
+ * editor entry scripts add. They override only the dimensional bits;
+ * background pattern + image-rendering carry through from the base
+ * .bx-mapmaker__canvas rule.                                          */
+.bx-mapmaker__pixi-host,
+.bx-level-editor__pixi-host {
+    flex: 1 1 auto;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    position: relative;
+    overflow: hidden;
+}
+
+/* Fullscreen Pixi-mounted editor host. Used by the Pixi-rendered
+ * mapmaker + level editor surfaces; the entry script mounts a
+ * BoxlandApp inside this element, and the harness draws every
+ * pixel of the editor (toolbar / sidebar / canvas / inspector /
+ * statusbar). The element fills the viewport below the chrome
+ * header. */
+.bx-pixi-editor-host {
+    display: block;
+    width: 100%;
+    height: calc(100vh - 56px); /* leave room for the global Boxland topbar */
+    position: relative;
+    overflow: hidden;
+    background: #0a0d14;
+}
+.bx-noscript {
+    color: #ffd84a;
+    text-align: center;
+    display: block;
+    padding: 32px;
+    font-family: ui-sans-serif, system-ui, sans-serif;
+}
+/* The pixi-host's parent (bx-mapmaker__canvas-wrap) needs to BE the
+ * scroll container, not the host itself; the host must just fill the
+ * parent. Force the wrapper to lay out as a column with the host
+ * flex-1 + the statusbar flex-0. */
+.bx-mapmaker__canvas-wrap {
+    overflow: hidden;
+}
+.bx-mapmaker__canvas-wrap > .bx-mapmaker__pixi-host,
+.bx-mapmaker__canvas-wrap > .bx-level-editor__pixi-host {
+    align-self: stretch;
 }
 /* Class-colored dots/labels in the palette + inspector. NPCs read as
    cool/diegetic, PCs as warm/heroic, logic as hot/abstract — matches

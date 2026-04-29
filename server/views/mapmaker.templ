@@ -34,6 +34,14 @@ type MapmakerProps struct {
 	// panel surfaces this so designers can see at a glance how much
 	// of the map is hand-authored vs procedural.
 	LockedCellCount int
+
+	// WSURL is the WebSocket gateway URL the editor JS connects to
+	// (typically "ws://host/ws"). Mirrors the sandbox convention.
+	WSURL string
+	// WSTicket is the short-lived designer-realm WS ticket the
+	// gateway minted for this designer; the JS sends it in the
+	// Auth frame after WS open.
+	WSTicket string
 }
 
 // PaletteEntry is one tile selectable from the toolbar. The atlas
@@ -108,48 +116,26 @@ templ MapmakerPage(p MapmakerProps) {
 				</div>
 			</header>
 
-			<div class="bx-mapmaker__layout">
-				<aside class="bx-mapmaker__sidebar bx-stack-tight">
-					@MapmakerToolbar(p)
-				</aside>
-
-				<main class="bx-mapmaker__canvas-wrap">
-					<canvas
-						id="mapmaker-canvas"
-						class="bx-mapmaker__canvas"
-						data-bx-mapmaker-canvas
-						data-map-id={ fmt.Sprintf("%d", p.Map.ID) }
-						data-map-w={ fmt.Sprintf("%d", p.Map.Width) }
-						data-map-h={ fmt.Sprintf("%d", p.Map.Height) }
-						data-default-layer-id={ fmt.Sprintf("%d", defaultLayerID(p.Layers)) }
-					></canvas>
-					<div class="bx-mapmaker__statusbar">
-						<span data-bx-mapmaker-status="cursor">(–, –)</span>
-						<span class="bx-muted">·</span>
-						<span data-bx-mapmaker-status="tool">brush</span>
-						<span class="bx-muted">·</span>
-						<span data-bx-mapmaker-status="layer">{ defaultLayerName(p.Layers) }</span>
-						<span class="bx-muted">·</span>
-						<span data-bx-mapmaker-status="dirty" class="bx-small bx-muted"></span>
-					</div>
-				</main>
-
-				<aside class="bx-mapmaker__inspector bx-stack-tight" id="mapmaker-inspector">
-					<h3 class="bx-panel__title" data-copy-slot="mapmaker.inspector.title">Inspector</h3>
-					<p class="bx-muted bx-small" data-copy-slot="mapmaker.inspector.empty">
-						Click a tile to edit its per-cell overrides.
-					</p>
-				</aside>
-			</div>
+			<main
+				class="bx-pixi-editor-host"
+				data-bx-mapmaker-host
+				data-map-id={ fmt.Sprintf("%d", p.Map.ID) }
+				data-map-w={ fmt.Sprintf("%d", p.Map.Width) }
+				data-map-h={ fmt.Sprintf("%d", p.Map.Height) }
+				data-default-layer-id={ fmt.Sprintf("%d", defaultLayerID(p.Layers)) }
+				data-bx-ws-url={ p.WSURL }
+				data-bx-ws-ticket={ p.WSTicket }
+				tabindex="0"
+			>
+				<noscript class="bx-noscript">This editor needs JavaScript to render.</noscript>
+			</main>
 		</section>
 
 		<div id="modal-host"></div>
-		// Pixi-driven mapmaker. The templ's <body data-surface="mapmaker">
-		// (set by the handler in BuildChrome) triggers the auto-boot at
-		// the bottom of the entry script. The procedural overlay sibling
-		// is loaded from /static/js when the map's mode is "procedural"
-		// (see MapmakerProceduralPanel) — it talks to us via CustomEvents
-		// so it didn't need migrating in lockstep.
+		// Pixi-driven mapmaker. The mapmaker chrome (toolbar,
+		// palette, inspector, status bar) is rendered inside the
+		// Pixi scene by the EditorApp harness. Procedural-mode
+		// controls are wired through the same WS session.
 		<script type="module" src="/static/web/mapmaker.js" defer></script>
 	}
 }

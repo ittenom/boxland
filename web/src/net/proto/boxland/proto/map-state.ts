@@ -28,10 +28,6 @@ static getSizePrefixedRootAsMapState(bb:flatbuffers.ByteBuffer, obj?:MapState):M
   return (obj || new MapState()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
 }
 
-static bufferHasIdentifier(bb:flatbuffers.ByteBuffer):boolean {
-  return bb.__has_identifier('BLWO');
-}
-
 protocolVersion(obj?:ProtocolVersion):ProtocolVersion|null {
   const offset = this.bb!.__offset(this.bb_pos, 4);
   return offset ? (obj || new ProtocolVersion()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
@@ -157,14 +153,6 @@ static endMapState(builder:flatbuffers.Builder):flatbuffers.Offset {
   builder.requiredField(offset, 4) // protocol_version
   builder.requiredField(offset, 8) // instance_id
   return offset;
-}
-
-static finishMapStateBuffer(builder:flatbuffers.Builder, offset:flatbuffers.Offset) {
-  builder.finish(offset, 'BLWO');
-}
-
-static finishSizePrefixedMapStateBuffer(builder:flatbuffers.Builder, offset:flatbuffers.Offset) {
-  builder.finish(offset, 'BLWO', true);
 }
 
 static createMapState(builder:flatbuffers.Builder, protocolVersionOffset:flatbuffers.Offset, mapId:number, instanceIdOffset:flatbuffers.Offset, tick:bigint, tilesOffset:flatbuffers.Offset, entitiesOffset:flatbuffers.Offset, lightingOffset:flatbuffers.Offset):flatbuffers.Offset {

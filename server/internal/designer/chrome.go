@@ -85,19 +85,22 @@ func BuildChrome(r *http.Request, d Deps) views.LayoutProps {
 
 	if d.Entities != nil {
 		// One ListByClass call per class. N+1 by class is fine — there
-		// are exactly four classes by construction. Each is bounded by
+		// are exactly five classes by construction. Each is bounded by
 		// treeItemsPerSubSection.
 		out.Tree.TileEntities = makeEntitySectionByClass(ctx, d.Entities, entities.ClassTile, "/design/entities/tiles")
 		out.Tree.NPCEntities = makeEntitySectionByClass(ctx, d.Entities, entities.ClassNPC, "/design/entities/npcs")
 		out.Tree.PCEntities = makeEntitySectionByClass(ctx, d.Entities, entities.ClassPC, "/design/entities/pcs")
 		out.Tree.LogicEntities = makeEntitySectionByClass(ctx, d.Entities, entities.ClassLogic, "/design/entities/logic")
+		out.Tree.UIEntities = makeEntitySectionByClass(ctx, d.Entities, entities.ClassUI, "/design/entities/ui")
 		out.Project.TileEntityCount = out.Tree.TileEntities.Total
 		out.Project.NPCEntityCount = out.Tree.NPCEntities.Total
 		out.Project.PCEntityCount = out.Tree.PCEntities.Total
 		out.Project.LogicEntityCount = out.Tree.LogicEntities.Total
+		out.Project.UIEntityCount = out.Tree.UIEntities.Total
 		out.Project.EntityCount =
 			out.Project.TileEntityCount + out.Project.NPCEntityCount +
-				out.Project.PCEntityCount + out.Project.LogicEntityCount
+				out.Project.PCEntityCount + out.Project.LogicEntityCount +
+				out.Project.UIEntityCount
 	}
 
 	// ---- Library kinds -----------------------------------------------
@@ -330,6 +333,11 @@ func entityMetaCompact(e entities.EntityType) string {
 		return "npc"
 	case entities.ClassPC:
 		return "pc"
+	case entities.ClassUI:
+		if len(e.Tags) > 0 {
+			return e.Tags[0]
+		}
+		return "ui"
 	default:
 		if len(e.Tags) > 0 {
 			return e.Tags[0]

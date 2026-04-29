@@ -7,120 +7,122 @@ import (
 	"strconv"
 )
 
-type ArtifactKind byte
+type EditorKind byte
 
 const (
-	ArtifactKindAsset          ArtifactKind = 0
-	ArtifactKindEntityType     ArtifactKind = 1
-	ArtifactKindMap            ArtifactKind = 2
-	ArtifactKindPalette        ArtifactKind = 3
-	ArtifactKindPaletteVariant ArtifactKind = 4
-	ArtifactKindEdgeSocketType ArtifactKind = 5
-	ArtifactKindTileGroup      ArtifactKind = 6
+	EditorKindMapmaker    EditorKind = 0
+	EditorKindLevelEditor EditorKind = 1
 )
 
-var EnumNamesArtifactKind = map[ArtifactKind]string{
-	ArtifactKindAsset:          "Asset",
-	ArtifactKindEntityType:     "EntityType",
-	ArtifactKindMap:            "Map",
-	ArtifactKindPalette:        "Palette",
-	ArtifactKindPaletteVariant: "PaletteVariant",
-	ArtifactKindEdgeSocketType: "EdgeSocketType",
-	ArtifactKindTileGroup:      "TileGroup",
+var EnumNamesEditorKind = map[EditorKind]string{
+	EditorKindMapmaker:    "Mapmaker",
+	EditorKindLevelEditor: "LevelEditor",
 }
 
-var EnumValuesArtifactKind = map[string]ArtifactKind{
-	"Asset":          ArtifactKindAsset,
-	"EntityType":     ArtifactKindEntityType,
-	"Map":            ArtifactKindMap,
-	"Palette":        ArtifactKindPalette,
-	"PaletteVariant": ArtifactKindPaletteVariant,
-	"EdgeSocketType": ArtifactKindEdgeSocketType,
-	"TileGroup":      ArtifactKindTileGroup,
+var EnumValuesEditorKind = map[string]EditorKind{
+	"Mapmaker":    EditorKindMapmaker,
+	"LevelEditor": EditorKindLevelEditor,
 }
 
-func (v ArtifactKind) String() string {
-	if s, ok := EnumNamesArtifactKind[v]; ok {
+func (v EditorKind) String() string {
+	if s, ok := EnumNamesEditorKind[v]; ok {
 		return s
 	}
-	return "ArtifactKind(" + strconv.FormatInt(int64(v), 10) + ")"
+	return "EditorKind(" + strconv.FormatInt(int64(v), 10) + ")"
 }
 
-type DiffOp byte
+type EditorDiffKind byte
 
 const (
-	DiffOpCreated DiffOp = 0
-	DiffOpUpdated DiffOp = 1
-	DiffOpDeleted DiffOp = 2
+	EditorDiffKindNone             EditorDiffKind = 0
+	EditorDiffKindTilePlaced       EditorDiffKind = 1
+	EditorDiffKindTileErased       EditorDiffKind = 2
+	EditorDiffKindLockAdded        EditorDiffKind = 3
+	EditorDiffKindLockRemoved      EditorDiffKind = 4
+	EditorDiffKindPlacementAdded   EditorDiffKind = 5
+	EditorDiffKindPlacementMoved   EditorDiffKind = 6
+	EditorDiffKindPlacementRemoved EditorDiffKind = 7
+	EditorDiffKindOverridesChanged EditorDiffKind = 8
+	EditorDiffKindHistoryChanged   EditorDiffKind = 9
 )
 
-var EnumNamesDiffOp = map[DiffOp]string{
-	DiffOpCreated: "Created",
-	DiffOpUpdated: "Updated",
-	DiffOpDeleted: "Deleted",
+var EnumNamesEditorDiffKind = map[EditorDiffKind]string{
+	EditorDiffKindNone:             "None",
+	EditorDiffKindTilePlaced:       "TilePlaced",
+	EditorDiffKindTileErased:       "TileErased",
+	EditorDiffKindLockAdded:        "LockAdded",
+	EditorDiffKindLockRemoved:      "LockRemoved",
+	EditorDiffKindPlacementAdded:   "PlacementAdded",
+	EditorDiffKindPlacementMoved:   "PlacementMoved",
+	EditorDiffKindPlacementRemoved: "PlacementRemoved",
+	EditorDiffKindOverridesChanged: "OverridesChanged",
+	EditorDiffKindHistoryChanged:   "HistoryChanged",
 }
 
-var EnumValuesDiffOp = map[string]DiffOp{
-	"Created": DiffOpCreated,
-	"Updated": DiffOpUpdated,
-	"Deleted": DiffOpDeleted,
+var EnumValuesEditorDiffKind = map[string]EditorDiffKind{
+	"None":             EditorDiffKindNone,
+	"TilePlaced":       EditorDiffKindTilePlaced,
+	"TileErased":       EditorDiffKindTileErased,
+	"LockAdded":        EditorDiffKindLockAdded,
+	"LockRemoved":      EditorDiffKindLockRemoved,
+	"PlacementAdded":   EditorDiffKindPlacementAdded,
+	"PlacementMoved":   EditorDiffKindPlacementMoved,
+	"PlacementRemoved": EditorDiffKindPlacementRemoved,
+	"OverridesChanged": EditorDiffKindOverridesChanged,
+	"HistoryChanged":   EditorDiffKindHistoryChanged,
 }
 
-func (v DiffOp) String() string {
-	if s, ok := EnumNamesDiffOp[v]; ok {
+func (v EditorDiffKind) String() string {
+	if s, ok := EnumNamesEditorDiffKind[v]; ok {
 		return s
 	}
-	return "DiffOp(" + strconv.FormatInt(int64(v), 10) + ")"
+	return "EditorDiffKind(" + strconv.FormatInt(int64(v), 10) + ")"
 }
 
-type ArtifactDiff struct {
+type EditorThemeEntry struct {
 	_tab flatbuffers.Table
 }
 
-func GetRootAsArtifactDiff(buf []byte, offset flatbuffers.UOffsetT) *ArtifactDiff {
+func GetRootAsEditorThemeEntry(buf []byte, offset flatbuffers.UOffsetT) *EditorThemeEntry {
 	n := flatbuffers.GetUOffsetT(buf[offset:])
-	x := &ArtifactDiff{}
+	x := &EditorThemeEntry{}
 	x.Init(buf, n+offset)
 	return x
 }
 
-func FinishArtifactDiffBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+func FinishEditorThemeEntryBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
 	builder.Finish(offset)
 }
 
-func GetSizePrefixedRootAsArtifactDiff(buf []byte, offset flatbuffers.UOffsetT) *ArtifactDiff {
+func GetSizePrefixedRootAsEditorThemeEntry(buf []byte, offset flatbuffers.UOffsetT) *EditorThemeEntry {
 	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
-	x := &ArtifactDiff{}
+	x := &EditorThemeEntry{}
 	x.Init(buf, n+offset+flatbuffers.SizeUint32)
 	return x
 }
 
-func FinishSizePrefixedArtifactDiffBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+func FinishSizePrefixedEditorThemeEntryBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
 	builder.FinishSizePrefixed(offset)
 }
 
-func (rcv *ArtifactDiff) Init(buf []byte, i flatbuffers.UOffsetT) {
+func (rcv *EditorThemeEntry) Init(buf []byte, i flatbuffers.UOffsetT) {
 	rcv._tab.Bytes = buf
 	rcv._tab.Pos = i
 }
 
-func (rcv *ArtifactDiff) Table() flatbuffers.Table {
+func (rcv *EditorThemeEntry) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *ArtifactDiff) Kind() ArtifactKind {
+func (rcv *EditorThemeEntry) Role() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
-		return ArtifactKind(rcv._tab.GetByte(o + rcv._tab.Pos))
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
-	return 0
+	return nil
 }
 
-func (rcv *ArtifactDiff) MutateKind(n ArtifactKind) bool {
-	return rcv._tab.MutateByteSlot(4, byte(n))
-}
-
-func (rcv *ArtifactDiff) ArtifactId() uint64 {
+func (rcv *EditorThemeEntry) EntityTypeId() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
@@ -128,199 +130,367 @@ func (rcv *ArtifactDiff) ArtifactId() uint64 {
 	return 0
 }
 
-func (rcv *ArtifactDiff) MutateArtifactId(n uint64) bool {
+func (rcv *EditorThemeEntry) MutateEntityTypeId(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(6, n)
 }
 
-func (rcv *ArtifactDiff) Op() DiffOp {
+func (rcv *EditorThemeEntry) AssetUrl() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
-		return DiffOp(rcv._tab.GetByte(o + rcv._tab.Pos))
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
-	return 0
+	return nil
 }
 
-func (rcv *ArtifactDiff) MutateOp(n DiffOp) bool {
-	return rcv._tab.MutateByteSlot(8, byte(n))
-}
-
-func (rcv *ArtifactDiff) SummaryLine() []byte {
+func (rcv *EditorThemeEntry) NineSliceLeft() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
-func (rcv *ArtifactDiff) StructuredDiff(j int) byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
-	if o != 0 {
-		a := rcv._tab.Vector(o)
-		return rcv._tab.GetByte(a + flatbuffers.UOffsetT(j*1))
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
 	}
 	return 0
 }
 
-func (rcv *ArtifactDiff) StructuredDiffLength() int {
+func (rcv *EditorThemeEntry) MutateNineSliceLeft(n int32) bool {
+	return rcv._tab.MutateInt32Slot(10, n)
+}
+
+func (rcv *EditorThemeEntry) NineSliceTop() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
-		return rcv._tab.VectorLen(o)
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
 	}
 	return 0
 }
 
-func (rcv *ArtifactDiff) StructuredDiffBytes() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
+func (rcv *EditorThemeEntry) MutateNineSliceTop(n int32) bool {
+	return rcv._tab.MutateInt32Slot(12, n)
 }
 
-func (rcv *ArtifactDiff) MutateStructuredDiff(j int, n byte) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+func (rcv *EditorThemeEntry) NineSliceRight() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
-		a := rcv._tab.Vector(o)
-		return rcv._tab.MutateByte(a+flatbuffers.UOffsetT(j*1), n)
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
 	}
-	return false
+	return 0
 }
 
-func ArtifactDiffStart(builder *flatbuffers.Builder) {
-	builder.StartObject(5)
+func (rcv *EditorThemeEntry) MutateNineSliceRight(n int32) bool {
+	return rcv._tab.MutateInt32Slot(14, n)
 }
-func ArtifactDiffAddKind(builder *flatbuffers.Builder, kind ArtifactKind) {
-	builder.PrependByteSlot(0, byte(kind), 0)
+
+func (rcv *EditorThemeEntry) NineSliceBottom() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
 }
-func ArtifactDiffAddArtifactId(builder *flatbuffers.Builder, artifactId uint64) {
-	builder.PrependUint64Slot(1, artifactId, 0)
+
+func (rcv *EditorThemeEntry) MutateNineSliceBottom(n int32) bool {
+	return rcv._tab.MutateInt32Slot(16, n)
 }
-func ArtifactDiffAddOp(builder *flatbuffers.Builder, op DiffOp) {
-	builder.PrependByteSlot(2, byte(op), 0)
+
+func (rcv *EditorThemeEntry) Width() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
 }
-func ArtifactDiffAddSummaryLine(builder *flatbuffers.Builder, summaryLine flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(summaryLine), 0)
+
+func (rcv *EditorThemeEntry) MutateWidth(n int32) bool {
+	return rcv._tab.MutateInt32Slot(18, n)
 }
-func ArtifactDiffAddStructuredDiff(builder *flatbuffers.Builder, structuredDiff flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(structuredDiff), 0)
+
+func (rcv *EditorThemeEntry) Height() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
 }
-func ArtifactDiffStartStructuredDiffVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
-	return builder.StartVector(1, numElems, 1)
+
+func (rcv *EditorThemeEntry) MutateHeight(n int32) bool {
+	return rcv._tab.MutateInt32Slot(20, n)
 }
-func ArtifactDiffEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+
+func EditorThemeEntryStart(builder *flatbuffers.Builder) {
+	builder.StartObject(9)
+}
+func EditorThemeEntryAddRole(builder *flatbuffers.Builder, role flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(role), 0)
+}
+func EditorThemeEntryAddEntityTypeId(builder *flatbuffers.Builder, entityTypeId uint64) {
+	builder.PrependUint64Slot(1, entityTypeId, 0)
+}
+func EditorThemeEntryAddAssetUrl(builder *flatbuffers.Builder, assetUrl flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(assetUrl), 0)
+}
+func EditorThemeEntryAddNineSliceLeft(builder *flatbuffers.Builder, nineSliceLeft int32) {
+	builder.PrependInt32Slot(3, nineSliceLeft, 0)
+}
+func EditorThemeEntryAddNineSliceTop(builder *flatbuffers.Builder, nineSliceTop int32) {
+	builder.PrependInt32Slot(4, nineSliceTop, 0)
+}
+func EditorThemeEntryAddNineSliceRight(builder *flatbuffers.Builder, nineSliceRight int32) {
+	builder.PrependInt32Slot(5, nineSliceRight, 0)
+}
+func EditorThemeEntryAddNineSliceBottom(builder *flatbuffers.Builder, nineSliceBottom int32) {
+	builder.PrependInt32Slot(6, nineSliceBottom, 0)
+}
+func EditorThemeEntryAddWidth(builder *flatbuffers.Builder, width int32) {
+	builder.PrependInt32Slot(7, width, 0)
+}
+func EditorThemeEntryAddHeight(builder *flatbuffers.Builder, height int32) {
+	builder.PrependInt32Slot(8, height, 0)
+}
+func EditorThemeEntryEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
-type LivePublish struct {
+type EditorPaletteEntry struct {
 	_tab flatbuffers.Table
 }
 
-const LivePublishIdentifier = "BLDS"
-
-func GetRootAsLivePublish(buf []byte, offset flatbuffers.UOffsetT) *LivePublish {
+func GetRootAsEditorPaletteEntry(buf []byte, offset flatbuffers.UOffsetT) *EditorPaletteEntry {
 	n := flatbuffers.GetUOffsetT(buf[offset:])
-	x := &LivePublish{}
+	x := &EditorPaletteEntry{}
 	x.Init(buf, n+offset)
 	return x
 }
 
-func FinishLivePublishBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
-	identifierBytes := []byte(LivePublishIdentifier)
-	builder.FinishWithFileIdentifier(offset, identifierBytes)
+func FinishEditorPaletteEntryBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.Finish(offset)
 }
 
-func LivePublishBufferHasIdentifier(buf []byte) bool {
-	return flatbuffers.BufferHasIdentifier(buf, LivePublishIdentifier)
-}
-
-func GetSizePrefixedRootAsLivePublish(buf []byte, offset flatbuffers.UOffsetT) *LivePublish {
+func GetSizePrefixedRootAsEditorPaletteEntry(buf []byte, offset flatbuffers.UOffsetT) *EditorPaletteEntry {
 	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
-	x := &LivePublish{}
+	x := &EditorPaletteEntry{}
 	x.Init(buf, n+offset+flatbuffers.SizeUint32)
 	return x
 }
 
-func FinishSizePrefixedLivePublishBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
-	identifierBytes := []byte(LivePublishIdentifier)
-	builder.FinishSizePrefixedWithFileIdentifier(offset, identifierBytes)
+func FinishSizePrefixedEditorPaletteEntryBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.FinishSizePrefixed(offset)
 }
 
-func SizePrefixedLivePublishBufferHasIdentifier(buf []byte) bool {
-	return flatbuffers.SizePrefixedBufferHasIdentifier(buf, LivePublishIdentifier)
-}
-
-func (rcv *LivePublish) Init(buf []byte, i flatbuffers.UOffsetT) {
+func (rcv *EditorPaletteEntry) Init(buf []byte, i flatbuffers.UOffsetT) {
 	rcv._tab.Bytes = buf
 	rcv._tab.Pos = i
 }
 
-func (rcv *LivePublish) Table() flatbuffers.Table {
+func (rcv *EditorPaletteEntry) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *LivePublish) ProtocolVersion(obj *ProtocolVersion) *ProtocolVersion {
+func (rcv *EditorPaletteEntry) EntityTypeId() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
-		x := rcv._tab.Indirect(o + rcv._tab.Pos)
-		if obj == nil {
-			obj = new(ProtocolVersion)
-		}
-		obj.Init(rcv._tab.Bytes, x)
-		return obj
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorPaletteEntry) MutateEntityTypeId(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(4, n)
+}
+
+func (rcv *EditorPaletteEntry) Name() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
 	return nil
 }
 
-func (rcv *LivePublish) ChangesetId() uint64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
-	if o != 0 {
-		return rcv._tab.GetUint64(o + rcv._tab.Pos)
-	}
-	return 0
-}
-
-func (rcv *LivePublish) MutateChangesetId(n uint64) bool {
-	return rcv._tab.MutateUint64Slot(6, n)
-}
-
-func (rcv *LivePublish) PublishedAtMs() uint64 {
+func (rcv *EditorPaletteEntry) Class() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
-		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *EditorPaletteEntry) SpriteUrl() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *EditorPaletteEntry) AtlasIndex() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
 	}
 	return 0
 }
 
-func (rcv *LivePublish) MutatePublishedAtMs(n uint64) bool {
-	return rcv._tab.MutateUint64Slot(8, n)
+func (rcv *EditorPaletteEntry) MutateAtlasIndex(n int32) bool {
+	return rcv._tab.MutateInt32Slot(12, n)
 }
 
-func (rcv *LivePublish) AffectedMapIds(j int) uint32 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+func (rcv *EditorPaletteEntry) AtlasCols() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
-		a := rcv._tab.Vector(o)
-		return rcv._tab.GetUint32(a + flatbuffers.UOffsetT(j*4))
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
 	}
 	return 0
 }
 
-func (rcv *LivePublish) AffectedMapIdsLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+func (rcv *EditorPaletteEntry) MutateAtlasCols(n int32) bool {
+	return rcv._tab.MutateInt32Slot(14, n)
+}
+
+func (rcv *EditorPaletteEntry) TileSize() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
-		return rcv._tab.VectorLen(o)
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
 	}
 	return 0
 }
 
-func (rcv *LivePublish) MutateAffectedMapIds(j int, n uint32) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+func (rcv *EditorPaletteEntry) MutateTileSize(n int32) bool {
+	return rcv._tab.MutateInt32Slot(16, n)
+}
+
+func (rcv *EditorPaletteEntry) FolderId() int64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
-		a := rcv._tab.Vector(o)
-		return rcv._tab.MutateUint32(a+flatbuffers.UOffsetT(j*4), n)
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorPaletteEntry) MutateFolderId(n int64) bool {
+	return rcv._tab.MutateInt64Slot(18, n)
+}
+
+func (rcv *EditorPaletteEntry) ProceduralInclude() bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	if o != 0 {
+		return rcv._tab.GetBool(o + rcv._tab.Pos)
 	}
 	return false
 }
 
-func (rcv *LivePublish) Diffs(obj *ArtifactDiff, j int) bool {
+func (rcv *EditorPaletteEntry) MutateProceduralInclude(n bool) bool {
+	return rcv._tab.MutateBoolSlot(20, n)
+}
+
+func EditorPaletteEntryStart(builder *flatbuffers.Builder) {
+	builder.StartObject(9)
+}
+func EditorPaletteEntryAddEntityTypeId(builder *flatbuffers.Builder, entityTypeId uint64) {
+	builder.PrependUint64Slot(0, entityTypeId, 0)
+}
+func EditorPaletteEntryAddName(builder *flatbuffers.Builder, name flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(name), 0)
+}
+func EditorPaletteEntryAddClass(builder *flatbuffers.Builder, class flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(class), 0)
+}
+func EditorPaletteEntryAddSpriteUrl(builder *flatbuffers.Builder, spriteUrl flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(spriteUrl), 0)
+}
+func EditorPaletteEntryAddAtlasIndex(builder *flatbuffers.Builder, atlasIndex int32) {
+	builder.PrependInt32Slot(4, atlasIndex, 0)
+}
+func EditorPaletteEntryAddAtlasCols(builder *flatbuffers.Builder, atlasCols int32) {
+	builder.PrependInt32Slot(5, atlasCols, 0)
+}
+func EditorPaletteEntryAddTileSize(builder *flatbuffers.Builder, tileSize int32) {
+	builder.PrependInt32Slot(6, tileSize, 0)
+}
+func EditorPaletteEntryAddFolderId(builder *flatbuffers.Builder, folderId int64) {
+	builder.PrependInt64Slot(7, folderId, 0)
+}
+func EditorPaletteEntryAddProceduralInclude(builder *flatbuffers.Builder, proceduralInclude bool) {
+	builder.PrependBoolSlot(8, proceduralInclude, false)
+}
+func EditorPaletteEntryEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	return builder.EndObject()
+}
+type EditorMapmakerBody struct {
+	_tab flatbuffers.Table
+}
+
+func GetRootAsEditorMapmakerBody(buf []byte, offset flatbuffers.UOffsetT) *EditorMapmakerBody {
+	n := flatbuffers.GetUOffsetT(buf[offset:])
+	x := &EditorMapmakerBody{}
+	x.Init(buf, n+offset)
+	return x
+}
+
+func FinishEditorMapmakerBodyBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.Finish(offset)
+}
+
+func GetSizePrefixedRootAsEditorMapmakerBody(buf []byte, offset flatbuffers.UOffsetT) *EditorMapmakerBody {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &EditorMapmakerBody{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
+func FinishSizePrefixedEditorMapmakerBodyBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.FinishSizePrefixed(offset)
+}
+
+func (rcv *EditorMapmakerBody) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *EditorMapmakerBody) Table() flatbuffers.Table {
+	return rcv._tab
+}
+
+func (rcv *EditorMapmakerBody) MapId() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorMapmakerBody) MutateMapId(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(4, n)
+}
+
+func (rcv *EditorMapmakerBody) MapName() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *EditorMapmakerBody) Width() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorMapmakerBody) MutateWidth(n int32) bool {
+	return rcv._tab.MutateInt32Slot(8, n)
+}
+
+func (rcv *EditorMapmakerBody) Height() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorMapmakerBody) MutateHeight(n int32) bool {
+	return rcv._tab.MutateInt32Slot(10, n)
+}
+
+func (rcv *EditorMapmakerBody) Layers(obj *EditorMapLayer, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
@@ -332,7 +502,7 @@ func (rcv *LivePublish) Diffs(obj *ArtifactDiff, j int) bool {
 	return false
 }
 
-func (rcv *LivePublish) DiffsLength() int {
+func (rcv *EditorMapmakerBody) LayersLength() int {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
@@ -340,30 +510,1306 @@ func (rcv *LivePublish) DiffsLength() int {
 	return 0
 }
 
-func LivePublishStart(builder *flatbuffers.Builder) {
+func (rcv *EditorMapmakerBody) Tiles(obj *EditorMapTile, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+
+func (rcv *EditorMapmakerBody) TilesLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *EditorMapmakerBody) Locks(obj *EditorMapTile, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+
+func (rcv *EditorMapmakerBody) LocksLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func EditorMapmakerBodyStart(builder *flatbuffers.Builder) {
+	builder.StartObject(7)
+}
+func EditorMapmakerBodyAddMapId(builder *flatbuffers.Builder, mapId uint64) {
+	builder.PrependUint64Slot(0, mapId, 0)
+}
+func EditorMapmakerBodyAddMapName(builder *flatbuffers.Builder, mapName flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(mapName), 0)
+}
+func EditorMapmakerBodyAddWidth(builder *flatbuffers.Builder, width int32) {
+	builder.PrependInt32Slot(2, width, 0)
+}
+func EditorMapmakerBodyAddHeight(builder *flatbuffers.Builder, height int32) {
+	builder.PrependInt32Slot(3, height, 0)
+}
+func EditorMapmakerBodyAddLayers(builder *flatbuffers.Builder, layers flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(layers), 0)
+}
+func EditorMapmakerBodyStartLayersVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func EditorMapmakerBodyAddTiles(builder *flatbuffers.Builder, tiles flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(tiles), 0)
+}
+func EditorMapmakerBodyStartTilesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func EditorMapmakerBodyAddLocks(builder *flatbuffers.Builder, locks flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(locks), 0)
+}
+func EditorMapmakerBodyStartLocksVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func EditorMapmakerBodyEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	return builder.EndObject()
+}
+type EditorMapLayer struct {
+	_tab flatbuffers.Table
+}
+
+func GetRootAsEditorMapLayer(buf []byte, offset flatbuffers.UOffsetT) *EditorMapLayer {
+	n := flatbuffers.GetUOffsetT(buf[offset:])
+	x := &EditorMapLayer{}
+	x.Init(buf, n+offset)
+	return x
+}
+
+func FinishEditorMapLayerBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.Finish(offset)
+}
+
+func GetSizePrefixedRootAsEditorMapLayer(buf []byte, offset flatbuffers.UOffsetT) *EditorMapLayer {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &EditorMapLayer{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
+func FinishSizePrefixedEditorMapLayerBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.FinishSizePrefixed(offset)
+}
+
+func (rcv *EditorMapLayer) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *EditorMapLayer) Table() flatbuffers.Table {
+	return rcv._tab
+}
+
+func (rcv *EditorMapLayer) LayerId() uint32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return rcv._tab.GetUint32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorMapLayer) MutateLayerId(n uint32) bool {
+	return rcv._tab.MutateUint32Slot(4, n)
+}
+
+func (rcv *EditorMapLayer) Name() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *EditorMapLayer) Kind() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *EditorMapLayer) Ord() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorMapLayer) MutateOrd(n int32) bool {
+	return rcv._tab.MutateInt32Slot(10, n)
+}
+
+func (rcv *EditorMapLayer) YSortEntities() bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	if o != 0 {
+		return rcv._tab.GetBool(o + rcv._tab.Pos)
+	}
+	return false
+}
+
+func (rcv *EditorMapLayer) MutateYSortEntities(n bool) bool {
+	return rcv._tab.MutateBoolSlot(12, n)
+}
+
+func EditorMapLayerStart(builder *flatbuffers.Builder) {
 	builder.StartObject(5)
 }
-func LivePublishAddProtocolVersion(builder *flatbuffers.Builder, protocolVersion flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(protocolVersion), 0)
+func EditorMapLayerAddLayerId(builder *flatbuffers.Builder, layerId uint32) {
+	builder.PrependUint32Slot(0, layerId, 0)
 }
-func LivePublishAddChangesetId(builder *flatbuffers.Builder, changesetId uint64) {
-	builder.PrependUint64Slot(1, changesetId, 0)
+func EditorMapLayerAddName(builder *flatbuffers.Builder, name flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(name), 0)
 }
-func LivePublishAddPublishedAtMs(builder *flatbuffers.Builder, publishedAtMs uint64) {
-	builder.PrependUint64Slot(2, publishedAtMs, 0)
+func EditorMapLayerAddKind(builder *flatbuffers.Builder, kind flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(kind), 0)
 }
-func LivePublishAddAffectedMapIds(builder *flatbuffers.Builder, affectedMapIds flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(affectedMapIds), 0)
+func EditorMapLayerAddOrd(builder *flatbuffers.Builder, ord int32) {
+	builder.PrependInt32Slot(3, ord, 0)
 }
-func LivePublishStartAffectedMapIdsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+func EditorMapLayerAddYSortEntities(builder *flatbuffers.Builder, ySortEntities bool) {
+	builder.PrependBoolSlot(4, ySortEntities, false)
+}
+func EditorMapLayerEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	return builder.EndObject()
+}
+type EditorMapTile struct {
+	_tab flatbuffers.Table
+}
+
+func GetRootAsEditorMapTile(buf []byte, offset flatbuffers.UOffsetT) *EditorMapTile {
+	n := flatbuffers.GetUOffsetT(buf[offset:])
+	x := &EditorMapTile{}
+	x.Init(buf, n+offset)
+	return x
+}
+
+func FinishEditorMapTileBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.Finish(offset)
+}
+
+func GetSizePrefixedRootAsEditorMapTile(buf []byte, offset flatbuffers.UOffsetT) *EditorMapTile {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &EditorMapTile{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
+func FinishSizePrefixedEditorMapTileBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.FinishSizePrefixed(offset)
+}
+
+func (rcv *EditorMapTile) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *EditorMapTile) Table() flatbuffers.Table {
+	return rcv._tab
+}
+
+func (rcv *EditorMapTile) LayerId() uint32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return rcv._tab.GetUint32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorMapTile) MutateLayerId(n uint32) bool {
+	return rcv._tab.MutateUint32Slot(4, n)
+}
+
+func (rcv *EditorMapTile) X() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorMapTile) MutateX(n int32) bool {
+	return rcv._tab.MutateInt32Slot(6, n)
+}
+
+func (rcv *EditorMapTile) Y() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorMapTile) MutateY(n int32) bool {
+	return rcv._tab.MutateInt32Slot(8, n)
+}
+
+func (rcv *EditorMapTile) EntityTypeId() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorMapTile) MutateEntityTypeId(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(10, n)
+}
+
+func (rcv *EditorMapTile) RotationDegrees() int16 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	if o != 0 {
+		return rcv._tab.GetInt16(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorMapTile) MutateRotationDegrees(n int16) bool {
+	return rcv._tab.MutateInt16Slot(12, n)
+}
+
+func EditorMapTileStart(builder *flatbuffers.Builder) {
+	builder.StartObject(5)
+}
+func EditorMapTileAddLayerId(builder *flatbuffers.Builder, layerId uint32) {
+	builder.PrependUint32Slot(0, layerId, 0)
+}
+func EditorMapTileAddX(builder *flatbuffers.Builder, x int32) {
+	builder.PrependInt32Slot(1, x, 0)
+}
+func EditorMapTileAddY(builder *flatbuffers.Builder, y int32) {
+	builder.PrependInt32Slot(2, y, 0)
+}
+func EditorMapTileAddEntityTypeId(builder *flatbuffers.Builder, entityTypeId uint64) {
+	builder.PrependUint64Slot(3, entityTypeId, 0)
+}
+func EditorMapTileAddRotationDegrees(builder *flatbuffers.Builder, rotationDegrees int16) {
+	builder.PrependInt16Slot(4, rotationDegrees, 0)
+}
+func EditorMapTileEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	return builder.EndObject()
+}
+type EditorLevelEditorBody struct {
+	_tab flatbuffers.Table
+}
+
+func GetRootAsEditorLevelEditorBody(buf []byte, offset flatbuffers.UOffsetT) *EditorLevelEditorBody {
+	n := flatbuffers.GetUOffsetT(buf[offset:])
+	x := &EditorLevelEditorBody{}
+	x.Init(buf, n+offset)
+	return x
+}
+
+func FinishEditorLevelEditorBodyBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.Finish(offset)
+}
+
+func GetSizePrefixedRootAsEditorLevelEditorBody(buf []byte, offset flatbuffers.UOffsetT) *EditorLevelEditorBody {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &EditorLevelEditorBody{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
+func FinishSizePrefixedEditorLevelEditorBodyBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.FinishSizePrefixed(offset)
+}
+
+func (rcv *EditorLevelEditorBody) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *EditorLevelEditorBody) Table() flatbuffers.Table {
+	return rcv._tab
+}
+
+func (rcv *EditorLevelEditorBody) LevelId() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorLevelEditorBody) MutateLevelId(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(4, n)
+}
+
+func (rcv *EditorLevelEditorBody) LevelName() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *EditorLevelEditorBody) MapId() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorLevelEditorBody) MutateMapId(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(8, n)
+}
+
+func (rcv *EditorLevelEditorBody) MapWidth() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorLevelEditorBody) MutateMapWidth(n int32) bool {
+	return rcv._tab.MutateInt32Slot(10, n)
+}
+
+func (rcv *EditorLevelEditorBody) MapHeight() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorLevelEditorBody) MutateMapHeight(n int32) bool {
+	return rcv._tab.MutateInt32Slot(12, n)
+}
+
+func (rcv *EditorLevelEditorBody) Placements(obj *EditorLevelPlacement, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+
+func (rcv *EditorLevelEditorBody) PlacementsLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func EditorLevelEditorBodyStart(builder *flatbuffers.Builder) {
+	builder.StartObject(6)
+}
+func EditorLevelEditorBodyAddLevelId(builder *flatbuffers.Builder, levelId uint64) {
+	builder.PrependUint64Slot(0, levelId, 0)
+}
+func EditorLevelEditorBodyAddLevelName(builder *flatbuffers.Builder, levelName flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(levelName), 0)
+}
+func EditorLevelEditorBodyAddMapId(builder *flatbuffers.Builder, mapId uint64) {
+	builder.PrependUint64Slot(2, mapId, 0)
+}
+func EditorLevelEditorBodyAddMapWidth(builder *flatbuffers.Builder, mapWidth int32) {
+	builder.PrependInt32Slot(3, mapWidth, 0)
+}
+func EditorLevelEditorBodyAddMapHeight(builder *flatbuffers.Builder, mapHeight int32) {
+	builder.PrependInt32Slot(4, mapHeight, 0)
+}
+func EditorLevelEditorBodyAddPlacements(builder *flatbuffers.Builder, placements flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(placements), 0)
+}
+func EditorLevelEditorBodyStartPlacementsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
-func LivePublishAddDiffs(builder *flatbuffers.Builder, diffs flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(diffs), 0)
+func EditorLevelEditorBodyEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	return builder.EndObject()
 }
-func LivePublishStartDiffsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+type EditorLevelPlacement struct {
+	_tab flatbuffers.Table
+}
+
+func GetRootAsEditorLevelPlacement(buf []byte, offset flatbuffers.UOffsetT) *EditorLevelPlacement {
+	n := flatbuffers.GetUOffsetT(buf[offset:])
+	x := &EditorLevelPlacement{}
+	x.Init(buf, n+offset)
+	return x
+}
+
+func FinishEditorLevelPlacementBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.Finish(offset)
+}
+
+func GetSizePrefixedRootAsEditorLevelPlacement(buf []byte, offset flatbuffers.UOffsetT) *EditorLevelPlacement {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &EditorLevelPlacement{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
+func FinishSizePrefixedEditorLevelPlacementBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.FinishSizePrefixed(offset)
+}
+
+func (rcv *EditorLevelPlacement) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *EditorLevelPlacement) Table() flatbuffers.Table {
+	return rcv._tab
+}
+
+func (rcv *EditorLevelPlacement) PlacementId() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorLevelPlacement) MutatePlacementId(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(4, n)
+}
+
+func (rcv *EditorLevelPlacement) EntityTypeId() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorLevelPlacement) MutateEntityTypeId(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(6, n)
+}
+
+func (rcv *EditorLevelPlacement) X() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorLevelPlacement) MutateX(n int32) bool {
+	return rcv._tab.MutateInt32Slot(8, n)
+}
+
+func (rcv *EditorLevelPlacement) Y() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorLevelPlacement) MutateY(n int32) bool {
+	return rcv._tab.MutateInt32Slot(10, n)
+}
+
+func (rcv *EditorLevelPlacement) RotationDegrees() int16 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	if o != 0 {
+		return rcv._tab.GetInt16(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorLevelPlacement) MutateRotationDegrees(n int16) bool {
+	return rcv._tab.MutateInt16Slot(12, n)
+}
+
+func (rcv *EditorLevelPlacement) InstanceOverridesJson() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *EditorLevelPlacement) Tags(j int) []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.ByteVector(a + flatbuffers.UOffsetT(j*4))
+	}
+	return nil
+}
+
+func (rcv *EditorLevelPlacement) TagsLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func EditorLevelPlacementStart(builder *flatbuffers.Builder) {
+	builder.StartObject(7)
+}
+func EditorLevelPlacementAddPlacementId(builder *flatbuffers.Builder, placementId uint64) {
+	builder.PrependUint64Slot(0, placementId, 0)
+}
+func EditorLevelPlacementAddEntityTypeId(builder *flatbuffers.Builder, entityTypeId uint64) {
+	builder.PrependUint64Slot(1, entityTypeId, 0)
+}
+func EditorLevelPlacementAddX(builder *flatbuffers.Builder, x int32) {
+	builder.PrependInt32Slot(2, x, 0)
+}
+func EditorLevelPlacementAddY(builder *flatbuffers.Builder, y int32) {
+	builder.PrependInt32Slot(3, y, 0)
+}
+func EditorLevelPlacementAddRotationDegrees(builder *flatbuffers.Builder, rotationDegrees int16) {
+	builder.PrependInt16Slot(4, rotationDegrees, 0)
+}
+func EditorLevelPlacementAddInstanceOverridesJson(builder *flatbuffers.Builder, instanceOverridesJson flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(instanceOverridesJson), 0)
+}
+func EditorLevelPlacementAddTags(builder *flatbuffers.Builder, tags flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(tags), 0)
+}
+func EditorLevelPlacementStartTagsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
-func LivePublishEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+func EditorLevelPlacementEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	return builder.EndObject()
+}
+type EditorSnapshot struct {
+	_tab flatbuffers.Table
+}
+
+const EditorSnapshotIdentifier = "BLDS"
+
+func GetRootAsEditorSnapshot(buf []byte, offset flatbuffers.UOffsetT) *EditorSnapshot {
+	n := flatbuffers.GetUOffsetT(buf[offset:])
+	x := &EditorSnapshot{}
+	x.Init(buf, n+offset)
+	return x
+}
+
+func FinishEditorSnapshotBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	identifierBytes := []byte(EditorSnapshotIdentifier)
+	builder.FinishWithFileIdentifier(offset, identifierBytes)
+}
+
+func EditorSnapshotBufferHasIdentifier(buf []byte) bool {
+	return flatbuffers.BufferHasIdentifier(buf, EditorSnapshotIdentifier)
+}
+
+func GetSizePrefixedRootAsEditorSnapshot(buf []byte, offset flatbuffers.UOffsetT) *EditorSnapshot {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &EditorSnapshot{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
+func FinishSizePrefixedEditorSnapshotBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	identifierBytes := []byte(EditorSnapshotIdentifier)
+	builder.FinishSizePrefixedWithFileIdentifier(offset, identifierBytes)
+}
+
+func SizePrefixedEditorSnapshotBufferHasIdentifier(buf []byte) bool {
+	return flatbuffers.SizePrefixedBufferHasIdentifier(buf, EditorSnapshotIdentifier)
+}
+
+func (rcv *EditorSnapshot) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *EditorSnapshot) Table() flatbuffers.Table {
+	return rcv._tab
+}
+
+func (rcv *EditorSnapshot) Kind() EditorKind {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return EditorKind(rcv._tab.GetByte(o + rcv._tab.Pos))
+	}
+	return 0
+}
+
+func (rcv *EditorSnapshot) MutateKind(n EditorKind) bool {
+	return rcv._tab.MutateByteSlot(4, byte(n))
+}
+
+func (rcv *EditorSnapshot) Title() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *EditorSnapshot) Theme(obj *EditorThemeEntry, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+
+func (rcv *EditorSnapshot) ThemeLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *EditorSnapshot) Palette(obj *EditorPaletteEntry, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+
+func (rcv *EditorSnapshot) PaletteLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *EditorSnapshot) MapmakerBody(obj *EditorMapmakerBody) *EditorMapmakerBody {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	if o != 0 {
+		x := rcv._tab.Indirect(o + rcv._tab.Pos)
+		if obj == nil {
+			obj = new(EditorMapmakerBody)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return obj
+	}
+	return nil
+}
+
+func (rcv *EditorSnapshot) LevelEditorBody(obj *EditorLevelEditorBody) *EditorLevelEditorBody {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	if o != 0 {
+		x := rcv._tab.Indirect(o + rcv._tab.Pos)
+		if obj == nil {
+			obj = new(EditorLevelEditorBody)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return obj
+	}
+	return nil
+}
+
+func (rcv *EditorSnapshot) UndoDepth() uint32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	if o != 0 {
+		return rcv._tab.GetUint32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorSnapshot) MutateUndoDepth(n uint32) bool {
+	return rcv._tab.MutateUint32Slot(16, n)
+}
+
+func (rcv *EditorSnapshot) RedoDepth() uint32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	if o != 0 {
+		return rcv._tab.GetUint32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorSnapshot) MutateRedoDepth(n uint32) bool {
+	return rcv._tab.MutateUint32Slot(18, n)
+}
+
+func EditorSnapshotStart(builder *flatbuffers.Builder) {
+	builder.StartObject(8)
+}
+func EditorSnapshotAddKind(builder *flatbuffers.Builder, kind EditorKind) {
+	builder.PrependByteSlot(0, byte(kind), 0)
+}
+func EditorSnapshotAddTitle(builder *flatbuffers.Builder, title flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(title), 0)
+}
+func EditorSnapshotAddTheme(builder *flatbuffers.Builder, theme flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(theme), 0)
+}
+func EditorSnapshotStartThemeVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func EditorSnapshotAddPalette(builder *flatbuffers.Builder, palette flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(palette), 0)
+}
+func EditorSnapshotStartPaletteVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func EditorSnapshotAddMapmakerBody(builder *flatbuffers.Builder, mapmakerBody flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(mapmakerBody), 0)
+}
+func EditorSnapshotAddLevelEditorBody(builder *flatbuffers.Builder, levelEditorBody flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(levelEditorBody), 0)
+}
+func EditorSnapshotAddUndoDepth(builder *flatbuffers.Builder, undoDepth uint32) {
+	builder.PrependUint32Slot(6, undoDepth, 0)
+}
+func EditorSnapshotAddRedoDepth(builder *flatbuffers.Builder, redoDepth uint32) {
+	builder.PrependUint32Slot(7, redoDepth, 0)
+}
+func EditorSnapshotEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	return builder.EndObject()
+}
+type EditorMapTilePoint struct {
+	_tab flatbuffers.Table
+}
+
+func GetRootAsEditorMapTilePoint(buf []byte, offset flatbuffers.UOffsetT) *EditorMapTilePoint {
+	n := flatbuffers.GetUOffsetT(buf[offset:])
+	x := &EditorMapTilePoint{}
+	x.Init(buf, n+offset)
+	return x
+}
+
+func FinishEditorMapTilePointBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.Finish(offset)
+}
+
+func GetSizePrefixedRootAsEditorMapTilePoint(buf []byte, offset flatbuffers.UOffsetT) *EditorMapTilePoint {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &EditorMapTilePoint{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
+func FinishSizePrefixedEditorMapTilePointBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.FinishSizePrefixed(offset)
+}
+
+func (rcv *EditorMapTilePoint) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *EditorMapTilePoint) Table() flatbuffers.Table {
+	return rcv._tab
+}
+
+func (rcv *EditorMapTilePoint) LayerId() uint32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return rcv._tab.GetUint32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorMapTilePoint) MutateLayerId(n uint32) bool {
+	return rcv._tab.MutateUint32Slot(4, n)
+}
+
+func (rcv *EditorMapTilePoint) X() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorMapTilePoint) MutateX(n int32) bool {
+	return rcv._tab.MutateInt32Slot(6, n)
+}
+
+func (rcv *EditorMapTilePoint) Y() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorMapTilePoint) MutateY(n int32) bool {
+	return rcv._tab.MutateInt32Slot(8, n)
+}
+
+func EditorMapTilePointStart(builder *flatbuffers.Builder) {
+	builder.StartObject(3)
+}
+func EditorMapTilePointAddLayerId(builder *flatbuffers.Builder, layerId uint32) {
+	builder.PrependUint32Slot(0, layerId, 0)
+}
+func EditorMapTilePointAddX(builder *flatbuffers.Builder, x int32) {
+	builder.PrependInt32Slot(1, x, 0)
+}
+func EditorMapTilePointAddY(builder *flatbuffers.Builder, y int32) {
+	builder.PrependInt32Slot(2, y, 0)
+}
+func EditorMapTilePointEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	return builder.EndObject()
+}
+type EditorLevelPlacementMove struct {
+	_tab flatbuffers.Table
+}
+
+func GetRootAsEditorLevelPlacementMove(buf []byte, offset flatbuffers.UOffsetT) *EditorLevelPlacementMove {
+	n := flatbuffers.GetUOffsetT(buf[offset:])
+	x := &EditorLevelPlacementMove{}
+	x.Init(buf, n+offset)
+	return x
+}
+
+func FinishEditorLevelPlacementMoveBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.Finish(offset)
+}
+
+func GetSizePrefixedRootAsEditorLevelPlacementMove(buf []byte, offset flatbuffers.UOffsetT) *EditorLevelPlacementMove {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &EditorLevelPlacementMove{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
+func FinishSizePrefixedEditorLevelPlacementMoveBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.FinishSizePrefixed(offset)
+}
+
+func (rcv *EditorLevelPlacementMove) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *EditorLevelPlacementMove) Table() flatbuffers.Table {
+	return rcv._tab
+}
+
+func (rcv *EditorLevelPlacementMove) PlacementId() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorLevelPlacementMove) MutatePlacementId(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(4, n)
+}
+
+func (rcv *EditorLevelPlacementMove) X() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorLevelPlacementMove) MutateX(n int32) bool {
+	return rcv._tab.MutateInt32Slot(6, n)
+}
+
+func (rcv *EditorLevelPlacementMove) Y() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorLevelPlacementMove) MutateY(n int32) bool {
+	return rcv._tab.MutateInt32Slot(8, n)
+}
+
+func (rcv *EditorLevelPlacementMove) RotationDegrees() int16 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	if o != 0 {
+		return rcv._tab.GetInt16(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorLevelPlacementMove) MutateRotationDegrees(n int16) bool {
+	return rcv._tab.MutateInt16Slot(10, n)
+}
+
+func EditorLevelPlacementMoveStart(builder *flatbuffers.Builder) {
+	builder.StartObject(4)
+}
+func EditorLevelPlacementMoveAddPlacementId(builder *flatbuffers.Builder, placementId uint64) {
+	builder.PrependUint64Slot(0, placementId, 0)
+}
+func EditorLevelPlacementMoveAddX(builder *flatbuffers.Builder, x int32) {
+	builder.PrependInt32Slot(1, x, 0)
+}
+func EditorLevelPlacementMoveAddY(builder *flatbuffers.Builder, y int32) {
+	builder.PrependInt32Slot(2, y, 0)
+}
+func EditorLevelPlacementMoveAddRotationDegrees(builder *flatbuffers.Builder, rotationDegrees int16) {
+	builder.PrependInt16Slot(3, rotationDegrees, 0)
+}
+func EditorLevelPlacementMoveEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	return builder.EndObject()
+}
+type EditorPlacementID struct {
+	_tab flatbuffers.Table
+}
+
+func GetRootAsEditorPlacementID(buf []byte, offset flatbuffers.UOffsetT) *EditorPlacementID {
+	n := flatbuffers.GetUOffsetT(buf[offset:])
+	x := &EditorPlacementID{}
+	x.Init(buf, n+offset)
+	return x
+}
+
+func FinishEditorPlacementIDBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.Finish(offset)
+}
+
+func GetSizePrefixedRootAsEditorPlacementID(buf []byte, offset flatbuffers.UOffsetT) *EditorPlacementID {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &EditorPlacementID{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
+func FinishSizePrefixedEditorPlacementIDBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.FinishSizePrefixed(offset)
+}
+
+func (rcv *EditorPlacementID) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *EditorPlacementID) Table() flatbuffers.Table {
+	return rcv._tab
+}
+
+func (rcv *EditorPlacementID) PlacementId() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorPlacementID) MutatePlacementId(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(4, n)
+}
+
+func EditorPlacementIDStart(builder *flatbuffers.Builder) {
+	builder.StartObject(1)
+}
+func EditorPlacementIDAddPlacementId(builder *flatbuffers.Builder, placementId uint64) {
+	builder.PrependUint64Slot(0, placementId, 0)
+}
+func EditorPlacementIDEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	return builder.EndObject()
+}
+type EditorPlacementOverrides struct {
+	_tab flatbuffers.Table
+}
+
+func GetRootAsEditorPlacementOverrides(buf []byte, offset flatbuffers.UOffsetT) *EditorPlacementOverrides {
+	n := flatbuffers.GetUOffsetT(buf[offset:])
+	x := &EditorPlacementOverrides{}
+	x.Init(buf, n+offset)
+	return x
+}
+
+func FinishEditorPlacementOverridesBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.Finish(offset)
+}
+
+func GetSizePrefixedRootAsEditorPlacementOverrides(buf []byte, offset flatbuffers.UOffsetT) *EditorPlacementOverrides {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &EditorPlacementOverrides{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
+func FinishSizePrefixedEditorPlacementOverridesBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.FinishSizePrefixed(offset)
+}
+
+func (rcv *EditorPlacementOverrides) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *EditorPlacementOverrides) Table() flatbuffers.Table {
+	return rcv._tab
+}
+
+func (rcv *EditorPlacementOverrides) PlacementId() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorPlacementOverrides) MutatePlacementId(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(4, n)
+}
+
+func (rcv *EditorPlacementOverrides) InstanceOverridesJson() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func EditorPlacementOverridesStart(builder *flatbuffers.Builder) {
+	builder.StartObject(2)
+}
+func EditorPlacementOverridesAddPlacementId(builder *flatbuffers.Builder, placementId uint64) {
+	builder.PrependUint64Slot(0, placementId, 0)
+}
+func EditorPlacementOverridesAddInstanceOverridesJson(builder *flatbuffers.Builder, instanceOverridesJson flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(instanceOverridesJson), 0)
+}
+func EditorPlacementOverridesEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	return builder.EndObject()
+}
+type EditorHistoryDepth struct {
+	_tab flatbuffers.Table
+}
+
+func GetRootAsEditorHistoryDepth(buf []byte, offset flatbuffers.UOffsetT) *EditorHistoryDepth {
+	n := flatbuffers.GetUOffsetT(buf[offset:])
+	x := &EditorHistoryDepth{}
+	x.Init(buf, n+offset)
+	return x
+}
+
+func FinishEditorHistoryDepthBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.Finish(offset)
+}
+
+func GetSizePrefixedRootAsEditorHistoryDepth(buf []byte, offset flatbuffers.UOffsetT) *EditorHistoryDepth {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &EditorHistoryDepth{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
+func FinishSizePrefixedEditorHistoryDepthBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.FinishSizePrefixed(offset)
+}
+
+func (rcv *EditorHistoryDepth) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *EditorHistoryDepth) Table() flatbuffers.Table {
+	return rcv._tab
+}
+
+func (rcv *EditorHistoryDepth) UndoDepth() uint32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return rcv._tab.GetUint32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorHistoryDepth) MutateUndoDepth(n uint32) bool {
+	return rcv._tab.MutateUint32Slot(4, n)
+}
+
+func (rcv *EditorHistoryDepth) RedoDepth() uint32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.GetUint32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorHistoryDepth) MutateRedoDepth(n uint32) bool {
+	return rcv._tab.MutateUint32Slot(6, n)
+}
+
+func EditorHistoryDepthStart(builder *flatbuffers.Builder) {
+	builder.StartObject(2)
+}
+func EditorHistoryDepthAddUndoDepth(builder *flatbuffers.Builder, undoDepth uint32) {
+	builder.PrependUint32Slot(0, undoDepth, 0)
+}
+func EditorHistoryDepthAddRedoDepth(builder *flatbuffers.Builder, redoDepth uint32) {
+	builder.PrependUint32Slot(1, redoDepth, 0)
+}
+func EditorHistoryDepthEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	return builder.EndObject()
+}
+type EditorDiff struct {
+	_tab flatbuffers.Table
+}
+
+func GetRootAsEditorDiff(buf []byte, offset flatbuffers.UOffsetT) *EditorDiff {
+	n := flatbuffers.GetUOffsetT(buf[offset:])
+	x := &EditorDiff{}
+	x.Init(buf, n+offset)
+	return x
+}
+
+func FinishEditorDiffBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.Finish(offset)
+}
+
+func GetSizePrefixedRootAsEditorDiff(buf []byte, offset flatbuffers.UOffsetT) *EditorDiff {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &EditorDiff{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
+func FinishSizePrefixedEditorDiffBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.FinishSizePrefixed(offset)
+}
+
+func (rcv *EditorDiff) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *EditorDiff) Table() flatbuffers.Table {
+	return rcv._tab
+}
+
+func (rcv *EditorDiff) Kind() EditorDiffKind {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return EditorDiffKind(rcv._tab.GetByte(o + rcv._tab.Pos))
+	}
+	return 0
+}
+
+func (rcv *EditorDiff) MutateKind(n EditorDiffKind) bool {
+	return rcv._tab.MutateByteSlot(4, byte(n))
+}
+
+func (rcv *EditorDiff) Body(j int) byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.GetByte(a + flatbuffers.UOffsetT(j*1))
+	}
+	return 0
+}
+
+func (rcv *EditorDiff) BodyLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *EditorDiff) BodyBytes() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *EditorDiff) MutateBody(j int, n byte) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.MutateByte(a+flatbuffers.UOffsetT(j*1), n)
+	}
+	return false
+}
+
+func (rcv *EditorDiff) UndoDepth() uint32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		return rcv._tab.GetUint32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorDiff) MutateUndoDepth(n uint32) bool {
+	return rcv._tab.MutateUint32Slot(8, n)
+}
+
+func (rcv *EditorDiff) RedoDepth() uint32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	if o != 0 {
+		return rcv._tab.GetUint32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorDiff) MutateRedoDepth(n uint32) bool {
+	return rcv._tab.MutateUint32Slot(10, n)
+}
+
+func (rcv *EditorDiff) Tick() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorDiff) MutateTick(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(12, n)
+}
+
+func EditorDiffStart(builder *flatbuffers.Builder) {
+	builder.StartObject(5)
+}
+func EditorDiffAddKind(builder *flatbuffers.Builder, kind EditorDiffKind) {
+	builder.PrependByteSlot(0, byte(kind), 0)
+}
+func EditorDiffAddBody(builder *flatbuffers.Builder, body flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(body), 0)
+}
+func EditorDiffStartBodyVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(1, numElems, 1)
+}
+func EditorDiffAddUndoDepth(builder *flatbuffers.Builder, undoDepth uint32) {
+	builder.PrependUint32Slot(2, undoDepth, 0)
+}
+func EditorDiffAddRedoDepth(builder *flatbuffers.Builder, redoDepth uint32) {
+	builder.PrependUint32Slot(3, redoDepth, 0)
+}
+func EditorDiffAddTick(builder *flatbuffers.Builder, tick uint64) {
+	builder.PrependUint64Slot(4, tick, 0)
+}
+func EditorDiffEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }

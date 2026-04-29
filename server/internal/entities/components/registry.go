@@ -38,6 +38,9 @@ const (
 	KindCollider Kind = "collider"
 	KindTile     Kind = "tile"
 	KindStatic   Kind = "static"
+	// KindNineSlice is declared in nine_slice.go alongside its
+	// definition struct so the constant + Definition stay together;
+	// listed here only for discoverability.
 )
 
 // Storage signals how the ECS should physically store this component.
@@ -125,6 +128,7 @@ func Default() *Registry {
 	r.Register(colliderDef)
 	r.Register(tileDef)
 	r.Register(staticDef)
+	r.Register(nineSliceDef)
 	// Automation-driven components (PLAN.md §128).
 	r.Register(healthDef)
 	r.Register(inventoryDef)

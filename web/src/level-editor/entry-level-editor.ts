@@ -1,33 +1,43 @@
-// Boxland — level editor page boot.
+// Boxland — level editor page boot (Pixi-rendered).
 //
-// This is what the templ shell calls into via
-// <script type="module" src="/static/web/level-editor.js">. Reads the
-// host element's data-bx-* attributes, builds a BoxlandApp +
-// EditorHarness, fetches the placement + backdrop catalogs, wires
-// palette + tools + hotkeys + inspector. The result is a full Pixi-
-// rendered editor that shares its render path with the live game.
+// Replaces the previous templ-shell+canvas hybrid with a single
+// fullscreen Pixi scene built on the EditorApp harness. The
+// templ page now contains only:
 //
-// Per-page entry convention matches sandbox/entry-sandbox.ts: auto-
-// run when document.body.dataset.surface matches our id, but exporting
-// `bootLevelEditor()` so a future surface dispatcher (or a unit
-// integration test in jsdom) can call it explicitly.
+//   <body data-surface="level-editor-entities">
+//     <main id="bx-editor-host" data-...></main>
+//     <meta name="bx-ws-url" content="...">
+//     <meta name="bx-ws-ticket" content="...">
+//     <script type="module" src="/static/web/level-editor.js" defer></script>
+//   </body>
+//
+// The host element's data-bx-* attributes carry the level/map ids;
+// the meta tags carry the WS url + ticket the gateway minted.
 
-import { Assets } from "pixi.js";
+import { Container, Sprite, Texture, Rectangle as PixiRectangle, Assets } from "pixi.js";
+
+// Rectangle is referenced once below (texture frame); aliasing
+// avoids a name clash with any future local Rect type and keeps
+// the import explicit at the call site.
+const Rectangle = PixiRectangle;
+
 import {
-	BoxlandApp,
-	EditorHarness,
-	StaticAssetCatalog,
-	type Camera,
+	EditorApp,
+	EditorWire,
+	Theme,
+	PaletteGrid,
+	Inspector,
+	Statusbar,
+	Toolbar,
+	type ThemeEntry,
+	type PaletteEntry as HarnessPaletteEntry,
+	type ToolbarAction,
 } from "@render";
+import { EditorKind } from "@proto/editor-kind.js";
 
 import { EditorState } from "./state";
-import { LevelEditorWire } from "./wire";
 import { LevelOps } from "./ops";
-import {
-	buildRenderables,
-	defaultCamera,
-	TILE_SUB_PX,
-} from "./render-bridge";
+import { WSPlacementWire } from "./ws-wire";
 import {
 	handlePointerDown,
 	handlePointerMove,
@@ -38,6 +48,7 @@ import {
 	type Cell,
 	type LevelEditorBoot,
 	type PaletteAtlasEntry,
+	type Placement,
 	placementFromWire,
 } from "./types";
 
@@ -66,319 +77,309 @@ function readBoot(host: HTMLElement): LevelEditorBoot {
 	};
 }
 
+function readMeta(name: string): string {
+	const m = document.querySelector(`meta[name="${name}"]`);
+	return m?.getAttribute("content") ?? "";
+}
+
 export async function bootLevelEditor(
 	host: HTMLElement = document.querySelector("[data-bx-level-editor]") as HTMLElement,
-	canvasHost: HTMLElement = document.querySelector("[data-bx-level-canvas-host]") as HTMLElement,
-): Promise<EditorHarness | null> {
-	if (!host || !canvasHost) return null;
+): Promise<EditorApp | null> {
+	if (!host) return null;
 	const boot = readBoot(host);
+	const wsURL = readMeta("bx-ws-url");
+	const wsTicket = readMeta("bx-ws-ticket");
+	if (!wsURL || !wsTicket) {
+		console.error("[level-editor] missing bx-ws-url or bx-ws-ticket meta");
+		return null;
+	}
 
-	const wire = new LevelEditorWire(boot.levelId, boot.mapId);
+	// 1) Open the WS + join the level-editor session.
+	const wire = await EditorWire.connect({ wsURL, wsTicket });
+	const snapshot = await wire.joinLevelEditor(boot.levelId);
+	if (snapshot.kind() !== EditorKind.LevelEditor) {
+		throw new Error(`level-editor: snapshot kind mismatch (got ${snapshot.kind()})`);
+	}
+
+	// 2) Build the theme from the snapshot.
+	const themeEntries: ThemeEntry[] = [];
+	for (let i = 0; i < snapshot.themeLength(); i++) {
+		const e = snapshot.theme(i);
+		if (!e) continue;
+		themeEntries.push({
+			role: e.role() ?? "",
+			entityTypeId: Number(e.entityTypeId()),
+			assetUrl: e.assetUrl() ?? "",
+			nineSlice: {
+				left: e.nineSliceLeft(), top: e.nineSliceTop(),
+				right: e.nineSliceRight(), bottom: e.nineSliceBottom(),
+			},
+			width: e.width(), height: e.height(),
+		});
+	}
+	const theme = Theme.fromEntries(themeEntries);
+
+	// 3) Build the EditorApp harness.
+	const app = await EditorApp.create({
+		host,
+		kind: "level-editor",
+		theme,
+	});
+
+	// 4) Wire local state + ops.
 	const state = new EditorState({ mapWidth: boot.mapWidth, mapHeight: boot.mapHeight });
-
-	// 1) Fetch the two catalogs in parallel (palette + backdrop tile types).
-	//    Then build a single StaticAssetCatalog from their union.
-	const [paletteRes, backdropTypesRes] = await Promise.allSettled([
-		wire.loadPlacementCatalog(),
-		wire.loadBackdropCatalog(),
-	]);
-	const palette = paletteRes.status === "fulfilled" ? paletteRes.value.entries : [];
-	const backdropTypes = backdropTypesRes.status === "fulfilled" ? backdropTypesRes.value.entries : [];
-	if (paletteRes.status === "rejected") {
-		console.warn("[level-editor] placement catalog load failed", paletteRes.reason);
-	}
-	if (backdropTypesRes.status === "rejected") {
-		console.warn("[level-editor] backdrop tile-types load failed", backdropTypesRes.reason);
-	}
-	state.addPaletteEntries(palette);
-
-	// Build one StaticAssetCatalog that knows about both palette
-	// (placeable) and backdrop (tile) entity types. The Renderer
-	// resolves textures by asset_id == entity_type_id (same convention
-	// the sandbox uses).
-	const catalogEntries = mergeCatalogEntries([...palette, ...backdropTypes]);
-	const catalog = new StaticAssetCatalog({
-		entries: catalogEntries.map((e) => ({
-			id: e.id,
-			url: e.sprite_url,
-			atlasCols: e.atlas_cols,
-			tileSize: e.tile_size,
-			atlasIndex: e.atlas_index,
-		})),
-	});
-	const knownAssetIDs = new Set<number>(catalogEntries.map((e) => e.id));
-
-	// 2) Build BoxlandApp. worldViewW/H = the level's pixel size so
-	//    integer-scale fits the whole map by default. We set this to
-	//    the visible viewport size, not the full map: the camera
-	//    centers on the map and pans/zooms, so the world view is the
-	//    *visible window*, not the entire level.
-	const visibleW = Math.min(640, boot.mapWidth * 32);
-	const visibleH = Math.min(400, boot.mapHeight * 32);
-	const app = await BoxlandApp.create({
-		host: canvasHost,
-		worldViewW: visibleW,
-		worldViewH: visibleH,
-		catalog,
-	});
-
-	// Pre-warm the texture cache so the first frame paints with art.
-	await Promise.allSettled(catalog.urls().map((u) => Assets.load(u).catch(() => undefined)));
-
-	// 3) Initial data load (backdrop tiles + placements).
-	const [tilesRes, entsRes] = await Promise.allSettled([
-		wire.loadBackdropTiles(),
-		wire.listEntities(),
-	]);
-	if (tilesRes.status === "fulfilled") {
-		state.setBackdrop(tilesRes.value.tiles.map((t) => ({
-			layerId: t.layer_id, x: t.x, y: t.y,
-			entityTypeId: t.entity_type_id,
-			rotation: t.rotation_degrees,
-		})));
-	}
-	if (entsRes.status === "fulfilled") {
-		state.setInitialPlacements(entsRes.value.entities.map(placementFromWire));
-	}
-
-	// 4) Harness drives redraws on dirty.
-	const camera: Camera = defaultCamera(boot.mapWidth, boot.mapHeight);
-	const harness = EditorHarness.create({ app, camera });
-
-	const flush = () => {
-		harness.setRenderables(buildRenderables({
-			placements: state.allPlacements(),
-			backdrop: state.allBackdrop(),
-			selection: state.selection,
-			cursorCell: state.cursorCell,
-			activeEntityID: state.activeEntity?.id ?? null,
-			activeRotation: state.activeRotation,
-			tool: state.tool,
-			mapWidth: state.mapWidth(),
-			mapHeight: state.mapHeight(),
-			knownAssetIDs,
-			pendingPlacementIDs: new Set(), // optimistic ghosts use negative ids; fine.
-		}));
-		harness.setCamera(camera);
-	};
-	state.subscribe(flush);
-	flush();
-
-	// 5) Pointer + keyboard wiring.
+	const placementWire = new WSPlacementWire(wire, boot.levelId);
 	const ops = new LevelOps({
-		state, wire,
-		onError: (m) => flash(host, m),
+		state,
+		wire: placementWire as unknown as import("./wire").LevelEditorWire,
+		onError: (m) => console.warn("[level-editor]", m),
 	});
-	const errorReporter = (m: string) => flash(host, m);
-	let drag: DragState | null = null;
-	let spaceDown = false;
-	const canvas = app.pixi.canvas as HTMLCanvasElement;
 
-	// Cursor → cell (sub-pixel canvas coords → cell index).
-	const cellFromEvent = (e: PointerEvent): Cell => {
-		const rect = canvas.getBoundingClientRect();
-		// The canvas backing-store is integer-scaled; the reverse map
-		// is screen-px → world-px → cell (with camera + zoom math
-		// living inside Scene). For v1 we use the canvas's natural
-		// 1:1 mapping plus the camera offset; this matches how the
-		// previous Canvas2D editor sampled clicks.
-		const sx = (e.clientX - rect.left) * (canvas.width / rect.width) / app.scene.root.scale.x;
-		const sy = (e.clientY - rect.top) * (canvas.height / rect.height) / app.scene.root.scale.y;
-		// Camera in sub-pixels; subtract from world position to get
-		// screen-relative; we want the inverse.
-		const halfW = visibleW / 2;
-		const halfH = visibleH / 2;
-		const wx = (sx - app.scene.root.position.x / app.scene.root.scale.x) + (camera.cx / 256) - halfW;
-		const wy = (sy - app.scene.root.position.y / app.scene.root.scale.y) + (camera.cy / 256) - halfH;
-		const cx = Math.max(0, Math.min(state.mapWidth() - 1, Math.floor(wx / 32)));
-		const cy = Math.max(0, Math.min(state.mapHeight() - 1, Math.floor(wy / 32)));
-		return { x: cx, y: cy };
+	// 5) Hydrate state from snapshot body.
+	const body = snapshot.levelEditorBody();
+	if (body) {
+		const initial: Placement[] = [];
+		for (let i = 0; i < body.placementsLength(); i++) {
+			const p = body.placements(i);
+			if (!p) continue;
+			const tags: string[] = [];
+			for (let j = 0; j < p.tagsLength(); j++) {
+				const t = p.tags(j);
+				if (t) tags.push(t);
+			}
+			initial.push(placementFromWire({
+				id: Number(p.placementId()),
+				entity_type_id: Number(p.entityTypeId()),
+				x: p.x(), y: p.y(),
+				rotation_degrees: ((p.rotationDegrees() % 360) | 0) as 0 | 90 | 180 | 270,
+				instance_overrides: safeParseJSON(p.instanceOverridesJson() ?? ""),
+				tags,
+			}));
+		}
+		state.setInitialPlacements(initial);
+	}
+
+	// 6) Build palette from snapshot.palette.
+	const paletteEntries: HarnessPaletteEntry[] = [];
+	const palByID = new Map<number, PaletteAtlasEntry>();
+	for (let i = 0; i < snapshot.paletteLength(); i++) {
+		const e = snapshot.palette(i);
+		if (!e) continue;
+		const entry: PaletteAtlasEntry = {
+			id: Number(e.entityTypeId()),
+			name: e.name() ?? "",
+			class: (e.class_() ?? "logic") as PaletteAtlasEntry["class"],
+			sprite_url: e.spriteUrl() ?? "",
+			atlas_index: e.atlasIndex(),
+			atlas_cols: e.atlasCols(),
+			tile_size: e.tileSize(),
+		};
+		palByID.set(entry.id, entry);
+		paletteEntries.push({
+			id: entry.id,
+			name: entry.name,
+			spriteUrl: entry.sprite_url,
+			atlasIndex: entry.atlas_index,
+			atlasCols: entry.atlas_cols,
+			tileSize: entry.tile_size,
+		});
+	}
+	state.addPaletteEntries([...palByID.values()]);
+
+	const palette = new PaletteGrid({
+		theme,
+		width: 224,
+		height: 400,
+		onSelect: (e) => {
+			const a = state.paletteEntry(e.id);
+			if (a) state.setActiveEntity(a);
+		},
+	});
+	palette.setEntries(paletteEntries);
+	app.slots.sidebar.addChild(palette);
+
+	// 7) Toolbar — basic tool selectors + undo/redo.
+	const toolbar = new Toolbar({ theme, slot: app.slots.toolbar });
+	const actions: ToolbarAction[] = [
+		{ id: "place", label: "Place (B)", active: state.tool === "place" },
+		{ id: "select", label: "Select (V)" },
+		{ id: "erase", label: "Erase (E)" },
+		{ id: "undo", label: "Undo" },
+		{ id: "redo", label: "Redo" },
+	];
+	toolbar.render(actions);
+	toolbar.onAction("place",  () => { state.setTool("place");  toolbar.render(updateActiveAction(actions, "place")); });
+	toolbar.onAction("select", () => { state.setTool("select"); toolbar.render(updateActiveAction(actions, "select")); });
+	toolbar.onAction("erase",  () => { state.setTool("erase");  toolbar.render(updateActiveAction(actions, "erase")); });
+	toolbar.onAction("undo",   () => { void state.undo(); });
+	toolbar.onAction("redo",   () => { void state.redo(); });
+
+	// 8) Statusbar — placement count + saving indicator.
+	const statusbar = new Statusbar({ theme, slot: app.slots.statusbar });
+	const renderStatus = (): void => {
+		statusbar.render([
+			{ id: "tool", text: `Tool: ${state.tool}` },
+			{ id: "count", text: `${state.allPlacements().length} placement(s)` },
+			{ id: "saving", text: state.pending > 0 ? "saving…" : "" },
+		]);
 	};
+	state.subscribe(renderStatus);
+	renderStatus();
 
-	canvas.addEventListener("pointerdown", (e) => {
-		canvas.setPointerCapture(e.pointerId);
-		canvas.focus({ preventScroll: true });
-		const cell = cellFromEvent(e);
-		// Pan: middle button or Space+drag.
-		if (e.button === 1 || (e.button === 0 && spaceDown)) {
-			drag = { kind: "pan", lastClientX: e.clientX, lastClientY: e.clientY };
+	// 9) Inspector — populated when a placement is selected.
+	const inspector = new Inspector({
+		theme,
+		slot: app.slots.inspector,
+		onChange: (key, value) => {
+			if (state.selection === null) return;
+			void ops.patch(state.selection, { [key]: value } as Parameters<LevelOps["patch"]>[1]);
+		},
+	});
+	state.subscribe(() => {
+		if (state.selection === null) {
+			inspector.clear();
+			return;
+		}
+		const p = state.placement(state.selection);
+		if (!p) { inspector.clear(); return; }
+		const palEntry = state.paletteEntry(p.entityTypeId);
+		inspector.setTitle(palEntry ? palEntry.name : `Placement ${p.id}`);
+		inspector.render(
+			[
+				{ key: "x", label: "X", kind: "int", min: 0, max: state.mapWidth() - 1 },
+				{ key: "y", label: "Y", kind: "int", min: 0, max: state.mapHeight() - 1 },
+				{
+					key: "rotation", label: "Rotation", kind: "enum",
+					options: [
+						{ value: "0", label: "0°" }, { value: "90", label: "90°" },
+						{ value: "180", label: "180°" }, { value: "270", label: "270°" },
+					],
+				},
+			],
+			{ x: p.x, y: p.y, rotation: String(p.rotation) },
+		);
+	});
+
+	// 10) In-canvas placement renderer. Each placement is a Sprite
+	//     atlas-sliced from its entity_type's sheet. We render in
+	//     the Scene root (camera-scaled space). A future pass can
+	//     use the unified Renderable path.
+	const inCanvasContainer = new Container();
+	app.slots.canvasWrap.addChild(inCanvasContainer);
+	const cellSize = 32;
+	const sprites = new Map<number, Sprite>();
+
+	const refreshCanvas = (): void => {
+		const present = new Set<number>();
+		for (const p of state.allPlacements()) {
+			present.add(p.id);
+			let sprite = sprites.get(p.id);
+			if (!sprite) {
+				sprite = new Sprite();
+				sprites.set(p.id, sprite);
+				inCanvasContainer.addChild(sprite);
+				void loadSpriteTextureFor(sprite, p, palByID);
+			}
+			sprite.position.set(p.x * cellSize, p.y * cellSize);
+			sprite.angle = p.rotation;
+		}
+		for (const [id, sprite] of sprites) {
+			if (!present.has(id)) {
+				inCanvasContainer.removeChild(sprite);
+				sprite.destroy();
+				sprites.delete(id);
+			}
+		}
+	};
+	state.subscribe(refreshCanvas);
+	refreshCanvas();
+
+	// 11) Pointer handling on the canvas wrap.
+	app.slots.canvasWrap.eventMode = "static";
+	app.slots.canvasWrap.cursor = "crosshair";
+	let drag: DragState | null = null;
+	const localCellAt = (e: { global: { x: number; y: number } }): Cell => {
+		const localPos = app.slots.canvasWrap.toLocal(e.global);
+		return {
+			x: Math.max(0, Math.min(state.mapWidth() - 1, Math.floor(localPos.x / cellSize))),
+			y: Math.max(0, Math.min(state.mapHeight() - 1, Math.floor(localPos.y / cellSize))),
+		};
+	};
+	app.slots.canvasWrap.on("pointerdown", (e) => {
+		const cell = localCellAt(e);
+		const handle = handlePointerDown(state, ops, { button: e.button, cell, spaceDown: false });
+		if (handle) drag = handle as DragState;
+	});
+	app.slots.canvasWrap.on("pointermove", (e) => {
+		const cell = localCellAt(e);
+		handlePointerMove(state, drag as Parameters<typeof handlePointerMove>[1], cell);
+	});
+	const finishDrag = (): void => {
+		handlePointerUp(state, ops, drag as Parameters<typeof handlePointerUp>[2]);
+		drag = null;
+	};
+	app.slots.canvasWrap.on("pointerup", finishDrag);
+	app.slots.canvasWrap.on("pointerupoutside", finishDrag);
+
+	// 12) Keyboard shortcuts.
+	const onKey = (e: KeyboardEvent): void => {
+		const isText = (e.target as HTMLElement | null)?.tagName === "INPUT";
+		if (isText) return;
+		const k = e.key.toLowerCase();
+		const mod = e.ctrlKey || e.metaKey;
+		if (mod && k === "z" && !e.shiftKey) { void state.undo(); e.preventDefault(); return; }
+		if (mod && (k === "y" || (k === "z" && e.shiftKey))) { void state.redo(); e.preventDefault(); return; }
+		if (mod) return;
+		const tools: Record<string, "place" | "select" | "erase"> = { b: "place", v: "select", e: "erase" };
+		if (tools[k]) {
+			state.setTool(tools[k]!);
+			toolbar.render(updateActiveAction(actions, tools[k]!));
 			e.preventDefault();
 			return;
 		}
-		const handle = handlePointerDown(state, ops, { button: e.button, cell, spaceDown });
-		if (handle) drag = handle;
-	});
-
-	canvas.addEventListener("pointermove", (e) => {
-		const cell = cellFromEvent(e);
-		if (drag?.kind === "pan") {
-			const dx = e.clientX - (drag.lastClientX ?? e.clientX);
-			const dy = e.clientY - (drag.lastClientY ?? e.clientY);
-			camera.cx -= (dx * 256) / app.scene.root.scale.x;
-			camera.cy -= (dy * 256) / app.scene.root.scale.y;
-			drag.lastClientX = e.clientX;
-			drag.lastClientY = e.clientY;
-			harness.setCamera(camera);
-			return;
-		}
-		handlePointerMove(state, drag as { kind: "move-selection"; id: number; originX: number; originY: number; lastCell: Cell } | null, cell);
-	});
-
-	canvas.addEventListener("pointerup", () => {
-		if (drag?.kind === "move-selection") {
-			handlePointerUp(state, ops, { kind: "move-selection", id: drag.id!, originX: drag.originX!, originY: drag.originY!, lastCell: drag.lastCell ?? { x: 0, y: 0 } });
-		}
-		drag = null;
-	});
-	canvas.addEventListener("pointercancel", () => { drag = null; });
-	canvas.addEventListener("contextmenu", (e) => e.preventDefault());
-
-	canvas.addEventListener("wheel", (e) => {
-		e.preventDefault();
-		// Pixi viewport is integer-scaled, so the editor's zoom
-		// lives in the camera's sub-pixel offsets / viewport size.
-		// v1: increment integer scale by resizing the BoxlandApp's
-		// host (cheap; renderer recomputes layout on its own
-		// ResizeObserver). Future: dedicated zoom API on Scene.
-		// For now wheel just nudges the camera in the y direction
-		// when shift is held (a workable proxy).
-		const speed = 32;
-		camera.cy += e.deltaY > 0 ? speed * 256 : -speed * 256;
-		harness.setCamera(camera);
-	}, { passive: false });
-
-	// Hotkeys.
-	const onKey = (e: KeyboardEvent) => {
-		if (isTextEditingTarget(e.target)) return;
-		if (e.code === "Space") spaceDown = true;
-		const key = e.key.toLowerCase();
-		if (e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) return; // boot.js Cmd-shortcut path
-		if (e.ctrlKey || e.metaKey) {
-			if (key === "z" && !e.shiftKey) { e.preventDefault(); void state.undo(); return; }
-			if ((key === "z" && e.shiftKey) || key === "y") { e.preventDefault(); void state.redo(); return; }
-			return;
-		}
-		if (key === "b") { e.preventDefault(); state.setTool("place"); return; }
-		if (key === "v") { e.preventDefault(); state.setTool("select"); return; }
-		if (key === "e") { e.preventDefault(); state.setTool("erase"); return; }
-		if (key === "t") { e.preventDefault(); rotate(state, ops); return; }
-		if (key === "escape") { state.setSelection(null); return; }
-		if (key === "delete" || key === "backspace") {
-			if (state.selection !== null) { e.preventDefault(); void ops.remove(state.selection); }
-			return;
+		if (k === "t") { rotate(state, ops); e.preventDefault(); return; }
+		if (k === "delete" || k === "backspace") {
+			if (state.selection !== null) { void ops.remove(state.selection); e.preventDefault(); }
 		}
 	};
-	const onKeyUp = (e: KeyboardEvent) => { if (e.code === "Space") spaceDown = false; };
 	document.addEventListener("keydown", onKey);
-	document.addEventListener("keyup", onKeyUp);
 
-	// Palette click → arm entity + switch to place tool.
-	host.querySelectorAll("[data-bx-level-palette-entry]").forEach((el) => {
-		const node = el as HTMLElement;
-		const click = () => {
-			const id = Number(node.dataset.bxEntityTypeId ?? 0);
-			const entry = state.paletteEntry(id);
-			if (entry) {
-				state.setActiveEntity(entry);
-				state.setTool("place");
-				// Visual: highlight the picked one.
-				host.querySelectorAll("[data-bx-level-palette-entry]").forEach((other) => {
-					other.setAttribute("aria-selected", other === el ? "true" : "false");
-				});
-			}
-		};
-		node.addEventListener("click", click);
-		node.addEventListener("keydown", (e) => {
-			const ke = e as KeyboardEvent;
-			if (ke.key === "Enter" || ke.key === " ") { ke.preventDefault(); click(); }
+	return app;
+}
+
+function updateActiveAction(actions: ToolbarAction[], activeId: string): ToolbarAction[] {
+	return actions.map((a) => ({ ...a, active: a.id === activeId }));
+}
+
+async function loadSpriteTextureFor(
+	sprite: Sprite,
+	placement: Placement,
+	pal: ReadonlyMap<number, PaletteAtlasEntry>,
+): Promise<void> {
+	const entry = pal.get(placement.entityTypeId);
+	if (!entry || !entry.sprite_url) return;
+	try {
+		const base = await Assets.load<Texture>(entry.sprite_url);
+		if (!base || !base.source) return;
+		base.source.scaleMode = "nearest";
+		const ts = entry.tile_size || 32;
+		const cols = Math.max(1, entry.atlas_cols);
+		const sx = (entry.atlas_index % cols) * ts;
+		const sy = Math.floor(entry.atlas_index / cols) * ts;
+		sprite.texture = new Texture({
+			source: base.source,
+			frame: new Rectangle(sx, sy, ts, ts),
 		});
-	});
-
-	// Tool buttons.
-	host.querySelectorAll("[data-bx-level-tool]").forEach((btn) => {
-		const node = btn as HTMLElement;
-		node.addEventListener("click", () => state.setTool(node.dataset.bxLevelTool as "place" | "select" | "erase"));
-	});
-	const rotateBtn = host.querySelector("[data-bx-level-rotate]") as HTMLElement | null;
-	if (rotateBtn) rotateBtn.addEventListener("click", () => rotate(state, ops));
-	const undoBtn = host.querySelector("[data-bx-level-undo]") as HTMLButtonElement | null;
-	const redoBtn = host.querySelector("[data-bx-level-redo]") as HTMLButtonElement | null;
-	if (undoBtn) undoBtn.addEventListener("click", () => void state.undo());
-	if (redoBtn) redoBtn.addEventListener("click", () => void state.redo());
-
-	// Status-bar updates from state.
-	state.subscribe(() => {
-		setText(host, "tool", state.tool);
-		setText(host, "entity", state.activeEntity ? `${state.activeEntity.name} (${state.activeEntity.class})` : "no entity selected");
-		setText(host, "count", placementsLabel(state.allPlacements().length));
-		setText(host, "dirty", state.pending > 0 ? "saving…" : "");
-		if (undoBtn) undoBtn.disabled = !state.canUndo();
-		if (redoBtn) redoBtn.disabled = !state.canRedo();
-		// Tab-strip badge reflects live count.
-		document.querySelectorAll(".bx-tabstrip__tab").forEach((tab) => {
-			if (tab.textContent && tab.textContent.trim().startsWith("Entities")) {
-				tab.textContent = `Entities · ${state.allPlacements().length}`;
-			}
-		});
-	});
-
-	void errorReporter; // wired through ops.onError above
-
-	return harness;
+	} catch { /* placeholder remains empty */ }
 }
 
-// ---- helpers --------------------------------------------------------
-
-function mergeCatalogEntries(
-	entries: readonly PaletteAtlasEntry[],
-): PaletteAtlasEntry[] {
-	const byID = new Map<number, PaletteAtlasEntry>();
-	for (const e of entries) {
-		// Last write wins; the placement catalog and backdrop catalog
-		// can overlap on shared entity_types (rare but valid), and
-		// since both endpoints derive their atlas info from the same
-		// upstream rows the values will be byte-identical.
-		byID.set(e.id, e);
-	}
-	return [...byID.values()];
+function safeParseJSON(s: string): Record<string, unknown> {
+	if (!s) return {};
+	try { return JSON.parse(s) as Record<string, unknown>; }
+	catch { return {}; }
 }
 
-function setText(host: HTMLElement, key: string, value: string) {
-	const el = host.querySelector(`[data-bx-status="${key}"]`);
-	if (el) el.textContent = value;
-}
-
-function flash(host: HTMLElement, msg: string) {
-	const el = host.querySelector('[data-bx-status="dirty"]');
-	if (el) {
-		el.textContent = msg;
-		(el as HTMLElement).style.color = "var(--bx-danger, #f55)";
-		setTimeout(() => {
-			if (el.textContent === msg) {
-				el.textContent = "";
-				(el as HTMLElement).style.color = "";
-			}
-		}, 4000);
-	} else {
-		console.warn("[level-editor]", msg);
-	}
-}
-
-function placementsLabel(n: number): string {
-	return n === 1 ? "1 placement" : `${n} placements`;
-}
-
-function isTextEditingTarget(t: EventTarget | null): boolean {
-	if (!(t instanceof HTMLElement)) return false;
-	const tag = t.tagName;
-	return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || t.isContentEditable;
-}
-
-// Auto-run on the level editor's entities tab.
+// Auto-boot when on the level editor surface.
 if (typeof document !== "undefined" && document.body?.dataset.surface === "level-editor-entities") {
 	void bootLevelEditor();
 }
-
-// Suppress unused: TILE_SUB_PX is re-exported here for tests / future
-// pan/zoom math callers; explicit export keeps tree-shaking happy.
-export { TILE_SUB_PX };

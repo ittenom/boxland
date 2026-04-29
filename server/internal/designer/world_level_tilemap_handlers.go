@@ -474,6 +474,24 @@ func buildLevelEntitiesEditorProps(
 		}
 	}
 
+	// Mint a one-shot WS ticket the JS entry script uses to open
+	// the editor's WebSocket. Failure logs + falls through to an
+	// empty ticket — the JS will refuse to boot and surface an
+	// inline error rather than silently misbehaving.
+	wsURL := resolveSandboxWSURL(r)
+	wsTicket := ""
+	if d.Auth != nil {
+		dr := CurrentDesigner(r.Context())
+		if dr != nil {
+			ip := clientIP(r)
+			if t, err := d.Auth.MintWSTicket(r.Context(), dr.ID, ip); err == nil {
+				wsTicket = t
+			} else {
+				slog.Warn("level editor mint ws ticket", "err", err)
+			}
+		}
+	}
+
 	return views.LevelEntitiesEditorProps{
 		Level:          lv,
 		MapID:          lv.MapID,
@@ -482,6 +500,8 @@ func buildLevelEntitiesEditorProps(
 		Palette:        palette,
 		PaletteFolders: paletteFolders,
 		PlacementCount: placementCount,
+		WSURL:          wsURL,
+		WSTicket:       wsTicket,
 	}
 }
 

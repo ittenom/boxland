@@ -355,6 +355,10 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /design/entities/npcs", auth(getEntitiesByClass("npc")(d)))
 	mux.Handle("GET /design/entities/pcs", auth(getEntitiesByClass("pc")(d)))
 	mux.Handle("GET /design/entities/logic", auth(getEntitiesByClass("logic")(d)))
+	// UI-class entities: the meta loop. The same rows back the
+	// editor's chrome (NineSlice button frames, panel backgrounds,
+	// slider tracks) AND any in-game HUD widgets a designer skins.
+	mux.Handle("GET /design/entities/ui", auth(getEntitiesByClass("ui")(d)))
 
 	// Shared ref pickers (PLAN.md §5d). One generic "choose an asset /
 	// entity" modal that any form's KindAssetRef / KindEntityTypeRef
@@ -1357,6 +1361,79 @@ func autoCreateTilemap(
 	return int(tm.NonEmptyCount), nil
 }
 
+// autoCreateUIEntity matches each `ui_panel` asset upload with a
+// matching ClassUI entity_type and a default `nine_slice` component.
+// This is the meta dogfood loop: the same entity_type the editor
+// renders as a button frame is the one a designer can drop on a HUD
+// anchor in their game.
+//
+// Idempotency: a previous upload of the same bytes is dedup'd at the
+// asset layer (content_addressed_path conflict yields Reused=true);
+// here we additionally guard against the case where the asset row
+// already exists but the entity_type was deleted manually — in that
+// case we recreate the entity_type with the same name. ErrNameInUse
+// from the entity_types table means an entity of the same name
+// already exists with the same asset id, which is the dedup we want.
+func autoCreateUIEntity(
+	ctx context.Context,
+	d Deps,
+	asset *assets.Asset,
+	designerID int64,
+) error {
+	if d.Entities == nil {
+		return errors.New("entities service not configured")
+	}
+	if asset == nil {
+		return errors.New("nil asset")
+	}
+	// Look for an existing ClassUI entity_type already pointing at
+	// this asset. FindBySpriteAtlas returns every entity_type with
+	// the asset id (multiple atlas cells per sheet are allowed for
+	// tile sheets); we just need to find one ClassUI row.
+	if existing, err := d.Entities.FindBySpriteAtlas(ctx, asset.ID); err == nil {
+		for _, e := range existing {
+			if e.EntityClass == entities.ClassUI {
+				return nil
+			}
+		}
+	}
+
+	assetID := asset.ID
+	et, err := d.Entities.Create(ctx, entities.CreateInput{
+		Name:          asset.Name,
+		EntityClass:   entities.ClassUI,
+		SpriteAssetID: &assetID,
+		AtlasIndex:    0,
+		Tags:          []string{"ui-pack"},
+		CreatedBy:     designerID,
+	})
+	if err != nil {
+		// Name conflict means someone (or a prior auto-create) made
+		// an entity with this name already. Treat as success: the
+		// designer can remap it manually if they meant something
+		// else. Surfacing the error here would block the upload.
+		if errors.Is(err, entities.ErrNameInUse) {
+			return nil
+		}
+		return fmt.Errorf("create ui entity_type: %w", err)
+	}
+
+	// Default nine_slice insets. The Phase 2 seeder uses a measurer
+	// for the bulk pack import; per-upload UI sprites get sane
+	// defaults that the designer can fine-tune in the entity
+	// inspector.
+	cfg, err := json.Marshal(components.NineSlice{Left: 6, Top: 6, Right: 6, Bottom: 6})
+	if err != nil {
+		return fmt.Errorf("marshal default nine_slice: %w", err)
+	}
+	if err := d.Entities.SetComponents(ctx, nil, et.ID, map[components.Kind]json.RawMessage{
+		components.KindNineSlice: cfg,
+	}); err != nil {
+		return fmt.Errorf("set nine_slice component: %w", err)
+	}
+	return nil
+}
+
 // postAssetDeleteBulk deletes a list of assets and re-renders the
 // asset grid in place. Bound to 256 ids by parseCommaIDs so a
 // runaway request can't fan out an unbounded delete.
@@ -1793,6 +1870,8 @@ func listEntitiesScoped(ctx context.Context, d Deps, class string, opts entities
 		return d.Entities.ListByClass(ctx, entities.ClassPC, opts)
 	case "logic":
 		return d.Entities.ListByClass(ctx, entities.ClassLogic, opts)
+	case "ui":
+		return d.Entities.ListByClass(ctx, entities.ClassUI, opts)
 	}
 	return d.Entities.List(ctx, opts)
 }
@@ -1808,6 +1887,8 @@ func entitiesPageTitle(class string) string {
 		return "Player characters"
 	case "logic":
 		return "Logic"
+	case "ui":
+		return "UI"
 	}
 	return "Entities"
 }
@@ -1816,7 +1897,7 @@ func entitiesPageTitle(class string) string {
 // class (so the right sub-section gets aria-current).
 func entityActiveKind(class string) string {
 	switch class {
-	case "tile", "npc", "pc", "logic":
+	case "tile", "npc", "pc", "logic", "ui":
 		return class
 	}
 	return "entity"
@@ -2920,6 +3001,22 @@ func getMapmakerPage(d Deps) http.HandlerFunc {
 		layout.ActiveID = m.ID
 		layout.Variant = "bleed"
 		layout.BodyClass = "bx-mapmaker-body"
+
+		// Mint a one-shot WS ticket the entry script uses to open
+		// the editor's WebSocket. The mapmaker page is designer-
+		// realm only so we always have a CurrentDesigner here.
+		wsURL := resolveSandboxWSURL(r)
+		wsTicket := ""
+		if d.Auth != nil {
+			if dr := CurrentDesigner(r.Context()); dr != nil {
+				if t, err := d.Auth.MintWSTicket(r.Context(), dr.ID, clientIP(r)); err == nil {
+					wsTicket = t
+				} else {
+					slog.Warn("mapmaker mint ws ticket", "err", err)
+				}
+			}
+		}
+
 		renderHTML(w, r, views.MapmakerPage(views.MapmakerProps{
 			Layout:             layout,
 			Map:                *m,
@@ -2928,6 +3025,8 @@ func getMapmakerPage(d Deps) http.HandlerFunc {
 			PaletteFolders:     paletteFolders,
 			EntityDraftCount:   entityDrafts,
 			LockedCellCount:    lockedCount,
+			WSURL:              wsURL,
+			WSTicket:           wsTicket,
 		}))
 	}
 }
@@ -4282,6 +4381,19 @@ func postAssetUpload(d Deps) http.HandlerFunc {
 						)
 					} else {
 						item.TileEntityCount = n
+					}
+				}
+				// UI-panel uploads auto-create a matching ClassUI
+				// entity_type so the sprite is immediately usable
+				// in the editor's chrome AND in player-facing HUDs.
+				// Same dogfood loop as tilemap auto-creation; one
+				// upload, one row, ready to use.
+				if res.Asset.Kind == assets.KindUIPanel && d.Entities != nil {
+					if perr := autoCreateUIEntity(r.Context(), d, res.Asset, dr.ID); perr != nil {
+						slog.Warn("auto-create ui entity_type",
+							"err", perr,
+							"asset_id", res.Asset.ID,
+						)
 					}
 				}
 				if res.Asset.Kind == assets.KindSprite {

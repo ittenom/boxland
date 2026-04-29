@@ -99,11 +99,12 @@ type ProjectInfo struct {
 	TileGroupCount int
 
 	// Per-class entity counts. Drives the tree's nested entity
-	// section (Tiles / NPCs / PCs / Logic).
+	// section (Tiles / NPCs / PCs / Logic / UI).
 	TileEntityCount  int
 	NPCEntityCount   int
 	PCEntityCount    int
 	LogicEntityCount int
+	UIEntityCount    int
 
 	DraftCount int
 }
@@ -122,11 +123,13 @@ type ProjectIndex struct {
 	Worlds   IndexSection
 	Levels   IndexSection
 	Maps     IndexSection
-	// Entities split by class.
+	// Entities split by class. UIEntities is the meta loop: the
+	// editor's chrome and the in-game HUD share these rows.
 	TileEntities  IndexSection
 	NPCEntities   IndexSection
 	PCEntities    IndexSection
 	LogicEntities IndexSection
+	UIEntities    IndexSection
 	// Library kinds. Tilemaps is a first-class object backed by its
 	// own table; the rest mirror asset kinds.
 	Sprites  IndexSection
@@ -528,6 +531,14 @@ templ ProjectTree(p LayoutProps) {
 				Active:   activeMatch(p.ActiveKind, p.ActiveID, "logic"),
 				ListHref: "/design/entities/logic",
 				NewHref:  "/design/entities/logic",
+			})
+			@treeSubSection(treeProps{
+				Kind:     "ui",
+				Title:    "UI",
+				Section:  p.Tree.UIEntities,
+				Active:   activeMatch(p.ActiveKind, p.ActiveID, "ui"),
+				ListHref: "/design/entities/ui",
+				NewHref:  "/design/entities/ui",
 			})
 		</div>
 

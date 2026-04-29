@@ -82,6 +82,15 @@ export interface NetClientOptions {
 	scheduler?: Scheduler;
 	/** Optional shared mailbox; one is created if omitted. */
 	mailbox?: Mailbox;
+	/**
+	 * Optional pre-mailbox hook. Called for every binary frame
+	 * BEFORE the default diff-decode path. Return `true` to claim
+	 * the frame (the client skips diff decoding). Used by the
+	 * editor surfaces to route EditorSnapshot / EditorDiff frames
+	 * (which share the wire with game Diffs but carry a different
+	 * file_identifier).
+	 */
+	onRawFrame?: (bytes: Uint8Array) => boolean;
 }
 
 const DEFAULT_BACKOFF: Required<BackoffConfig> = {
@@ -260,6 +269,11 @@ export class NetClient {
 			return;
 		}
 		const u8 = data instanceof Uint8Array ? data : new Uint8Array(data);
+		// Pre-mailbox hook: surfaces that ride the same WS but
+		// produce non-Diff frames (editor snapshots / diffs)
+		// claim those here. When the hook returns true, we
+		// don't try to decode the bytes as a Diff.
+		if (this.opts.onRawFrame && this.opts.onRawFrame(u8)) return;
 		const diff = decodeDiff(u8);
 		if (!diff) {
 			this.emitError(new Error("net: short/invalid Diff frame"));

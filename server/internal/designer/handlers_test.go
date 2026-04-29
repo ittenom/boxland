@@ -83,17 +83,16 @@ func TestMapmakerPage_RendersAtlasAwarePalette(t *testing.T) {
 		t.Fatalf("status %d, body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
+	// The mapmaker is now a fully Pixi-rendered surface: chrome,
+	// palette, and tile canvas all draw inside the EditorApp scene.
+	// The templ ships only the host element + WS boot info; the
+	// palette atlas details flow through the WS snapshot.
 	for _, want := range []string{
-		`data-bx-sprite-url="/design/assets/blob/` + itoa(a.ID) + `"`,
-		`data-bx-atlas-index="5"`,
-		`data-bx-atlas-cols="4"`,
-		`class="bx-mapmaker__palette__thumb bx-pixel"`,
-		// Pixi-driven mapmaker: surface drives boot.ts dispatch
-		// + the entry script's auto-boot guard. The replacement of
-		// the canvas with a Pixi-mounted host happens at runtime in
-		// the entry script, so the templ still ships <canvas> here.
+		`data-bx-mapmaker-host`,
 		`data-surface="mapmaker"`,
 		`/static/web/mapmaker.js`,
+		`data-bx-ws-url="`,
+		`data-bx-ws-ticket="`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q in body", want)

@@ -308,8 +308,20 @@ func (rcv *Tile) MutateFrame(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(12, n)
 }
 
-func (rcv *Tile) CollisionShape() CollisionShape {
+func (rcv *Tile) RotationDegrees() int16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	if o != 0 {
+		return rcv._tab.GetInt16(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *Tile) MutateRotationDegrees(n int16) bool {
+	return rcv._tab.MutateInt16Slot(14, n)
+}
+
+func (rcv *Tile) CollisionShape() CollisionShape {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		return CollisionShape(rcv._tab.GetByte(o + rcv._tab.Pos))
 	}
@@ -317,11 +329,11 @@ func (rcv *Tile) CollisionShape() CollisionShape {
 }
 
 func (rcv *Tile) MutateCollisionShape(n CollisionShape) bool {
-	return rcv._tab.MutateByteSlot(14, byte(n))
+	return rcv._tab.MutateByteSlot(16, byte(n))
 }
 
 func (rcv *Tile) EdgeCollisions() byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
 		return rcv._tab.GetByte(o + rcv._tab.Pos)
 	}
@@ -329,11 +341,11 @@ func (rcv *Tile) EdgeCollisions() byte {
 }
 
 func (rcv *Tile) MutateEdgeCollisions(n byte) bool {
-	return rcv._tab.MutateByteSlot(16, n)
+	return rcv._tab.MutateByteSlot(18, n)
 }
 
 func (rcv *Tile) CollisionLayerMask() uint32 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
 		return rcv._tab.GetUint32(o + rcv._tab.Pos)
 	}
@@ -341,11 +353,11 @@ func (rcv *Tile) CollisionLayerMask() uint32 {
 }
 
 func (rcv *Tile) MutateCollisionLayerMask(n uint32) bool {
-	return rcv._tab.MutateUint32Slot(18, n)
+	return rcv._tab.MutateUint32Slot(20, n)
 }
 
 func TileStart(builder *flatbuffers.Builder) {
-	builder.StartObject(8)
+	builder.StartObject(9)
 }
 func TileAddLayerId(builder *flatbuffers.Builder, layerId uint16) {
 	builder.PrependUint16Slot(0, layerId, 0)
@@ -362,14 +374,17 @@ func TileAddAssetId(builder *flatbuffers.Builder, assetId uint32) {
 func TileAddFrame(builder *flatbuffers.Builder, frame uint16) {
 	builder.PrependUint16Slot(4, frame, 0)
 }
+func TileAddRotationDegrees(builder *flatbuffers.Builder, rotationDegrees int16) {
+	builder.PrependInt16Slot(5, rotationDegrees, 0)
+}
 func TileAddCollisionShape(builder *flatbuffers.Builder, collisionShape CollisionShape) {
-	builder.PrependByteSlot(5, byte(collisionShape), 0)
+	builder.PrependByteSlot(6, byte(collisionShape), 0)
 }
 func TileAddEdgeCollisions(builder *flatbuffers.Builder, edgeCollisions byte) {
-	builder.PrependByteSlot(6, edgeCollisions, 0)
+	builder.PrependByteSlot(7, edgeCollisions, 0)
 }
 func TileAddCollisionLayerMask(builder *flatbuffers.Builder, collisionLayerMask uint32) {
-	builder.PrependUint32Slot(7, collisionLayerMask, 0)
+	builder.PrependUint32Slot(8, collisionLayerMask, 0)
 }
 func TileEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

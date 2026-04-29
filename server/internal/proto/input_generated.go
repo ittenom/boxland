@@ -130,48 +130,84 @@ func (v SpectateMode) String() string {
 type DesignerOpcode uint16
 
 const (
-	DesignerOpcodeNone              DesignerOpcode = 0
-	DesignerOpcodeSpawnAny          DesignerOpcode = 1
-	DesignerOpcodeSetResource       DesignerOpcode = 2
-	DesignerOpcodeTakeControlEntity DesignerOpcode = 3
-	DesignerOpcodeReleaseControl    DesignerOpcode = 4
-	DesignerOpcodeTeleport          DesignerOpcode = 5
-	DesignerOpcodeFreezeTick        DesignerOpcode = 6
-	DesignerOpcodeStepTick          DesignerOpcode = 7
-	DesignerOpcodeGodmode           DesignerOpcode = 8
-	DesignerOpcodePlaceTiles        DesignerOpcode = 200
-	DesignerOpcodeEraseTiles        DesignerOpcode = 201
-	DesignerOpcodePlaceLighting     DesignerOpcode = 202
+	DesignerOpcodeNone                    DesignerOpcode = 0
+	DesignerOpcodeSpawnAny                DesignerOpcode = 1
+	DesignerOpcodeSetResource             DesignerOpcode = 2
+	DesignerOpcodeTakeControlEntity       DesignerOpcode = 3
+	DesignerOpcodeReleaseControl          DesignerOpcode = 4
+	DesignerOpcodeTeleport                DesignerOpcode = 5
+	DesignerOpcodeFreezeTick              DesignerOpcode = 6
+	DesignerOpcodeStepTick                DesignerOpcode = 7
+	DesignerOpcodeGodmode                 DesignerOpcode = 8
+	DesignerOpcodePlaceTiles              DesignerOpcode = 200
+	DesignerOpcodeEraseTiles              DesignerOpcode = 201
+	DesignerOpcodePlaceLighting           DesignerOpcode = 202
+	DesignerOpcodeEditorJoinMapmaker      DesignerOpcode = 300
+	DesignerOpcodeEditorJoinLevelEditor   DesignerOpcode = 301
+	DesignerOpcodeEditorLeave             DesignerOpcode = 302
+	DesignerOpcodeEditorUndo              DesignerOpcode = 303
+	DesignerOpcodeEditorRedo              DesignerOpcode = 304
+	DesignerOpcodePlaceLevelEntity        DesignerOpcode = 400
+	DesignerOpcodeMoveLevelEntity         DesignerOpcode = 401
+	DesignerOpcodeRemoveLevelEntity       DesignerOpcode = 402
+	DesignerOpcodeSetLevelEntityOverrides DesignerOpcode = 403
+	DesignerOpcodeLockTiles               DesignerOpcode = 500
+	DesignerOpcodeUnlockTiles             DesignerOpcode = 501
+	DesignerOpcodeSetTileRotation         DesignerOpcode = 502
 )
 
 var EnumNamesDesignerOpcode = map[DesignerOpcode]string{
-	DesignerOpcodeNone:              "None",
-	DesignerOpcodeSpawnAny:          "SpawnAny",
-	DesignerOpcodeSetResource:       "SetResource",
-	DesignerOpcodeTakeControlEntity: "TakeControlEntity",
-	DesignerOpcodeReleaseControl:    "ReleaseControl",
-	DesignerOpcodeTeleport:          "Teleport",
-	DesignerOpcodeFreezeTick:        "FreezeTick",
-	DesignerOpcodeStepTick:          "StepTick",
-	DesignerOpcodeGodmode:           "Godmode",
-	DesignerOpcodePlaceTiles:        "PlaceTiles",
-	DesignerOpcodeEraseTiles:        "EraseTiles",
-	DesignerOpcodePlaceLighting:     "PlaceLighting",
+	DesignerOpcodeNone:                    "None",
+	DesignerOpcodeSpawnAny:                "SpawnAny",
+	DesignerOpcodeSetResource:             "SetResource",
+	DesignerOpcodeTakeControlEntity:       "TakeControlEntity",
+	DesignerOpcodeReleaseControl:          "ReleaseControl",
+	DesignerOpcodeTeleport:                "Teleport",
+	DesignerOpcodeFreezeTick:              "FreezeTick",
+	DesignerOpcodeStepTick:                "StepTick",
+	DesignerOpcodeGodmode:                 "Godmode",
+	DesignerOpcodePlaceTiles:              "PlaceTiles",
+	DesignerOpcodeEraseTiles:              "EraseTiles",
+	DesignerOpcodePlaceLighting:           "PlaceLighting",
+	DesignerOpcodeEditorJoinMapmaker:      "EditorJoinMapmaker",
+	DesignerOpcodeEditorJoinLevelEditor:   "EditorJoinLevelEditor",
+	DesignerOpcodeEditorLeave:             "EditorLeave",
+	DesignerOpcodeEditorUndo:              "EditorUndo",
+	DesignerOpcodeEditorRedo:              "EditorRedo",
+	DesignerOpcodePlaceLevelEntity:        "PlaceLevelEntity",
+	DesignerOpcodeMoveLevelEntity:         "MoveLevelEntity",
+	DesignerOpcodeRemoveLevelEntity:       "RemoveLevelEntity",
+	DesignerOpcodeSetLevelEntityOverrides: "SetLevelEntityOverrides",
+	DesignerOpcodeLockTiles:               "LockTiles",
+	DesignerOpcodeUnlockTiles:             "UnlockTiles",
+	DesignerOpcodeSetTileRotation:         "SetTileRotation",
 }
 
 var EnumValuesDesignerOpcode = map[string]DesignerOpcode{
-	"None":              DesignerOpcodeNone,
-	"SpawnAny":          DesignerOpcodeSpawnAny,
-	"SetResource":       DesignerOpcodeSetResource,
-	"TakeControlEntity": DesignerOpcodeTakeControlEntity,
-	"ReleaseControl":    DesignerOpcodeReleaseControl,
-	"Teleport":          DesignerOpcodeTeleport,
-	"FreezeTick":        DesignerOpcodeFreezeTick,
-	"StepTick":          DesignerOpcodeStepTick,
-	"Godmode":           DesignerOpcodeGodmode,
-	"PlaceTiles":        DesignerOpcodePlaceTiles,
-	"EraseTiles":        DesignerOpcodeEraseTiles,
-	"PlaceLighting":     DesignerOpcodePlaceLighting,
+	"None":                    DesignerOpcodeNone,
+	"SpawnAny":                DesignerOpcodeSpawnAny,
+	"SetResource":             DesignerOpcodeSetResource,
+	"TakeControlEntity":       DesignerOpcodeTakeControlEntity,
+	"ReleaseControl":          DesignerOpcodeReleaseControl,
+	"Teleport":                DesignerOpcodeTeleport,
+	"FreezeTick":              DesignerOpcodeFreezeTick,
+	"StepTick":                DesignerOpcodeStepTick,
+	"Godmode":                 DesignerOpcodeGodmode,
+	"PlaceTiles":              DesignerOpcodePlaceTiles,
+	"EraseTiles":              DesignerOpcodeEraseTiles,
+	"PlaceLighting":           DesignerOpcodePlaceLighting,
+	"EditorJoinMapmaker":      DesignerOpcodeEditorJoinMapmaker,
+	"EditorJoinLevelEditor":   DesignerOpcodeEditorJoinLevelEditor,
+	"EditorLeave":             DesignerOpcodeEditorLeave,
+	"EditorUndo":              DesignerOpcodeEditorUndo,
+	"EditorRedo":              DesignerOpcodeEditorRedo,
+	"PlaceLevelEntity":        DesignerOpcodePlaceLevelEntity,
+	"MoveLevelEntity":         DesignerOpcodeMoveLevelEntity,
+	"RemoveLevelEntity":       DesignerOpcodeRemoveLevelEntity,
+	"SetLevelEntityOverrides": DesignerOpcodeSetLevelEntityOverrides,
+	"LockTiles":               DesignerOpcodeLockTiles,
+	"UnlockTiles":             DesignerOpcodeUnlockTiles,
+	"SetTileRotation":         DesignerOpcodeSetTileRotation,
 }
 
 func (v DesignerOpcode) String() string {
@@ -1574,6 +1610,608 @@ func PlaceLightingPayloadStartCellsVector(builder *flatbuffers.Builder, numElems
 	return builder.StartVector(4, numElems, 4)
 }
 func PlaceLightingPayloadEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	return builder.EndObject()
+}
+type EditorJoinPayload struct {
+	_tab flatbuffers.Table
+}
+
+func GetRootAsEditorJoinPayload(buf []byte, offset flatbuffers.UOffsetT) *EditorJoinPayload {
+	n := flatbuffers.GetUOffsetT(buf[offset:])
+	x := &EditorJoinPayload{}
+	x.Init(buf, n+offset)
+	return x
+}
+
+func FinishEditorJoinPayloadBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.Finish(offset)
+}
+
+func GetSizePrefixedRootAsEditorJoinPayload(buf []byte, offset flatbuffers.UOffsetT) *EditorJoinPayload {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &EditorJoinPayload{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
+func FinishSizePrefixedEditorJoinPayloadBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.FinishSizePrefixed(offset)
+}
+
+func (rcv *EditorJoinPayload) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *EditorJoinPayload) Table() flatbuffers.Table {
+	return rcv._tab
+}
+
+func (rcv *EditorJoinPayload) TargetId() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EditorJoinPayload) MutateTargetId(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(4, n)
+}
+
+func (rcv *EditorJoinPayload) InstanceHint() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func EditorJoinPayloadStart(builder *flatbuffers.Builder) {
+	builder.StartObject(2)
+}
+func EditorJoinPayloadAddTargetId(builder *flatbuffers.Builder, targetId uint64) {
+	builder.PrependUint64Slot(0, targetId, 0)
+}
+func EditorJoinPayloadAddInstanceHint(builder *flatbuffers.Builder, instanceHint flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(instanceHint), 0)
+}
+func EditorJoinPayloadEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	return builder.EndObject()
+}
+type PlaceLevelEntityPayload struct {
+	_tab flatbuffers.Table
+}
+
+func GetRootAsPlaceLevelEntityPayload(buf []byte, offset flatbuffers.UOffsetT) *PlaceLevelEntityPayload {
+	n := flatbuffers.GetUOffsetT(buf[offset:])
+	x := &PlaceLevelEntityPayload{}
+	x.Init(buf, n+offset)
+	return x
+}
+
+func FinishPlaceLevelEntityPayloadBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.Finish(offset)
+}
+
+func GetSizePrefixedRootAsPlaceLevelEntityPayload(buf []byte, offset flatbuffers.UOffsetT) *PlaceLevelEntityPayload {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &PlaceLevelEntityPayload{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
+func FinishSizePrefixedPlaceLevelEntityPayloadBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.FinishSizePrefixed(offset)
+}
+
+func (rcv *PlaceLevelEntityPayload) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *PlaceLevelEntityPayload) Table() flatbuffers.Table {
+	return rcv._tab
+}
+
+func (rcv *PlaceLevelEntityPayload) LevelId() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *PlaceLevelEntityPayload) MutateLevelId(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(4, n)
+}
+
+func (rcv *PlaceLevelEntityPayload) EntityTypeId() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *PlaceLevelEntityPayload) MutateEntityTypeId(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(6, n)
+}
+
+func (rcv *PlaceLevelEntityPayload) X() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *PlaceLevelEntityPayload) MutateX(n int32) bool {
+	return rcv._tab.MutateInt32Slot(8, n)
+}
+
+func (rcv *PlaceLevelEntityPayload) Y() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *PlaceLevelEntityPayload) MutateY(n int32) bool {
+	return rcv._tab.MutateInt32Slot(10, n)
+}
+
+func (rcv *PlaceLevelEntityPayload) RotationDegrees() int16 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	if o != 0 {
+		return rcv._tab.GetInt16(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *PlaceLevelEntityPayload) MutateRotationDegrees(n int16) bool {
+	return rcv._tab.MutateInt16Slot(12, n)
+}
+
+func (rcv *PlaceLevelEntityPayload) InstanceOverridesJson() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *PlaceLevelEntityPayload) Tags(j int) []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.ByteVector(a + flatbuffers.UOffsetT(j*4))
+	}
+	return nil
+}
+
+func (rcv *PlaceLevelEntityPayload) TagsLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func PlaceLevelEntityPayloadStart(builder *flatbuffers.Builder) {
+	builder.StartObject(7)
+}
+func PlaceLevelEntityPayloadAddLevelId(builder *flatbuffers.Builder, levelId uint64) {
+	builder.PrependUint64Slot(0, levelId, 0)
+}
+func PlaceLevelEntityPayloadAddEntityTypeId(builder *flatbuffers.Builder, entityTypeId uint64) {
+	builder.PrependUint64Slot(1, entityTypeId, 0)
+}
+func PlaceLevelEntityPayloadAddX(builder *flatbuffers.Builder, x int32) {
+	builder.PrependInt32Slot(2, x, 0)
+}
+func PlaceLevelEntityPayloadAddY(builder *flatbuffers.Builder, y int32) {
+	builder.PrependInt32Slot(3, y, 0)
+}
+func PlaceLevelEntityPayloadAddRotationDegrees(builder *flatbuffers.Builder, rotationDegrees int16) {
+	builder.PrependInt16Slot(4, rotationDegrees, 0)
+}
+func PlaceLevelEntityPayloadAddInstanceOverridesJson(builder *flatbuffers.Builder, instanceOverridesJson flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(instanceOverridesJson), 0)
+}
+func PlaceLevelEntityPayloadAddTags(builder *flatbuffers.Builder, tags flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(tags), 0)
+}
+func PlaceLevelEntityPayloadStartTagsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func PlaceLevelEntityPayloadEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	return builder.EndObject()
+}
+type MoveLevelEntityPayload struct {
+	_tab flatbuffers.Table
+}
+
+func GetRootAsMoveLevelEntityPayload(buf []byte, offset flatbuffers.UOffsetT) *MoveLevelEntityPayload {
+	n := flatbuffers.GetUOffsetT(buf[offset:])
+	x := &MoveLevelEntityPayload{}
+	x.Init(buf, n+offset)
+	return x
+}
+
+func FinishMoveLevelEntityPayloadBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.Finish(offset)
+}
+
+func GetSizePrefixedRootAsMoveLevelEntityPayload(buf []byte, offset flatbuffers.UOffsetT) *MoveLevelEntityPayload {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &MoveLevelEntityPayload{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
+func FinishSizePrefixedMoveLevelEntityPayloadBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.FinishSizePrefixed(offset)
+}
+
+func (rcv *MoveLevelEntityPayload) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *MoveLevelEntityPayload) Table() flatbuffers.Table {
+	return rcv._tab
+}
+
+func (rcv *MoveLevelEntityPayload) LevelId() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *MoveLevelEntityPayload) MutateLevelId(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(4, n)
+}
+
+func (rcv *MoveLevelEntityPayload) PlacementId() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *MoveLevelEntityPayload) MutatePlacementId(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(6, n)
+}
+
+func (rcv *MoveLevelEntityPayload) X() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *MoveLevelEntityPayload) MutateX(n int32) bool {
+	return rcv._tab.MutateInt32Slot(8, n)
+}
+
+func (rcv *MoveLevelEntityPayload) Y() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *MoveLevelEntityPayload) MutateY(n int32) bool {
+	return rcv._tab.MutateInt32Slot(10, n)
+}
+
+func (rcv *MoveLevelEntityPayload) RotationDegrees() int16 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	if o != 0 {
+		return rcv._tab.GetInt16(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *MoveLevelEntityPayload) MutateRotationDegrees(n int16) bool {
+	return rcv._tab.MutateInt16Slot(12, n)
+}
+
+func MoveLevelEntityPayloadStart(builder *flatbuffers.Builder) {
+	builder.StartObject(5)
+}
+func MoveLevelEntityPayloadAddLevelId(builder *flatbuffers.Builder, levelId uint64) {
+	builder.PrependUint64Slot(0, levelId, 0)
+}
+func MoveLevelEntityPayloadAddPlacementId(builder *flatbuffers.Builder, placementId uint64) {
+	builder.PrependUint64Slot(1, placementId, 0)
+}
+func MoveLevelEntityPayloadAddX(builder *flatbuffers.Builder, x int32) {
+	builder.PrependInt32Slot(2, x, 0)
+}
+func MoveLevelEntityPayloadAddY(builder *flatbuffers.Builder, y int32) {
+	builder.PrependInt32Slot(3, y, 0)
+}
+func MoveLevelEntityPayloadAddRotationDegrees(builder *flatbuffers.Builder, rotationDegrees int16) {
+	builder.PrependInt16Slot(4, rotationDegrees, 0)
+}
+func MoveLevelEntityPayloadEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	return builder.EndObject()
+}
+type RemoveLevelEntityPayload struct {
+	_tab flatbuffers.Table
+}
+
+func GetRootAsRemoveLevelEntityPayload(buf []byte, offset flatbuffers.UOffsetT) *RemoveLevelEntityPayload {
+	n := flatbuffers.GetUOffsetT(buf[offset:])
+	x := &RemoveLevelEntityPayload{}
+	x.Init(buf, n+offset)
+	return x
+}
+
+func FinishRemoveLevelEntityPayloadBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.Finish(offset)
+}
+
+func GetSizePrefixedRootAsRemoveLevelEntityPayload(buf []byte, offset flatbuffers.UOffsetT) *RemoveLevelEntityPayload {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &RemoveLevelEntityPayload{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
+func FinishSizePrefixedRemoveLevelEntityPayloadBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.FinishSizePrefixed(offset)
+}
+
+func (rcv *RemoveLevelEntityPayload) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *RemoveLevelEntityPayload) Table() flatbuffers.Table {
+	return rcv._tab
+}
+
+func (rcv *RemoveLevelEntityPayload) LevelId() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *RemoveLevelEntityPayload) MutateLevelId(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(4, n)
+}
+
+func (rcv *RemoveLevelEntityPayload) PlacementId() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *RemoveLevelEntityPayload) MutatePlacementId(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(6, n)
+}
+
+func RemoveLevelEntityPayloadStart(builder *flatbuffers.Builder) {
+	builder.StartObject(2)
+}
+func RemoveLevelEntityPayloadAddLevelId(builder *flatbuffers.Builder, levelId uint64) {
+	builder.PrependUint64Slot(0, levelId, 0)
+}
+func RemoveLevelEntityPayloadAddPlacementId(builder *flatbuffers.Builder, placementId uint64) {
+	builder.PrependUint64Slot(1, placementId, 0)
+}
+func RemoveLevelEntityPayloadEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	return builder.EndObject()
+}
+type SetLevelEntityOverridesPayload struct {
+	_tab flatbuffers.Table
+}
+
+func GetRootAsSetLevelEntityOverridesPayload(buf []byte, offset flatbuffers.UOffsetT) *SetLevelEntityOverridesPayload {
+	n := flatbuffers.GetUOffsetT(buf[offset:])
+	x := &SetLevelEntityOverridesPayload{}
+	x.Init(buf, n+offset)
+	return x
+}
+
+func FinishSetLevelEntityOverridesPayloadBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.Finish(offset)
+}
+
+func GetSizePrefixedRootAsSetLevelEntityOverridesPayload(buf []byte, offset flatbuffers.UOffsetT) *SetLevelEntityOverridesPayload {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &SetLevelEntityOverridesPayload{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
+func FinishSizePrefixedSetLevelEntityOverridesPayloadBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.FinishSizePrefixed(offset)
+}
+
+func (rcv *SetLevelEntityOverridesPayload) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *SetLevelEntityOverridesPayload) Table() flatbuffers.Table {
+	return rcv._tab
+}
+
+func (rcv *SetLevelEntityOverridesPayload) LevelId() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *SetLevelEntityOverridesPayload) MutateLevelId(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(4, n)
+}
+
+func (rcv *SetLevelEntityOverridesPayload) PlacementId() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *SetLevelEntityOverridesPayload) MutatePlacementId(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(6, n)
+}
+
+func (rcv *SetLevelEntityOverridesPayload) InstanceOverridesJson() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func SetLevelEntityOverridesPayloadStart(builder *flatbuffers.Builder) {
+	builder.StartObject(3)
+}
+func SetLevelEntityOverridesPayloadAddLevelId(builder *flatbuffers.Builder, levelId uint64) {
+	builder.PrependUint64Slot(0, levelId, 0)
+}
+func SetLevelEntityOverridesPayloadAddPlacementId(builder *flatbuffers.Builder, placementId uint64) {
+	builder.PrependUint64Slot(1, placementId, 0)
+}
+func SetLevelEntityOverridesPayloadAddInstanceOverridesJson(builder *flatbuffers.Builder, instanceOverridesJson flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(instanceOverridesJson), 0)
+}
+func SetLevelEntityOverridesPayloadEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	return builder.EndObject()
+}
+type SetTileRotationPayload struct {
+	_tab flatbuffers.Table
+}
+
+func GetRootAsSetTileRotationPayload(buf []byte, offset flatbuffers.UOffsetT) *SetTileRotationPayload {
+	n := flatbuffers.GetUOffsetT(buf[offset:])
+	x := &SetTileRotationPayload{}
+	x.Init(buf, n+offset)
+	return x
+}
+
+func FinishSetTileRotationPayloadBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.Finish(offset)
+}
+
+func GetSizePrefixedRootAsSetTileRotationPayload(buf []byte, offset flatbuffers.UOffsetT) *SetTileRotationPayload {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &SetTileRotationPayload{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
+func FinishSizePrefixedSetTileRotationPayloadBuffer(builder *flatbuffers.Builder, offset flatbuffers.UOffsetT) {
+	builder.FinishSizePrefixed(offset)
+}
+
+func (rcv *SetTileRotationPayload) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *SetTileRotationPayload) Table() flatbuffers.Table {
+	return rcv._tab
+}
+
+func (rcv *SetTileRotationPayload) MapId() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *SetTileRotationPayload) MutateMapId(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(4, n)
+}
+
+func (rcv *SetTileRotationPayload) LayerId() uint32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.GetUint32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *SetTileRotationPayload) MutateLayerId(n uint32) bool {
+	return rcv._tab.MutateUint32Slot(6, n)
+}
+
+func (rcv *SetTileRotationPayload) X() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *SetTileRotationPayload) MutateX(n int32) bool {
+	return rcv._tab.MutateInt32Slot(8, n)
+}
+
+func (rcv *SetTileRotationPayload) Y() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *SetTileRotationPayload) MutateY(n int32) bool {
+	return rcv._tab.MutateInt32Slot(10, n)
+}
+
+func (rcv *SetTileRotationPayload) RotationDegrees() int16 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	if o != 0 {
+		return rcv._tab.GetInt16(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *SetTileRotationPayload) MutateRotationDegrees(n int16) bool {
+	return rcv._tab.MutateInt16Slot(12, n)
+}
+
+func SetTileRotationPayloadStart(builder *flatbuffers.Builder) {
+	builder.StartObject(5)
+}
+func SetTileRotationPayloadAddMapId(builder *flatbuffers.Builder, mapId uint64) {
+	builder.PrependUint64Slot(0, mapId, 0)
+}
+func SetTileRotationPayloadAddLayerId(builder *flatbuffers.Builder, layerId uint32) {
+	builder.PrependUint32Slot(1, layerId, 0)
+}
+func SetTileRotationPayloadAddX(builder *flatbuffers.Builder, x int32) {
+	builder.PrependInt32Slot(2, x, 0)
+}
+func SetTileRotationPayloadAddY(builder *flatbuffers.Builder, y int32) {
+	builder.PrependInt32Slot(3, y, 0)
+}
+func SetTileRotationPayloadAddRotationDegrees(builder *flatbuffers.Builder, rotationDegrees int16) {
+	builder.PrependInt16Slot(4, rotationDegrees, 0)
+}
+func SetTileRotationPayloadEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
 type HeartbeatPayload struct {

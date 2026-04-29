@@ -50,23 +50,28 @@ frame():number {
   return offset ? this.bb!.readUint16(this.bb_pos + offset) : 0;
 }
 
-collisionShape():CollisionShape {
+rotationDegrees():number {
   const offset = this.bb!.__offset(this.bb_pos, 14);
+  return offset ? this.bb!.readInt16(this.bb_pos + offset) : 0;
+}
+
+collisionShape():CollisionShape {
+  const offset = this.bb!.__offset(this.bb_pos, 16);
   return offset ? this.bb!.readUint8(this.bb_pos + offset) : CollisionShape.Open;
 }
 
 edgeCollisions():number {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
+  const offset = this.bb!.__offset(this.bb_pos, 18);
   return offset ? this.bb!.readUint8(this.bb_pos + offset) : 0;
 }
 
 collisionLayerMask():number {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
+  const offset = this.bb!.__offset(this.bb_pos, 20);
   return offset ? this.bb!.readUint32(this.bb_pos + offset) : 0;
 }
 
 static startTile(builder:flatbuffers.Builder) {
-  builder.startObject(8);
+  builder.startObject(9);
 }
 
 static addLayerId(builder:flatbuffers.Builder, layerId:number) {
@@ -89,16 +94,20 @@ static addFrame(builder:flatbuffers.Builder, frame:number) {
   builder.addFieldInt16(4, frame, 0);
 }
 
+static addRotationDegrees(builder:flatbuffers.Builder, rotationDegrees:number) {
+  builder.addFieldInt16(5, rotationDegrees, 0);
+}
+
 static addCollisionShape(builder:flatbuffers.Builder, collisionShape:CollisionShape) {
-  builder.addFieldInt8(5, collisionShape, CollisionShape.Open);
+  builder.addFieldInt8(6, collisionShape, CollisionShape.Open);
 }
 
 static addEdgeCollisions(builder:flatbuffers.Builder, edgeCollisions:number) {
-  builder.addFieldInt8(6, edgeCollisions, 0);
+  builder.addFieldInt8(7, edgeCollisions, 0);
 }
 
 static addCollisionLayerMask(builder:flatbuffers.Builder, collisionLayerMask:number) {
-  builder.addFieldInt32(7, collisionLayerMask, 0);
+  builder.addFieldInt32(8, collisionLayerMask, 0);
 }
 
 static endTile(builder:flatbuffers.Builder):flatbuffers.Offset {
@@ -106,13 +115,14 @@ static endTile(builder:flatbuffers.Builder):flatbuffers.Offset {
   return offset;
 }
 
-static createTile(builder:flatbuffers.Builder, layerId:number, gx:number, gy:number, assetId:number, frame:number, collisionShape:CollisionShape, edgeCollisions:number, collisionLayerMask:number):flatbuffers.Offset {
+static createTile(builder:flatbuffers.Builder, layerId:number, gx:number, gy:number, assetId:number, frame:number, rotationDegrees:number, collisionShape:CollisionShape, edgeCollisions:number, collisionLayerMask:number):flatbuffers.Offset {
   Tile.startTile(builder);
   Tile.addLayerId(builder, layerId);
   Tile.addGx(builder, gx);
   Tile.addGy(builder, gy);
   Tile.addAssetId(builder, assetId);
   Tile.addFrame(builder, frame);
+  Tile.addRotationDegrees(builder, rotationDegrees);
   Tile.addCollisionShape(builder, collisionShape);
   Tile.addEdgeCollisions(builder, edgeCollisions);
   Tile.addCollisionLayerMask(builder, collisionLayerMask);

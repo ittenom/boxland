@@ -139,6 +139,11 @@ func (g *Gateway) serveUpgrade(w http.ResponseWriter, r *http.Request) {
 		delete(g.conns, id)
 		g.mu.Unlock()
 		conn.closed.Store(true)
+		// If the conn had an editor session attached (joined an
+		// editor surface), unsubscribe + tear down the diff pump
+		// goroutine so we don't leak. Idempotent + safe for conns
+		// that never joined.
+		dropConnEditor(conn)
 	}()
 
 	slog.Info("ws connected",

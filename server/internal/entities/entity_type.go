@@ -22,7 +22,7 @@ import (
 
 // Class is the entity-class discriminator. Mirrors the
 // entity_types.entity_class CHECK constraint. Per the holistic
-// redesign, ENTITY is the broad parent class with four subtypes:
+// redesign, ENTITY is the broad parent class with five subtypes:
 //
 //   tile   — a sprite designed to stamp into a map's tile grid;
 //            tilemap_id + cell_col + cell_row link back to the source
@@ -32,6 +32,11 @@ import (
 //   pc     — a player-controllable character template.
 //   logic  — an invisible game-logic entity (spawn point, region
 //            trigger, item consumer, level transition).
+//   ui     — an in-engine UI primitive (button frame, panel
+//            background, slider track) that renders identically in
+//            editor chrome and in player-facing HUDs. Slice insets
+//            for 9-slice rendering live on the entity_type via the
+//            `nine_slice` component (see entities/components).
 type Class string
 
 const (
@@ -39,12 +44,13 @@ const (
 	ClassNPC   Class = "npc"
 	ClassPC    Class = "pc"
 	ClassLogic Class = "logic"
+	ClassUI    Class = "ui"
 )
 
 // Valid reports whether c names a real entity class.
 func (c Class) Valid() bool {
 	switch c {
-	case ClassTile, ClassNPC, ClassPC, ClassLogic:
+	case ClassTile, ClassNPC, ClassPC, ClassLogic, ClassUI:
 		return true
 	}
 	return false

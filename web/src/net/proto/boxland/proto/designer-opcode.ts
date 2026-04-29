@@ -14,5 +14,17 @@ export enum DesignerOpcode {
   Godmode = 8,
   PlaceTiles = 200,
   EraseTiles = 201,
-  PlaceLighting = 202
+  PlaceLighting = 202,
+  EditorJoinMapmaker = 300,
+  EditorJoinLevelEditor = 301,
+  EditorLeave = 302,
+  EditorUndo = 303,
+  EditorRedo = 304,
+  PlaceLevelEntity = 400,
+  MoveLevelEntity = 401,
+  RemoveLevelEntity = 402,
+  SetLevelEntityOverrides = 403,
+  LockTiles = 500,
+  UnlockTiles = 501,
+  SetTileRotation = 502
 }

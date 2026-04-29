@@ -25,6 +25,13 @@ go run ./server/cmd/boxland
 
 (5) Select **Design** to start building your Boxland :)
 
+After your first signup as the project owner, run `boxland seed` once
+to import the bundled UI pack — buttons, frames, sliders, slots — as
+first-class `ui` entities. They're shared by the design tool's
+chrome and your in-game HUDs, so any tweak you make in the asset
+manager updates both surfaces. The pack ships under CC BY 4.0; see
+[LICENSE-THIRD-PARTY.md](LICENSE-THIRD-PARTY.md) for attribution.
+
 (6) When the TLI shows a pink **Update available** banner, run
 `boxland update` to pull the new release, run new migrations, and
 rebuild. See [docs/updates.md](docs/updates.md) for details.

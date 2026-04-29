@@ -322,14 +322,17 @@ func TestLevelSettings_UpdatesModes(t *testing.T) {
 	}
 }
 
-// TestLevelEditor_EntitiesTab_RendersCanvasAndPalette verifies the
-// new Entities tab returns the canvas host element + a palette entry
-// per placeable entity_type, with the right atlas-slicing data
-// attributes the JS reads. Mirrors TestMapmakerPage_RendersAtlasAwarePalette.
-func TestLevelEditor_EntitiesTab_RendersCanvasAndPalette(t *testing.T) {
+// TestLevelEditor_EntitiesTab_RendersPixiHost verifies the new
+// Entities tab returns the minimal Pixi-host shell: the JS entry
+// script, the host element with level/map dims, and the WS url +
+// ticket the gateway minted. The Pixi-rendered editor reads its
+// palette + chrome from the WS snapshot at boot, so the templ no
+// longer carries palette data attributes — we just confirm the
+// boot config is present.
+func TestLevelEditor_EntitiesTab_RendersPixiHost(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
-	deps, tok, levelID, etID, _ := levelEntitiesFixture(t, pool)
+	deps, tok, levelID, _, _ := levelEntitiesFixture(t, pool)
 	srv := buildHandler(deps)
 
 	rr := httptest.NewRecorder()
@@ -340,12 +343,12 @@ func TestLevelEditor_EntitiesTab_RendersCanvasAndPalette(t *testing.T) {
 	for _, want := range []string{
 		`data-bx-level-editor`,
 		`data-level-id="` + itoa(levelID) + `"`,
-		`data-bx-level-canvas-host`,
+		`data-map-w="`,
+		`data-map-h="`,
 		`/static/web/level-editor.js`,
 		`data-surface="level-editor-entities"`,
-		`data-bx-entity-type-id="` + itoa(etID) + `"`,
-		`data-bx-entity-class="logic"`,
-		`data-bx-level-tool="place"`,
+		`data-bx-ws-url="`,
+		`data-bx-ws-ticket="`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q in body", want)

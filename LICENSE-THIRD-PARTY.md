@@ -1,10 +1,11 @@
 # Third-party attributions
 
-Boxland is MIT-licensed (see `LICENSE`). This file lists open-source
-algorithms and code patterns we have adapted from other MIT-licensed
-projects. None of these are pulled in as runtime dependencies; the
-attributions cover *adapted code* (rewrites in our own types and
-idioms that are nonetheless inspired by the source).
+Boxland is MIT-licensed (see `LICENSE`). This file lists third-party
+algorithms, code patterns, and content packs we use under their
+respective licenses. The "Adapted code" section covers *adapted
+code* (rewrites in our own types and idioms that are nonetheless
+inspired by the source); the "Bundled content" section covers art
+assets vendored verbatim and shipped with the binary.
 
 ## Wave Function Collapse — overlapping model
 
@@ -62,3 +63,27 @@ Collapse, MIT). The value-noise core is original.
 
 - **Reference:** https://github.com/fileho/Hierarchical-Wave-Function-Collapse
 - **License:** MIT (technique inspiration only — no code reuse)
+
+# Bundled content
+
+Asset packs vendored verbatim into the Boxland binary and shipped
+under their original license. Attribution requirements are met here
+plus on the relevant in-product browse surfaces.
+
+## Crusenho "Complete UI Essential Pack" — Gradient theme
+
+`server/static/img/ui/gradient/` ships sprite art adapted from
+Crusenho Agus Hennihuno's *Complete UI Essential Pack*, Gradient
+theme. The same `entity_types` rows the design tool's chrome renders
+as buttons, panels, frames, and sliders are also available to
+designers as in-game HUD widgets — one source of art for both worlds.
+See `server/internal/setup/uipack.go` for the seeder that
+materializes the rows.
+
+- **Source:** https://crusenho.itch.io
+- **Author:** Crusenho Agus Hennihuno
+- **License:** CC BY 4.0 — https://creativecommons.org/licenses/by/4.0/
+- **Adapted from:** the Gradient theme `Sprites/` directory; PNGs
+  vendored unmodified. In-engine 9-slice insets are stored as a
+  `nine_slice` component on each corresponding `entity_types` row
+  (see `server/internal/entities/components/nine_slice.go`).

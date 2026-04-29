@@ -7,9 +7,12 @@ import (
 	"log/slog"
 	"strings"
 
+	"boxland/server/internal/assets"
+	"boxland/server/internal/entities"
 	"boxland/server/internal/levels"
 	"boxland/server/internal/maps"
 	"boxland/server/internal/proto"
+	"boxland/server/internal/sim/editor"
 	"boxland/server/internal/sim/runtime"
 	"boxland/server/internal/sim/spatial"
 )
@@ -29,6 +32,21 @@ type AuthoringDeps struct {
 	MapsService   *maps.Service
 	LevelsService *levels.Service
 	Instances     *runtime.InstanceManager
+
+	// EditorSessions enables the editor-surface opcodes
+	// (EditorJoin*, PlaceLevelEntity, …). Optional: when nil, the
+	// editor opcodes return "not configured" errors. Wired by the
+	// production binary; tests that don't exercise the editor
+	// surface can leave it zero.
+	EditorSessions *editor.Manager
+
+	// Entities + Assets feed the editor snapshot's theme + palette
+	// vectors. Optional: when nil, the snapshot ships those vectors
+	// empty (the client falls back to placeholder fills) and the
+	// rest of the snapshot still works. Wired by the production
+	// binary alongside the rest of the design tool's services.
+	Entities *entities.Service
+	Assets   *assets.Service
 }
 
 // RegisterAuthoringVerbs wires the designer-only authoring opcodes
@@ -63,6 +81,19 @@ func dispatchDesignerCommand(deps AuthoringDeps) VerbHandler {
 		dc := proto.GetRootAsDesignerCommandPayload(payload, 0)
 		opcode := dc.Opcode()
 		data := dc.DataBytes()
+
+		// Editor-surface opcodes (3xx + 4xx + 5xx ranges).
+		// Routed first so the per-opcode switch stays a flat
+		// list of map-painting + sandbox-control opcodes.
+		if handled, err := dispatchEditorOpcode(ctx, conn, EditorAuthoringDeps{
+			Sessions: deps.EditorSessions,
+			Levels:   deps.LevelsService,
+			Maps:     deps.MapsService,
+			Entities: deps.Entities,
+			Assets:   deps.Assets,
+		}, opcode, data); handled {
+			return err
+		}
 
 		switch opcode {
 		case proto.DesignerOpcodePlaceTiles:

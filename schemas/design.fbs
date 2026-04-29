@@ -1,54 +1,195 @@
 // Boxland — design.fbs
 //
-// "Push to Live" broadcast: when a designer publishes drafts, the server
-// emits a LivePublish to every running map. The runtime applies the change
-// at the next tick boundary (between-tick atomic hot-swap; see PLAN.md §4j).
+// Server -> client editor snapshots and diffs. Used by the design
+// tool's WS protocol to push initial state + ongoing changes to
+// connected designers (Realm.Designer).
 //
-// LivePublish is also delivered to design-tool surfaces over the same WS
-// gateway via htmx-ext-ws (designer realm) so the publish-progress UI
-// updates without a parallel SSE channel.
+// Per the holistic redesign, both editors flow through the same
+// shape:
+//
+//   1. Client opens a designer-realm WS, sends Auth.
+//   2. Client sends DesignerCommand{EditorJoinMapmaker|LevelEditor}
+//      with EditorJoinPayload{target_id}.
+//   3. Server replies with one EditorSnapshot envelope containing
+//      the full editor state.
+//   4. Subsequent client ops (PlaceTiles / PlaceLevelEntity / ...)
+//      produce server EditorDiff envelopes broadcast to every
+//      session subscriber. Two designers co-editing the same level
+//      see each other's changes via the diff stream.
+//
+// Coordinate convention: cell-aligned int32 (NOT sub-pixel; editors
+// snap to the tile grid). Sub-pixel coords belong to the live game
+// pipeline (world.fbs).
 
 include "world.fbs";
 
 namespace boxland.proto;
 
 file_identifier "BLDS";
+file_extension  "bldesign";
 
-enum ArtifactKind:uint8 {
-    Asset           = 0,
-    EntityType      = 1,
-    Map             = 2,
-    Palette         = 3,
-    PaletteVariant  = 4,
-    EdgeSocketType  = 5,
-    TileGroup       = 6,
+// ---- Snapshot ------------------------------------------------------
+
+enum EditorKind:uint8 {
+    Mapmaker     = 0,
+    LevelEditor  = 1,
 }
 
-enum DiffOp:uint8 {
-    Created  = 0,
-    Updated  = 1,
-    Deleted  = 2,
+// One UI theme entry: a role -> entity_type binding the renderer
+// uses to skin chrome widgets (buttons, frames, sliders). The
+// entity_types are auto-seeded from the Crusenho gradient pack but
+// designers can replace the underlying art.
+table EditorThemeEntry {
+    role:string;
+    entity_type_id:uint64;
+    asset_url:string;
+    nine_slice_left:int32;
+    nine_slice_top:int32;
+    nine_slice_right:int32;
+    nine_slice_bottom:int32;
+    width:int32;
+    height:int32;
 }
 
-// One entry per artifact touched by a publish. structured_diff is a typed
-// FlatBuffer payload chosen by ArtifactKind; summary_line is the
-// human-readable line consumed by the diff preview modal (Lorem-Ipsum
-// placeholders are filled by humans later via copy.json).
-table ArtifactDiff {
-    kind:ArtifactKind;
-    artifact_id:uint64;
-    op:DiffOp;
-    summary_line:string;
-    structured_diff:[ubyte];        // kind-specific FlatBuffer
+// One palette atlas row — placeable items the surface offers in
+// its sidebar palette. For the mapmaker, this is the tile-class
+// catalog; for the level editor, it's npc/pc/logic.
+table EditorPaletteEntry {
+    entity_type_id:uint64;
+    name:string;
+    class:string;             // "tile" | "npc" | "pc" | "logic" | "ui"
+    sprite_url:string;
+    atlas_index:int32;
+    atlas_cols:int32;
+    tile_size:int32;
+    folder_id:int64 = 0;       // 0 = unfolded
+    procedural_include:bool;
 }
 
-// Broadcast on Push-to-Live. Affected maps hot-swap at their next tick boundary.
-table LivePublish {
-    protocol_version:ProtocolVersion (required);
-    changeset_id:uint64;
-    published_at_ms:uint64;
-    affected_map_ids:[uint32];      // running instances of these maps must hot-swap
-    diffs:[ArtifactDiff];
+// Mapmaker-specific snapshot body: tiles + locks + layers.
+table EditorMapmakerBody {
+    map_id:uint64;
+    map_name:string;
+    width:int32;
+    height:int32;
+    layers:[EditorMapLayer];
+    tiles:[EditorMapTile];
+    locks:[EditorMapTile];     // same shape as tiles; tracked separately
 }
 
-root_type LivePublish;
+table EditorMapLayer {
+    layer_id:uint32;
+    name:string;
+    kind:string;               // "tile" | "lighting"
+    ord:int32;
+    y_sort_entities:bool;
+}
+
+table EditorMapTile {
+    layer_id:uint32;
+    x:int32;
+    y:int32;
+    entity_type_id:uint64;
+    rotation_degrees:int16;
+}
+
+// Level-editor-specific snapshot body: placements + map dims.
+table EditorLevelEditorBody {
+    level_id:uint64;
+    level_name:string;
+    map_id:uint64;
+    map_width:int32;
+    map_height:int32;
+    placements:[EditorLevelPlacement];
+}
+
+table EditorLevelPlacement {
+    placement_id:uint64;
+    entity_type_id:uint64;
+    x:int32;
+    y:int32;
+    rotation_degrees:int16;
+    instance_overrides_json:string;
+    tags:[string];
+}
+
+// EditorSnapshot is the one-shot envelope the server sends after
+// a successful EditorJoin. Surface-specific bodies are tagged
+// unions; clients pick the body matching `kind`.
+table EditorSnapshot {
+    kind:EditorKind;
+    title:string;
+    theme:[EditorThemeEntry];
+    palette:[EditorPaletteEntry];
+    mapmaker_body:EditorMapmakerBody;       // populated when kind=Mapmaker
+    level_editor_body:EditorLevelEditorBody; // populated when kind=LevelEditor
+    // Server-managed undo/redo depths. Editors render the toolbar's
+    // undo/redo button enabled state from these.
+    undo_depth:uint32;
+    redo_depth:uint32;
+}
+
+// ---- Diffs ---------------------------------------------------------
+
+// Tagged union of incremental changes. The server emits these on
+// every successful op + on every sibling-broadcast received from
+// another editor session sharing the same target.
+enum EditorDiffKind:uint8 {
+    None              = 0,
+    TilePlaced        = 1,    // body: EditorMapTile
+    TileErased        = 2,    // body: EditorMapTilePoint
+    LockAdded         = 3,    // body: EditorMapTile
+    LockRemoved       = 4,    // body: EditorMapTilePoint
+    PlacementAdded    = 5,    // body: EditorLevelPlacement
+    PlacementMoved    = 6,    // body: EditorLevelPlacementMove
+    PlacementRemoved  = 7,    // body: EditorPlacementID
+    OverridesChanged  = 8,    // body: EditorPlacementOverrides
+    HistoryChanged    = 9,    // body: EditorHistoryDepth (no other state changed)
+}
+
+table EditorMapTilePoint {
+    layer_id:uint32;
+    x:int32;
+    y:int32;
+}
+
+table EditorLevelPlacementMove {
+    placement_id:uint64;
+    x:int32;
+    y:int32;
+    rotation_degrees:int16;
+}
+
+table EditorPlacementID {
+    placement_id:uint64;
+}
+
+table EditorPlacementOverrides {
+    placement_id:uint64;
+    instance_overrides_json:string;
+}
+
+table EditorHistoryDepth {
+    undo_depth:uint32;
+    redo_depth:uint32;
+}
+
+// EditorDiff is the wire envelope. `body` is one of the per-kind
+// tables above, encoded as raw bytes. Mirrors the Verb-based
+// dispatch pattern used by ClientMessage so server + client share
+// the same parser shape.
+table EditorDiff {
+    kind:EditorDiffKind;
+    body:[ubyte];
+    // Updated history depths after applying this diff. Same fields
+    // EditorSnapshot carries; clients re-render the toolbar's
+    // undo/redo state from these.
+    undo_depth:uint32;
+    redo_depth:uint32;
+    // Tick this diff was emitted at (matches the broadcaster's
+    // tick stream from world.fbs Diff). Reserved for reconnect
+    // resync; v1 doesn't use it.
+    tick:uint64 = 0;
+}
+
+root_type EditorSnapshot;

@@ -13,7 +13,10 @@
 package ws
 
 import (
+	"context"
+	"errors"
 	"sync/atomic"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -98,3 +101,24 @@ func (c *Connection) ClientVersion() string { return c.clientVer }
 
 // IsClosed reports whether the connection has been torn down.
 func (c *Connection) IsClosed() bool { return c.closed.Load() }
+
+// SendEditorFrame writes one binary frame onto the connection. Used
+// by the editor authoring path to push EditorSnapshot + EditorDiff
+// envelopes back to the designer. Times out after 2s — slow editor
+// clients shouldn't stall the broadcaster pump pulling from the
+// session sink. Errors close the connection (the editor surface
+// will reconnect on next interaction).
+func (c *Connection) SendEditorFrame(payload []byte) error {
+	if c.closed.Load() {
+		return errors.New("ws: connection closed")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := c.ws.Write(ctx, websocket.MessageBinary, payload); err != nil {
+		// Closed connections are common (designer closed the tab);
+		// log at debug only.
+		_ = c.ws.Close(websocket.StatusNormalClosure, "editor frame write failed")
+		return err
+	}
+	return nil
+}

@@ -8,6 +8,7 @@ export { bootLevelEditor } from "./entry-level-editor";
 export { EditorState } from "./state";
 export { LevelOps } from "./ops";
 export { LevelEditorWire } from "./wire";
+export { WSPlacementWire } from "./ws-wire";
 export { buildRenderables, defaultCamera, TILE_SUB_PX } from "./render-bridge";
 export {
 	handlePointerDown,
