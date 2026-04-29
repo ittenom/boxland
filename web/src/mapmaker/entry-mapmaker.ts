@@ -21,6 +21,8 @@ import {
 	Statusbar,
 	PaletteGrid,
 	StaticAssetCatalog,
+	NineSlice,
+	Roles,
 	type ThemeEntry,
 	type PaletteEntry as HarnessPaletteEntry,
 	type StaticCatalogEntry,
@@ -59,6 +61,11 @@ interface MapmakerBoot {
 	mapWidth: number;
 	mapHeight: number;
 	defaultLayerId: number;
+}
+
+interface LayerUIOptions {
+	visible: boolean;
+	editable: boolean;
 }
 
 function readBoot(host: HTMLElement): MapmakerBoot {
@@ -128,6 +135,16 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 		mapHeight: boot.mapHeight,
 		defaultLayerId: boot.defaultLayerId,
 	});
+	const layerOptions = new Map<number, LayerUIOptions>();
+	const ensureLayerOptions = (id: number): LayerUIOptions => {
+		let opts = layerOptions.get(id);
+		if (!opts) {
+			opts = { visible: true, editable: true };
+			layerOptions.set(id, opts);
+		}
+		return opts;
+	};
+	let refreshCanvas = (): void => {};
 	const body = snapshot.mapmakerBody();
 	if (body) {
 		const layers: MapLayer[] = [];
@@ -143,6 +160,7 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 			});
 		}
 		state.setLayers(layers);
+		for (const layer of layers) ensureLayerOptions(layer.id);
 
 		const tiles: MapTile[] = [];
 		for (let i = 0; i < body.tilesLength(); i++) {
@@ -267,7 +285,18 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 	const layerList = new Container();
 	layerList.layout = { width: "100%", flexDirection: "column", gap: 4 };
 	app.slots.sidebar.addChild(layerList);
-	const renderLayers = (): void => renderLayerList(layerList, state, renderToolbar);
+	const renderLayers = (): void => renderLayerList({
+		root: layerList,
+		state,
+		theme,
+		layerOptions,
+		ensureLayerOptions,
+		onChange: () => {
+			renderToolbar();
+			refreshCanvas();
+			queueMicrotask(renderLayers);
+		},
+	});
 	state.subscribe(renderLayers);
 	renderLayers();
 
@@ -338,16 +367,20 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 	const renderCursor = (): void => drawCursor(cursorOverlay, state.cursorCell, state.mapWidth(), state.mapHeight());
 	state.subscribe(renderCursor);
 	renderCursor();
-	const refreshCanvas = (): void => {
+	refreshCanvas = (): void => {
+		const visibleLayers = new Set<number>();
+		for (const layer of state.allLayers()) {
+			if (ensureLayerOptions(layer.id).visible) visibleLayers.add(layer.id);
+		}
 		void renderLayer.setRenderables(buildRenderables({
-			tiles: state.allTiles(),
-			procPreview: state.procPreview,
+			tiles: state.allTiles().filter((t) => visibleLayers.has(t.layerId)),
+			procPreview: state.procPreview?.filter((t) => visibleLayers.has(t.layerId)) ?? null,
 			stampGhost: state.activeEntity > 0 ? { entityID: state.activeEntity, rotation: state.activeRotation } : null,
 			cursorCell: state.cursorCell,
 			dragRectFrom: state.dragRectFrom,
 			dragRectTo: state.dragRectTo,
 			sampleRect: state.sampleRect,
-			locks: state.allLocks(),
+			locks: state.allLocks().filter((t) => visibleLayers.has(t.layerId)),
 			tool: state.tool,
 			activeLayer: state.activeLayer,
 			mapWidth: state.mapWidth(),
@@ -423,6 +456,7 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 	};
 
 	const applyStamp = (cell: Cell, mods: { shift?: boolean; alt?: boolean }): void => {
+		if (!ensureLayerOptions(state.activeLayer).editable) return;
 		if (state.tool === "fill") {
 			const out = floodFill(state, strokeCtx ?? newStrokeCtx(), cell);
 			shipStamp(out);
@@ -554,33 +588,105 @@ function sectionLabel(text: string): Text {
 	return t;
 }
 
-function renderLayerList(root: Container, state: MapmakerState, onChange: () => void): void {
+function renderLayerList(opts: {
+	root: Container;
+	state: MapmakerState;
+	theme: Theme;
+	layerOptions: Map<number, LayerUIOptions>;
+	ensureLayerOptions: (id: number) => LayerUIOptions;
+	onChange: () => void;
+}): void {
+	const { root, state, theme, ensureLayerOptions, onChange } = opts;
 	root.removeChildren().forEach((c) => c.destroy());
 	for (const layer of state.allLayers()) {
 		const row = new Container();
-		row.layout = { width: 220, height: 24 };
+		row.layout = { width: 220, height: 56 };
 		row.eventMode = "static";
 		row.cursor = "pointer";
 		const active = layer.id === state.activeLayer;
-		const bg = new Graphics();
-		bg
-			.rect(0, 0, 220, 24)
-			.fill(active ? 0x4f7fcf : 0x161d2a)
-			.rect(0, 0, 220, 24)
-			.stroke({ color: active ? 0xffd84a : 0x34415c, width: 1, alignment: 1 });
+		const layerOpts = ensureLayerOptions(layer.id);
+		const bg = new NineSlice({
+			theme,
+			role: active ? Roles.ButtonMdPressA : Roles.FrameLite,
+			width: 220,
+			height: 56,
+			fallbackColor: active ? 0x2f5eaa : 0x151d2c,
+		});
 		row.addChild(bg);
 		const label = new Text({
-			text: `${layer.name}  ${layer.kind}`,
-			style: pixelTextStyle(10, active ? 0x10131c : 0xd8e1f0),
+			text: layer.name,
+			style: pixelTextStyle(11, active ? 0xffd84a : 0xe8ecf2),
 		});
-		label.position.set(6, 5);
+		label.position.set(8, 7);
 		row.addChild(label);
+		const meta = new Text({
+			text: `${layer.kind}  ord ${layer.yShift}${layer.ySort ? "  y-sort" : ""}`,
+			style: pixelTextStyle(9, 0x9aa8bd),
+		});
+		meta.position.set(8, 24);
+		row.addChild(meta);
+		const visible = layerToggle({
+			theme,
+			label: layerOpts.visible ? "VIS" : "HID",
+			on: layerOpts.visible,
+			x: 132,
+			y: 8,
+			onTap: () => {
+				layerOpts.visible = !layerOpts.visible;
+				onChange();
+			},
+		});
+		row.addChild(visible);
+		const editable = layerToggle({
+			theme,
+			label: layerOpts.editable ? "EDIT" : "LOCK",
+			on: layerOpts.editable,
+			x: 132,
+			y: 31,
+			onTap: () => {
+				layerOpts.editable = !layerOpts.editable;
+				onChange();
+			},
+		});
+		row.addChild(editable);
 		row.on("pointertap", () => {
 			state.setActiveLayer(layer.id);
 			onChange();
 		});
 		root.addChild(row);
 	}
+}
+
+function layerToggle(opts: {
+	theme: Theme;
+	label: string;
+	on: boolean;
+	x: number;
+	y: number;
+	onTap: () => void;
+}): Container {
+	const c = new Container();
+	c.position.set(opts.x, opts.y);
+	c.eventMode = "static";
+	c.cursor = "pointer";
+	c.addChild(new NineSlice({
+		theme: opts.theme,
+		role: opts.on ? Roles.ButtonSmPressA : Roles.ButtonSmReleaseA,
+		width: 78,
+		height: 18,
+		fallbackColor: opts.on ? 0x3b66bc : 0x1b2638,
+	}));
+	const t = new Text({
+		text: opts.label,
+		style: pixelTextStyle(9, opts.on ? 0xffd84a : 0xaeb8ca),
+	});
+	t.position.set(8, 3);
+	c.addChild(t);
+	c.on("pointertap", (ev) => {
+		ev.stopPropagation();
+		opts.onTap();
+	});
+	return c;
 }
 
 function drawMapGrid(g: Graphics, mapW: number, mapH: number): void {

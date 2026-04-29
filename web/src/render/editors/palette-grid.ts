@@ -41,6 +41,8 @@ export interface PaletteGridOptions {
 const DEFAULT_CELL = 36;
 const DEFAULT_GAP = 4;
 const HALO_COLOR = 0xffd84a;
+const PAD = 8;
+const SCROLL_W = 12;
 
 export class PaletteGrid extends Container {
 	private readonly theme: Theme;
@@ -48,9 +50,18 @@ export class PaletteGrid extends Container {
 	private readonly gap: number;
 	private readonly onSelect: ((e: PaletteEntry) => void) | null;
 	private readonly cells = new Map<number, PaletteCell>();
+	private entries: PaletteEntry[] = [];
 	private selectedID: number | null = null;
 	private bg: NineSlice;
 	private readonly clip = new Graphics();
+	private readonly content = new Container();
+	private readonly scrollTrack: NineSlice;
+	private readonly scrollHandle: NineSlice;
+	private widthPx: number;
+	private heightPx: number;
+	private scrollY = 0;
+	private contentHeight = 0;
+	private drag: { startY: number; startScroll: number } | null = null;
 
 	constructor(opts: PaletteGridOptions) {
 		super();
@@ -58,16 +69,16 @@ export class PaletteGrid extends Container {
 		this.cellSize = opts.cellSize ?? DEFAULT_CELL;
 		this.gap = opts.gap ?? DEFAULT_GAP;
 		this.onSelect = opts.onSelect ?? null;
+		this.widthPx = opts.width;
+		this.heightPx = opts.height;
 
 		this.layout = {
 			width: opts.width,
 			height: opts.height,
-			flexDirection: "row",
-			flexWrap: "wrap",
-			alignContent: "flex-start",
-			gap: this.gap,
-			padding: 6,
 		};
+		this.eventMode = "static";
+		this.cursor = "default";
+		this.hitArea = new Rectangle(0, 0, opts.width, opts.height);
 
 		this.bg = new NineSlice({
 			theme: opts.theme,
@@ -82,14 +93,62 @@ export class PaletteGrid extends Container {
 		};
 		this.addChild(this.bg);
 		this.redrawClip(opts.width, opts.height);
+		this.clip.renderable = false;
 		this.addChild(this.clip);
-		this.mask = this.clip;
+		this.content.mask = this.clip;
+		this.addChild(this.content);
+
+		this.scrollTrack = new NineSlice({
+			theme: opts.theme,
+			role: Roles.ScrollBar,
+			width: SCROLL_W,
+			height: Math.max(1, opts.height - PAD * 2),
+			fallbackColor: 0x244269,
+		});
+		this.scrollTrack.position.set(opts.width - PAD - SCROLL_W, PAD);
+		this.addChild(this.scrollTrack);
+		this.scrollHandle = new NineSlice({
+			theme: opts.theme,
+			role: Roles.ScrollHandle,
+			width: SCROLL_W,
+			height: 48,
+			fallbackColor: 0x5e8cff,
+		});
+		this.addChild(this.scrollHandle);
+		this.scrollHandle.eventMode = "static";
+		this.scrollHandle.cursor = "grab";
+		this.scrollHandle.on("pointerdown", (ev: { global: { y: number }; stopPropagation?: () => void }) => {
+			this.drag = { startY: ev.global.y, startScroll: this.scrollY };
+			this.scrollHandle.cursor = "grabbing";
+			ev.stopPropagation?.();
+		});
+		this.on("pointermove", (ev: { global: { y: number } }) => {
+			if (!this.drag) return;
+			const viewportH = Math.max(1, this.heightPx - PAD * 2);
+			const maxScroll = Math.max(0, this.contentHeight - viewportH);
+			const handleH = Math.max(28, Math.floor((viewportH / this.contentHeight) * viewportH));
+			const travel = Math.max(1, viewportH - handleH);
+			this.setScroll(this.drag.startScroll + ((ev.global.y - this.drag.startY) / travel) * maxScroll);
+		});
+		this.on("pointerup", () => {
+			this.drag = null;
+			this.scrollHandle.cursor = "grab";
+		});
+		this.on("pointerupoutside", () => {
+			this.drag = null;
+			this.scrollHandle.cursor = "grab";
+		});
+		this.on("wheel", (ev: { deltaY?: number; preventDefault?: () => void }) => {
+			this.setScroll(this.scrollY + (ev.deltaY ?? 0));
+			ev.preventDefault?.();
+		});
 	}
 
 	/** Replace the entry list. Existing cell containers are reused
 	 *  when their id matches; new ids get a fresh cell; dropped ids
 	 *  are destroyed. */
 	setEntries(entries: readonly PaletteEntry[]): void {
+		this.entries = [...entries];
 		const seen = new Set<number>();
 		for (const e of entries) {
 			seen.add(e.id);
@@ -102,18 +161,19 @@ export class PaletteGrid extends Container {
 					onClick: () => this.select(e.id),
 				});
 				this.cells.set(e.id, cell);
-				this.addChild(cell);
+				this.content.addChild(cell);
 			} else {
 				cell.update(e);
 			}
 		}
 		for (const [id, cell] of this.cells) {
 			if (!seen.has(id)) {
-				this.removeChild(cell);
+				this.content.removeChild(cell);
 				cell.destroy();
 				this.cells.delete(id);
 			}
 		}
+		this.layoutCells();
 		// Reapply selection highlight in case the selected id is
 		// still present in the new entry set.
 		this.applySelection();
@@ -140,20 +200,54 @@ export class PaletteGrid extends Container {
 
 	/** Resize to new dims. */
 	resize(width: number, height: number): void {
+		this.widthPx = width;
+		this.heightPx = height;
 		this.layout = {
 			width, height,
-			flexDirection: "row",
-			flexWrap: "wrap",
-			alignContent: "flex-start",
-			gap: this.gap,
-			padding: 6,
 		};
+		this.hitArea = new Rectangle(0, 0, width, height);
 		this.bg.resize(width, height);
 		this.redrawClip(width, height);
+		this.scrollTrack.position.set(width - PAD - SCROLL_W, PAD);
+		this.scrollTrack.resize(SCROLL_W, Math.max(1, height - PAD * 2));
+		this.layoutCells();
 	}
 
 	private redrawClip(width: number, height: number): void {
-		this.clip.clear().rect(0, 0, width, height).fill(0xffffff);
+		this.clip.clear().rect(PAD, PAD, Math.max(1, width - PAD * 3 - SCROLL_W), Math.max(1, height - PAD * 2)).fill(0xffffff);
+	}
+
+	private layoutCells(): void {
+		const usableW = Math.max(this.cellSize, this.widthPx - PAD * 3 - SCROLL_W);
+		const cols = Math.max(1, Math.floor((usableW + this.gap) / (this.cellSize + this.gap)));
+		for (let i = 0; i < this.entries.length; i++) {
+			const cell = this.cells.get(this.entries[i]!.id);
+			if (!cell) continue;
+			const x = PAD + (i % cols) * (this.cellSize + this.gap);
+			const y = PAD + Math.floor(i / cols) * (this.cellSize + this.gap);
+			cell.position.set(x, y);
+		}
+		const rows = Math.ceil(this.entries.length / cols);
+		this.contentHeight = PAD * 2 + rows * this.cellSize + Math.max(0, rows - 1) * this.gap;
+		this.setScroll(this.scrollY);
+	}
+
+	private setScroll(next: number): void {
+		const viewportH = Math.max(1, this.heightPx - PAD * 2);
+		const maxScroll = Math.max(0, this.contentHeight - viewportH);
+		this.scrollY = Math.max(0, Math.min(maxScroll, next));
+		this.content.position.y = -Math.round(this.scrollY);
+
+		const show = maxScroll > 0;
+		this.scrollTrack.visible = show;
+		this.scrollHandle.visible = show;
+		if (!show) return;
+		const trackH = viewportH;
+		const handleH = Math.max(28, Math.floor((viewportH / this.contentHeight) * trackH));
+		const travel = Math.max(0, trackH - handleH);
+		const ratio = maxScroll === 0 ? 0 : this.scrollY / maxScroll;
+		this.scrollHandle.resize(SCROLL_W, handleH);
+		this.scrollHandle.position.set(this.widthPx - PAD - SCROLL_W, PAD + Math.round(travel * ratio));
 	}
 }
 
