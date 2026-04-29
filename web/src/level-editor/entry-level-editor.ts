@@ -14,12 +14,7 @@
 // The host element's data-bx-* attributes carry the level/map ids;
 // the meta tags carry the WS url + ticket the gateway minted.
 
-import { Container, Sprite, Texture, Rectangle as PixiRectangle } from "pixi.js";
-
-// Rectangle is referenced once below (texture frame); aliasing
-// avoids a name clash with any future local Rect type and keeps
-// the import explicit at the call site.
-const Rectangle = PixiRectangle;
+import { Container, Graphics, Text } from "pixi.js";
 
 import {
 	EditorApp,
@@ -29,16 +24,20 @@ import {
 	Inspector,
 	Statusbar,
 	Toolbar,
+	StaticAssetCatalog,
 	type ThemeEntry,
 	type PaletteEntry as HarnessPaletteEntry,
+	type StaticCatalogEntry,
 	type ToolbarAction,
 } from "@render";
-import { loadTextureAsset } from "@render/asset-texture";
 import { EditorKind } from "@proto/editor-kind.js";
 
 import { EditorState } from "./state";
 import { LevelOps } from "./ops";
 import { WSPlacementWire } from "./ws-wire";
+import { LevelEditorWire } from "./wire";
+import { MapmakerRenderableLayer } from "../mapmaker/render-layer";
+import { buildRenderables } from "./render-bridge";
 import {
 	handlePointerDown,
 	handlePointerMove,
@@ -52,6 +51,10 @@ import {
 	type Placement,
 	placementFromWire,
 } from "./types";
+
+const CELL_SIZE = 32;
+const MAP_ORIGIN_X = 18;
+const MAP_ORIGIN_Y = 18;
 
 interface DragState {
 	kind: "pan" | "move-selection";
@@ -134,6 +137,7 @@ export async function bootLevelEditor(
 	// 4) Wire local state + ops.
 	const state = new EditorState({ mapWidth: boot.mapWidth, mapHeight: boot.mapHeight });
 	const placementWire = new WSPlacementWire(wire, boot.levelId);
+	const restWire = new LevelEditorWire(boot.levelId, boot.mapId);
 	const ops = new LevelOps({
 		state,
 		wire: placementWire as unknown as import("./wire").LevelEditorWire,
@@ -167,6 +171,7 @@ export async function bootLevelEditor(
 	// 6) Build palette from snapshot.palette.
 	const paletteEntries: HarnessPaletteEntry[] = [];
 	const palByID = new Map<number, PaletteAtlasEntry>();
+	const catalogEntries: StaticCatalogEntry[] = [];
 	for (let i = 0; i < snapshot.paletteLength(); i++) {
 		const e = snapshot.palette(i);
 		if (!e) continue;
@@ -188,8 +193,21 @@ export async function bootLevelEditor(
 			atlasCols: entry.atlas_cols,
 			tileSize: entry.tile_size,
 		});
+		catalogEntries.push(staticCatalogEntry(entry));
 	}
 	state.addPaletteEntries([...palByID.values()]);
+	if (paletteEntries[0]) state.setActiveEntity(palByID.get(paletteEntries[0].id) ?? null);
+
+	const backdropCatalog = await restWire.loadBackdropCatalog().catch(() => ({ entries: [] as PaletteAtlasEntry[] }));
+	for (const entry of backdropCatalog.entries) catalogEntries.push(staticCatalogEntry(entry));
+	const backdrop = await restWire.loadBackdropTiles().catch(() => ({ tiles: [] }));
+	state.setBackdrop(backdrop.tiles.map((t) => ({
+		layerId: t.layer_id,
+		x: t.x,
+		y: t.y,
+		entityTypeId: t.entity_type_id,
+		rotation: normalizeRotation(t.rotation_degrees),
+	})));
 
 	const palette = new PaletteGrid({
 		theme,
@@ -201,23 +219,25 @@ export async function bootLevelEditor(
 		},
 	});
 	palette.setEntries(paletteEntries);
+	app.slots.sidebar.addChild(sectionLabel("Entities"));
 	app.slots.sidebar.addChild(palette);
 
 	// 7) Toolbar — basic tool selectors + undo/redo.
 	const toolbar = new Toolbar({ theme, slot: app.slots.toolbar });
 	const actions: ToolbarAction[] = [
-		{ id: "place", label: "Place (B)", active: state.tool === "place" },
-		{ id: "select", label: "Select (V)" },
-		{ id: "erase", label: "Erase (E)" },
-		{ id: "undo", label: "Undo" },
-		{ id: "redo", label: "Redo" },
+		{ id: "place", label: "Place", hotkey: "B", icon: "✎", tooltip: "Place - B", active: state.tool === "place" },
+		{ id: "select", label: "Select", hotkey: "V", icon: "⬚", tooltip: "Select - V" },
+		{ id: "erase", label: "Erase", hotkey: "E", icon: "🅇︎", tooltip: "Erase - E" },
+		{ id: "undo", label: "Undo", hotkey: "Ctrl+Z", icon: "↶", tooltip: "Undo - Ctrl+Z", disabled: !state.canUndo() },
+		{ id: "redo", label: "Redo", hotkey: "Shift+Z", icon: "↷", tooltip: "Redo - Shift+Z", disabled: !state.canRedo() },
 	];
-	toolbar.render(actions);
-	toolbar.onAction("place",  () => { state.setTool("place");  toolbar.render(updateActiveAction(actions, "place")); });
-	toolbar.onAction("select", () => { state.setTool("select"); toolbar.render(updateActiveAction(actions, "select")); });
-	toolbar.onAction("erase",  () => { state.setTool("erase");  toolbar.render(updateActiveAction(actions, "erase")); });
-	toolbar.onAction("undo",   () => { void state.undo(); });
-	toolbar.onAction("redo",   () => { void state.redo(); });
+	const renderToolbar = (): void => toolbar.render(updateActiveAction(actions, state.tool, state));
+	renderToolbar();
+	toolbar.onAction("place",  () => { state.setTool("place"); renderToolbar(); });
+	toolbar.onAction("select", () => { state.setTool("select"); renderToolbar(); });
+	toolbar.onAction("erase",  () => { state.setTool("erase"); renderToolbar(); });
+	toolbar.onAction("undo",   () => { void state.undo().then(renderToolbar); });
+	toolbar.onAction("redo",   () => { void state.redo().then(renderToolbar); });
 
 	// 8) Statusbar — placement count + saving indicator.
 	const statusbar = new Statusbar({ theme, slot: app.slots.statusbar });
@@ -243,6 +263,7 @@ export async function bootLevelEditor(
 	state.subscribe(() => {
 		if (state.selection === null) {
 			inspector.clear();
+			inspector.setTitle("No entity selected");
 			return;
 		}
 		const p = state.placement(state.selection);
@@ -264,37 +285,34 @@ export async function bootLevelEditor(
 			{ x: p.x, y: p.y, rotation: String(p.rotation) },
 		);
 	});
+	inspector.setTitle("No entity selected");
 
-	// 10) In-canvas placement renderer. Each placement is a Sprite
-	//     atlas-sliced from its entity_type's sheet. We render in
-	//     the Scene root (camera-scaled space). A future pass can
-	//     use the unified Renderable path.
-	const inCanvasContainer = new Container();
-	app.slots.canvasWrap.addChild(inCanvasContainer);
-	const cellSize = 32;
-	const sprites = new Map<number, Sprite>();
-
+	// 10) In-canvas renderer: read-only map backdrop plus mutable
+	// placement layer, both cell-aligned in the shared renderable path.
+	const mapSurface = new Container();
+	mapSurface.position.set(MAP_ORIGIN_X, MAP_ORIGIN_Y);
+	app.slots.canvasWrap.addChild(mapSurface);
+	const grid = new Graphics();
+	drawMapGrid(grid, state.mapWidth(), state.mapHeight());
+	mapSurface.addChild(grid);
+	const catalog = new StaticAssetCatalog({ entries: catalogEntries });
+	const renderLayer = new MapmakerRenderableLayer(catalog, state.mapWidth(), state.mapHeight());
+	mapSurface.addChild(renderLayer);
+	const knownAssetIDs = new Set(catalogEntries.map((e) => e.id));
 	const refreshCanvas = (): void => {
-		const present = new Set<number>();
-		for (const p of state.allPlacements()) {
-			present.add(p.id);
-			let sprite = sprites.get(p.id);
-			if (!sprite) {
-				sprite = new Sprite();
-				sprites.set(p.id, sprite);
-				inCanvasContainer.addChild(sprite);
-				void loadSpriteTextureFor(sprite, p, palByID);
-			}
-			sprite.position.set(p.x * cellSize, p.y * cellSize);
-			sprite.angle = p.rotation;
-		}
-		for (const [id, sprite] of sprites) {
-			if (!present.has(id)) {
-				inCanvasContainer.removeChild(sprite);
-				sprite.destroy();
-				sprites.delete(id);
-			}
-		}
+		void renderLayer.setRenderables(buildRenderables({
+			placements: state.allPlacements(),
+			backdrop: state.allBackdrop(),
+			selection: state.selection,
+			cursorCell: state.cursorCell,
+			activeEntityID: state.activeEntity?.id ?? null,
+			activeRotation: state.activeRotation,
+			tool: state.tool,
+			mapWidth: state.mapWidth(),
+			mapHeight: state.mapHeight(),
+			knownAssetIDs,
+			pendingPlacementIDs: new Set(),
+		}));
 	};
 	state.subscribe(refreshCanvas);
 	refreshCanvas();
@@ -304,10 +322,10 @@ export async function bootLevelEditor(
 	app.slots.canvasWrap.cursor = "crosshair";
 	let drag: DragState | null = null;
 	const localCellAt = (e: { global: { x: number; y: number } }): Cell => {
-		const localPos = app.slots.canvasWrap.toLocal(e.global);
+		const localPos = mapSurface.toLocal(e.global);
 		return {
-			x: Math.max(0, Math.min(state.mapWidth() - 1, Math.floor(localPos.x / cellSize))),
-			y: Math.max(0, Math.min(state.mapHeight() - 1, Math.floor(localPos.y / cellSize))),
+			x: Math.max(0, Math.min(state.mapWidth() - 1, Math.floor(localPos.x / CELL_SIZE))),
+			y: Math.max(0, Math.min(state.mapHeight() - 1, Math.floor(localPos.y / CELL_SIZE))),
 		};
 	};
 	app.slots.canvasWrap.on("pointerdown", (e) => {
@@ -338,7 +356,7 @@ export async function bootLevelEditor(
 		const tools: Record<string, "place" | "select" | "erase"> = { b: "place", v: "select", e: "erase" };
 		if (tools[k]) {
 			state.setTool(tools[k]!);
-			toolbar.render(updateActiveAction(actions, tools[k]!));
+			renderToolbar();
 			e.preventDefault();
 			return;
 		}
@@ -352,30 +370,71 @@ export async function bootLevelEditor(
 	return app;
 }
 
-function updateActiveAction(actions: ToolbarAction[], activeId: string): ToolbarAction[] {
-	return actions.map((a) => ({ ...a, active: a.id === activeId }));
+function updateActiveAction(actions: ToolbarAction[], activeId: string, state: EditorState): ToolbarAction[] {
+	return actions.map((a) => {
+		const next: ToolbarAction = { ...a, active: a.id === activeId };
+		if (a.id === "undo") next.disabled = !state.canUndo();
+		else if (a.id === "redo") next.disabled = !state.canRedo();
+		else if (a.disabled !== undefined) next.disabled = a.disabled;
+		return next;
+	});
 }
 
-async function loadSpriteTextureFor(
-	sprite: Sprite,
-	placement: Placement,
-	pal: ReadonlyMap<number, PaletteAtlasEntry>,
-): Promise<void> {
-	const entry = pal.get(placement.entityTypeId);
-	if (!entry || !entry.sprite_url) return;
-	try {
-		const base = await loadTextureAsset(entry.sprite_url);
-		if (!base || !base.source) return;
-		base.source.scaleMode = "nearest";
-		const ts = entry.tile_size || 32;
-		const cols = Math.max(1, entry.atlas_cols);
-		const sx = (entry.atlas_index % cols) * ts;
-		const sy = Math.floor(entry.atlas_index / cols) * ts;
-		sprite.texture = new Texture({
-			source: base.source,
-			frame: new Rectangle(sx, sy, ts, ts),
-		});
-	} catch { /* placeholder remains empty */ }
+function staticCatalogEntry(entry: PaletteAtlasEntry): StaticCatalogEntry {
+	return {
+		id: entry.id,
+		url: entry.sprite_url,
+		atlasIndex: entry.atlas_index,
+		atlasCols: entry.atlas_cols,
+		tileSize: entry.tile_size,
+	};
+}
+
+function normalizeRotation(r: number): 0 | 90 | 180 | 270 {
+	switch (r) {
+		case 90: return 90;
+		case 180: return 180;
+		case 270: return 270;
+		default: return 0;
+	}
+}
+
+function pixelTextStyle(size: number, fill: number) {
+	return {
+		fontFamily: "DM Mono, Consolas, monospace",
+		fontSize: size,
+		fontWeight: "700" as const,
+		fill,
+		letterSpacing: 0,
+	};
+}
+
+function sectionLabel(text: string): Text {
+	const t = new Text({ text, style: pixelTextStyle(12, 0xffd84a) });
+	t.layout = { width: "100%", alignSelf: "flex-start", marginTop: 2, marginBottom: 2 };
+	return t;
+}
+
+function drawMapGrid(g: Graphics, mapW: number, mapH: number): void {
+	const w = mapW * CELL_SIZE;
+	const h = mapH * CELL_SIZE;
+	g.clear();
+	g.rect(-8, -8, w + 16, h + 16).fill(0x0b0f18);
+	g.rect(0, 0, w, h).fill(0x111827);
+	for (let y = 0; y < mapH; y++) {
+		for (let x = 0; x < mapW; x++) {
+			if ((x + y) % 2 === 0) g.rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE).fill(0x131d2b);
+		}
+	}
+	for (let x = 0; x <= mapW; x++) {
+		const px = x * CELL_SIZE;
+		g.moveTo(px, 0).lineTo(px, h).stroke({ color: x % 4 === 0 ? 0x2d3b55 : 0x1e2a3d, width: 1 });
+	}
+	for (let y = 0; y <= mapH; y++) {
+		const py = y * CELL_SIZE;
+		g.moveTo(0, py).lineTo(w, py).stroke({ color: y % 4 === 0 ? 0x2d3b55 : 0x1e2a3d, width: 1 });
+	}
+	g.rect(0, 0, w, h).stroke({ color: 0xffd84a, width: 2, alignment: 1 });
 }
 
 function safeParseJSON(s: string): Record<string, unknown> {

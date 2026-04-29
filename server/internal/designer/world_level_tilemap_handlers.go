@@ -399,13 +399,8 @@ func getLevelDetail(d Deps) http.HandlerFunc {
 		crumbs = append(crumbs, views.Crumb{Label: lv.Name})
 		layout.Crumbs = crumbs
 
-		activeTab := tabFromQuery(r)
-		// Surface drives web/src/boot.ts dispatch + the level-editor
-		// entry script's auto-boot guard. Only set on the entities
-		// tab (the Pixi-driven one); other tabs are static templ.
-		if activeTab == "entities" {
-			layout.Surface = "level-editor-entities"
-		}
+		activeTab := "entities"
+		layout.Surface = "level-editor-entities"
 		props := views.LevelEditorProps{
 			Layout:         layout,
 			Level:          *lv,
@@ -416,10 +411,7 @@ func getLevelDetail(d Deps) http.HandlerFunc {
 			PlacementCount: placementCount,
 			ActiveTab:      activeTab,
 		}
-		// Build the placement-editor palette only on the entities tab
-		// so the geometry/hud/settings tabs don't pay the
-		// ListByClass + asset bulk-load cost on every render.
-		if activeTab == "entities" && d.Entities != nil {
+		if d.Entities != nil {
 			editor := buildLevelEntitiesEditorProps(r, d, *lv, mapWidth, mapHeight, placementCount)
 			props.EntitiesEditor = &editor
 		}
@@ -507,11 +499,10 @@ func buildLevelEntitiesEditorProps(
 
 func tabFromQuery(r *http.Request) string {
 	t := strings.TrimSpace(r.URL.Query().Get("tab"))
-	switch t {
-	case "geometry", "entities", "hud", "automations", "settings":
+	if t == "entities" {
 		return t
 	}
-	return "geometry"
+	return "entities"
 }
 
 func deleteLevel(d Deps) http.HandlerFunc {
