@@ -43,6 +43,8 @@ const DEFAULT_GAP = 4;
 const HALO_COLOR = 0xffd84a;
 const PAD = 8;
 const SCROLL_W = 12;
+const QUIET_FILL = 0x101827;
+const QUIET_STROKE = 0x31415f;
 
 export class PaletteGrid extends Container {
 	private readonly theme: Theme;
@@ -52,8 +54,7 @@ export class PaletteGrid extends Container {
 	private readonly cells = new Map<number, PaletteCell>();
 	private entries: PaletteEntry[] = [];
 	private selectedID: number | null = null;
-	private bg: NineSlice;
-	private readonly clip = new Graphics();
+	private readonly bg = new Graphics();
 	private readonly content = new Container();
 	private readonly scrollTrack: NineSlice;
 	private readonly scrollHandle: NineSlice;
@@ -80,23 +81,14 @@ export class PaletteGrid extends Container {
 		this.cursor = "default";
 		this.hitArea = new Rectangle(0, 0, opts.width, opts.height);
 
-		this.bg = new NineSlice({
-			theme: opts.theme,
-			role: Roles.FrameLite,
-			width: opts.width,
-			height: opts.height,
-		});
 		this.bg.layout = {
 			position: "absolute",
 			top: 0,
 			left: 0,
 		};
 		this.addChild(this.bg);
-		this.redrawClip(opts.width, opts.height);
-		this.clip.renderable = false;
-		this.addChild(this.clip);
-		this.content.mask = this.clip;
 		this.addChild(this.content);
+		this.redrawPanel(opts.width, opts.height);
 
 		this.scrollTrack = new NineSlice({
 			theme: opts.theme,
@@ -206,15 +198,20 @@ export class PaletteGrid extends Container {
 			width, height,
 		};
 		this.hitArea = new Rectangle(0, 0, width, height);
-		this.bg.resize(width, height);
-		this.redrawClip(width, height);
+		this.redrawPanel(width, height);
 		this.scrollTrack.position.set(width - PAD - SCROLL_W, PAD);
 		this.scrollTrack.resize(SCROLL_W, Math.max(1, height - PAD * 2));
 		this.layoutCells();
 	}
 
-	private redrawClip(width: number, height: number): void {
-		this.clip.clear().rect(PAD, PAD, Math.max(1, width - PAD * 3 - SCROLL_W), Math.max(1, height - PAD * 2)).fill(0xffffff);
+	private redrawPanel(width: number, height: number): void {
+		this.bg.clear()
+			.rect(0, 0, width, height)
+			.fill(QUIET_FILL)
+			.rect(0, 0, width, height)
+			.stroke({ color: QUIET_STROKE, width: 1, alignment: 1 })
+			.rect(PAD - 1, PAD - 1, Math.max(1, width - PAD * 3 - SCROLL_W + 2), Math.max(1, height - PAD * 2 + 2))
+			.stroke({ color: 0x1f2f49, width: 1, alignment: 1 });
 	}
 
 	private layoutCells(): void {
@@ -225,7 +222,8 @@ export class PaletteGrid extends Container {
 			if (!cell) continue;
 			const x = PAD + (i % cols) * (this.cellSize + this.gap);
 			const y = PAD + Math.floor(i / cols) * (this.cellSize + this.gap);
-			cell.position.set(x, y);
+			cell.layoutBaseY = y;
+			cell.position.set(x, y - Math.round(this.scrollY));
 		}
 		const rows = Math.ceil(this.entries.length / cols);
 		this.contentHeight = PAD * 2 + rows * this.cellSize + Math.max(0, rows - 1) * this.gap;
@@ -236,7 +234,13 @@ export class PaletteGrid extends Container {
 		const viewportH = Math.max(1, this.heightPx - PAD * 2);
 		const maxScroll = Math.max(0, this.contentHeight - viewportH);
 		this.scrollY = Math.max(0, Math.min(maxScroll, next));
-		this.content.position.y = -Math.round(this.scrollY);
+		const scroll = Math.round(this.scrollY);
+		for (const cell of this.cells.values()) {
+			const y = cell.layoutBaseY;
+			const top = y - scroll;
+			cell.position.y = top;
+			cell.visible = top >= PAD && top + this.cellSize <= PAD + viewportH;
+		}
 
 		const show = maxScroll > 0;
 		this.scrollTrack.visible = show;
@@ -260,6 +264,7 @@ interface PaletteCellOptions {
 
 class PaletteCell extends Container {
 	entry: PaletteEntry;
+	layoutBaseY = 0;
 	private readonly theme: Theme;
 	private readonly size: number;
 	private readonly thumb: Sprite;
@@ -283,6 +288,7 @@ class PaletteCell extends Container {
 			width: opts.size,
 			height: opts.size,
 		});
+		(this.bg as unknown as { ["__bxRole"]?: string }).__bxRole = Roles.SlotAvailable;
 		this.addChild(this.bg);
 
 		this.thumb = new Sprite();

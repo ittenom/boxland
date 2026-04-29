@@ -23,7 +23,7 @@ import "./layout-init";
 import { Container, Graphics } from "pixi.js";
 
 import type { Theme } from "../ui";
-import { NineSlice } from "../ui";
+import { NineSlice, Roles } from "../ui";
 
 const SURFACE = 0x0f141f;
 const PANEL = 0x121928;
@@ -98,7 +98,7 @@ export function buildEditorLayout(opts: BuildLayoutOptions): EditorSlots {
 		paddingBottom: 5,
 		gap: 8,
 	};
-	attachSolidBg(toolbar, opts.width, toolbarH, PANEL_ALT, STROKE);
+	attachChromeBg(toolbar, opts.theme, Roles.FrameHorizontal, opts.width, toolbarH, PANEL_ALT, STROKE);
 	root.addChild(toolbar);
 
 	// Body — fills remaining vertical space between toolbar and
@@ -127,7 +127,7 @@ export function buildEditorLayout(opts: BuildLayoutOptions): EditorSlots {
 		padding: 10,
 		gap: 8,
 	};
-	attachSolidBg(sidebar, sidebarW, opts.height, PANEL, STROKE);
+	attachChromeBg(sidebar, opts.theme, Roles.FrameVertical, sidebarW, opts.height, PANEL, STROKE);
 	body.addChild(sidebar);
 
 	const canvasWrap = new Container();
@@ -151,7 +151,7 @@ export function buildEditorLayout(opts: BuildLayoutOptions): EditorSlots {
 		padding: 10,
 		gap: 8,
 	};
-	attachSolidBg(inspector, inspectorW, opts.height, PANEL, STROKE);
+	attachChromeBg(inspector, opts.theme, Roles.FrameVertical, inspectorW, opts.height, PANEL, STROKE);
 	body.addChild(inspector);
 
 	root.addChild(body);
@@ -168,7 +168,7 @@ export function buildEditorLayout(opts: BuildLayoutOptions): EditorSlots {
 		paddingRight: 10,
 		gap: 12,
 	};
-	attachSolidBg(statusbar, opts.width, statusbarH, PANEL_ALT, STROKE);
+	attachChromeBg(statusbar, opts.theme, Roles.FrameHorizontal, opts.width, statusbarH, PANEL_ALT, STROKE);
 	root.addChild(statusbar);
 
 	// Modal overlay layer — sits on top of everything else,
@@ -246,12 +246,46 @@ function attachPanelBg(parent: Container, theme: Theme, role: string, seedW: num
 }
 
 function resizeBg(parent: Container, w: number, h: number): void {
-	const bg = parent.children[0];
+	const bg = parent.children[0] as (Container & { __bxResizeBg?: (w: number, h: number) => void }) | Graphics | undefined;
+	if (bg && "__bxResizeBg" in bg && typeof bg.__bxResizeBg === "function") {
+		bg.__bxResizeBg(Math.max(1, Math.floor(w)), Math.max(1, Math.floor(h)));
+		return;
+	}
 	if (bg && bg instanceof NineSlice) {
 		bg.resize(Math.max(1, Math.floor(w)), Math.max(1, Math.floor(h)));
 	} else if (bg && bg instanceof Graphics) {
 		bg.clear().rect(0, 0, w, h).fill(0x1a2030);
 	}
+}
+
+function attachChromeBg(
+	parent: Container,
+	theme: Theme,
+	role: string,
+	seedW: number,
+	seedH: number,
+	fill: number,
+	stroke: number,
+): Container {
+	const bg = new Container() as Container & { __bxResizeBg?: (w: number, h: number) => void };
+	const base = new Graphics();
+	const frame = new NineSlice({ theme, role, width: seedW, height: seedH, fallbackColor: fill });
+	frame.alpha = 0.28;
+	bg.addChild(base);
+	bg.addChild(frame);
+	bg.__bxResizeBg = (w, h) => {
+		drawSolidBg(base, w, h, fill, stroke);
+		frame.resize(w, h);
+	};
+	bg.__bxResizeBg(seedW, seedH);
+	parent.addChildAt(bg, 0);
+	parent.on("layout", (event: { computedLayout: { width: number; height: number } }) => {
+		bg.__bxResizeBg?.(
+			Math.max(1, Math.floor(event.computedLayout.width)),
+			Math.max(1, Math.floor(event.computedLayout.height)),
+		);
+	});
+	return bg;
 }
 
 function attachSolidBg(parent: Container, seedW: number, seedH: number, fill: number, stroke: number): Graphics {

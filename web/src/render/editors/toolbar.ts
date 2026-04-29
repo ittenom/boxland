@@ -5,7 +5,7 @@
 // through; uses `@pixi/ui` FancyButton with theme-skinned states.
 
 import "./layout-init";
-import { Container, Text } from "pixi.js";
+import { Container, Graphics, Text } from "pixi.js";
 import { FancyButton } from "@pixi/ui";
 
 import { NineSlice, Theme, Roles } from "../ui";
@@ -27,6 +27,7 @@ export class Toolbar {
 	private readonly height: number;
 	private readonly buttonWidth: number;
 	private readonly handlers = new Map<string, () => void>();
+	private tooltip: Container | null = null;
 
 	constructor(opts: ToolbarOptions) {
 		this.theme = opts.theme;
@@ -64,16 +65,16 @@ export class Toolbar {
 			: action.active
 				? Roles.ButtonSmPressA
 				: Roles.ButtonSmReleaseA;
-		const label = action.hotkey ? `${action.label} ${action.hotkey}` : action.label;
-		const w = action.id === "undo" || action.id === "redo"
-			? Math.max(this.buttonWidth + 24, 18 + label.length * 7)
-			: this.buttonWidth;
+		const display = action.icon ?? (action.hotkey ? `${action.label} ${action.hotkey}` : action.label);
+		const tooltip = action.tooltip ?? (action.hotkey ? `${action.label} - ${action.hotkey}` : action.label);
+		const isIcon = Boolean(action.icon);
+		const w = isIcon ? this.height : this.buttonWidth;
 		const h = this.height;
 		const text = new Text({
-			text: label,
+			text: display,
 			style: {
 				fontFamily: "DM Mono, Consolas, monospace",
-				fontSize: 11,
+				fontSize: isIcon ? 18 : 11,
 				fontWeight: "700",
 				fill: action.disabled ? 0x738096 : action.active ? 0xffd84a : 0xe8ecf2,
 				letterSpacing: 0,
@@ -105,10 +106,55 @@ export class Toolbar {
 			const fn = this.handlers.get(action.id);
 			if (fn) fn();
 		});
-		return btn as unknown as Container;
+		const out = btn as unknown as Container;
+		out.on("pointerover", () => this.showTooltip(out, tooltip));
+		out.on("pointerout", () => this.hideTooltip());
+		out.on("pointerdown", () => this.hideTooltip());
+		return out;
 	}
 
 	private bg(role: string, w: number, h: number): Container {
 		return new NineSlice({ theme: this.theme, role, width: w, height: h });
+	}
+
+	private showTooltip(anchor: Container, textValue: string): void {
+		this.hideTooltip();
+		const label = new Text({
+			text: textValue,
+			style: {
+				fontFamily: "DM Mono, Consolas, monospace",
+				fontSize: 10,
+				fontWeight: "700",
+				fill: 0xffd84a,
+				letterSpacing: 0,
+			},
+		});
+		const padX = 8;
+		const padY = 5;
+		const w = Math.ceil(label.width) + padX * 2;
+		const h = Math.ceil(label.height) + padY * 2;
+		const tip = new Container();
+		const bg = new Graphics();
+		bg.rect(0, 0, w, h)
+			.fill(0x101827)
+			.rect(0, 0, w, h)
+			.stroke({ color: 0x6ea0ff, width: 1, alignment: 1 });
+		tip.addChild(bg);
+		label.position.set(padX, padY - 1);
+		tip.addChild(label);
+		const x = anchor.position.x;
+		const y = anchor.position.y + this.height + 6;
+		tip.position.set(x, y);
+		tip.zIndex = 1000;
+		this.tooltip = tip;
+		this.slot.sortableChildren = true;
+		this.slot.addChild(tip);
+	}
+
+	private hideTooltip(): void {
+		if (!this.tooltip) return;
+		this.slot.removeChild(this.tooltip);
+		this.tooltip.destroy();
+		this.tooltip = null;
 	}
 }

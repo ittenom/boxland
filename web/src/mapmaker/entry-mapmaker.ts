@@ -259,10 +259,12 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 				id: t,
 				label: t.charAt(0).toUpperCase() + t.slice(1),
 				hotkey: hotkeyForTool(t),
+				icon: iconForTool(t),
+				tooltip: `${t.charAt(0).toUpperCase() + t.slice(1)} - ${hotkeyForTool(t)}`,
 				active: state.tool === t,
 			})),
-			{ id: "undo", label: "Undo", hotkey: "Ctrl+Z", disabled: !state.canUndo() },
-			{ id: "redo", label: "Redo", hotkey: "Shift+Z", disabled: !state.canRedo() },
+			{ id: "undo", label: "Undo", hotkey: "Ctrl+Z", icon: "↶", tooltip: "Undo - Ctrl+Z", disabled: !state.canUndo() },
+			{ id: "redo", label: "Redo", hotkey: "Shift+Z", icon: "↷", tooltip: "Redo - Shift+Z", disabled: !state.canRedo() },
 		]);
 	};
 	for (const t of tools) {
@@ -572,6 +574,18 @@ function hotkeyForTool(t: Tool): string {
 	}
 }
 
+function iconForTool(t: Tool): string {
+	switch (t) {
+		case "brush": return "✎";
+		case "rect": return "⬚";
+		case "fill": return "▣";
+		case "eyedrop": return "◇";
+		case "eraser": return "🅇︎";
+		case "lock": return "🔒︎";
+		case "sample": return "⌗";
+	}
+}
+
 function pixelTextStyle(size: number, fill: number) {
 	return {
 		fontFamily: "DM Mono, Consolas, monospace",
@@ -605,32 +619,26 @@ function renderLayerList(opts: {
 		row.cursor = "pointer";
 		const active = layer.id === state.activeLayer;
 		const layerOpts = ensureLayerOptions(layer.id);
-		const bg = new NineSlice({
-			theme,
-			role: active ? Roles.ButtonMdPressA : Roles.FrameLite,
-			width: 220,
-			height: 56,
-			fallbackColor: active ? 0x2f5eaa : 0x151d2c,
-		});
+		const bg = drawLayerRowBg(active, 220, 56);
 		row.addChild(bg);
 		const label = new Text({
 			text: layer.name,
-			style: pixelTextStyle(11, active ? 0xffd84a : 0xe8ecf2),
+			style: pixelTextStyle(11, active ? 0xffd84a : 0xf2f5fb),
 		});
-		label.position.set(8, 7);
+		label.position.set(9, 7);
 		row.addChild(label);
 		const meta = new Text({
-			text: `${layer.kind}  ord ${layer.yShift}${layer.ySort ? "  y-sort" : ""}`,
-			style: pixelTextStyle(9, 0x9aa8bd),
+			text: `${layer.kind}  ord ${layer.yShift}${layer.ySort ? "  ysort" : ""}`,
+			style: pixelTextStyle(9, active ? 0xb8c6dd : 0x8fa0b8),
 		});
-		meta.position.set(8, 24);
+		meta.position.set(9, 25);
 		row.addChild(meta);
 		const visible = layerToggle({
 			theme,
 			label: layerOpts.visible ? "VIS" : "HID",
 			on: layerOpts.visible,
-			x: 132,
-			y: 8,
+			x: 140,
+			y: 7,
 			onTap: () => {
 				layerOpts.visible = !layerOpts.visible;
 				onChange();
@@ -641,7 +649,7 @@ function renderLayerList(opts: {
 			theme,
 			label: layerOpts.editable ? "EDIT" : "LOCK",
 			on: layerOpts.editable,
-			x: 132,
+			x: 140,
 			y: 31,
 			onTap: () => {
 				layerOpts.editable = !layerOpts.editable;
@@ -655,6 +663,18 @@ function renderLayerList(opts: {
 		});
 		root.addChild(row);
 	}
+}
+
+function drawLayerRowBg(active: boolean, w: number, h: number): Graphics {
+	const g = new Graphics();
+	g.rect(0, 0, w, h)
+		.fill(active ? 0x17243a : 0x101827)
+		.rect(0, 0, w, h)
+		.stroke({ color: active ? 0xffd84a : 0x31415f, width: 1, alignment: 1 });
+	if (active) {
+		g.rect(0, 0, 4, h).fill(0xffd84a);
+	}
+	return g;
 }
 
 function layerToggle(opts: {
@@ -672,13 +692,13 @@ function layerToggle(opts: {
 	c.addChild(new NineSlice({
 		theme: opts.theme,
 		role: opts.on ? Roles.ButtonSmPressA : Roles.ButtonSmReleaseA,
-		width: 78,
+		width: 70,
 		height: 18,
 		fallbackColor: opts.on ? 0x3b66bc : 0x1b2638,
 	}));
 	const t = new Text({
 		text: opts.label,
-		style: pixelTextStyle(9, opts.on ? 0xffd84a : 0xaeb8ca),
+		style: pixelTextStyle(9, opts.on ? 0xfff0a6 : 0xe4e9f2),
 	});
 	t.position.set(8, 3);
 	c.addChild(t);

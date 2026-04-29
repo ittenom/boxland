@@ -37,6 +37,10 @@ export interface ToolbarAction {
 	id: string;
 	label: string;
 	hotkey?: string;
+	/** Optional short glyph rendered instead of label text. */
+	icon?: string;
+	/** Optional rollover text. Defaults to "Label - Hotkey". */
+	tooltip?: string;
 	/** Render the button as the active tool. Reflects state, not
 	 *  intent — the toolbar's own state lives in the entry script
 	 *  which calls `setActive(id)` on changes. */
