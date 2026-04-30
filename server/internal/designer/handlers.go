@@ -422,7 +422,7 @@ func postWSTicket(d Deps) http.HandlerFunc {
 // getVersionStatus returns the cached update status as JSON. We
 // intentionally read from the on-disk cache only (Cached(), not
 // CheckLatest) so a flood of designer page loads can never multiply
-// into a flood of GitHub API calls — the TLI is the one place that
+// into a flood of GitHub API calls — the TUI is the one place that
 // refreshes the cache. The shape matches updater.Status so the
 // frontend can use it without a server-side mapping layer.
 func getVersionStatus(d Deps) http.HandlerFunc {

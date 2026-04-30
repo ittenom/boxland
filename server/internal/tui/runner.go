@@ -1,4 +1,4 @@
-package tli
+package tui
 
 import (
 	"bufio"
@@ -217,7 +217,7 @@ func (r *runner) Started() time.Time {
 // terminal to the child outright (so the user sees output live), but
 // it then redraws the TUI on resume — wiping the trailing output and
 // any error message. We tee the child's stdout+stderr through this
-// buffer so the TLI can re-render the last few lines as a failure
+// buffer so the TUI can re-render the last few lines as a failure
 // card after exit.
 type captureBuffer struct {
 	mu    sync.Mutex

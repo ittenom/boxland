@@ -1,4 +1,4 @@
-package tli
+package tui
 
 import (
 	"strings"
@@ -201,5 +201,3 @@ func TestUpdateCheckMsg_NilStatusKeepsExisting(t *testing.T) {
 		t.Errorf("nil incoming status should not wipe prior cached value")
 	}
 }
-
-

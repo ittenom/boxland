@@ -1,5 +1,5 @@
-# Boxland now runs through the Go CLI/TLI. Build or install the `boxland`
-# binary, then run `boxland` for the interactive terminal launch interface.
+# Boxland now runs through the Go CLI/TUI. Build or install the `boxland`
+# binary, then run `boxland` for the interactive Terminal UI.
 #
 # This file is intentionally non-functional so Just does not remain a supported
 # workflow surface.

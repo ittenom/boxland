@@ -1,4 +1,4 @@
-package main
+package boxlandcmd
 
 import (
 	"os"
@@ -257,8 +257,8 @@ func TestGoBinDirFallsBackToGOPATHBin(t *testing.T) {
 	}
 }
 
-// TestRequiredCmdsMatchesInstallRequirements is a tripwire: the TLI's
-// "is the install complete?" decision (in internal/tli) reads from
+// TestRequiredCmdsMatchesInstallRequirements is a tripwire: the TUI's
+// "is the install complete?" decision (in internal/tui) reads from
 // setup.RequiredCmds(); runInstall here actually probes for those
 // tools via installRequirements(). Both lists must enumerate the
 // same .Cmd values, in the same set, or the menu will lie about the
@@ -273,7 +273,7 @@ func TestRequiredCmdsMatchesInstallRequirements(t *testing.T) {
 	sort.Strings(got)
 	if strings.Join(want, ",") != strings.Join(got, ",") {
 		t.Fatalf("setup.RequiredCmds() = %v; installRequirements() Cmd values = %v.\n"+
-			"Keep these in lockstep so the TLI can correctly detect when install is complete.",
+			"Keep these in lockstep so the TUI can correctly detect when install is complete.",
 			want, got)
 	}
 }

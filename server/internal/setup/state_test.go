@@ -41,11 +41,11 @@ func TestNeedSkipsSatisfiedDirs(t *testing.T) {
 func TestNeedReturnsNilWhenAllPresent(t *testing.T) {
 	root := t.TempDir()
 	files := map[string][]byte{
-		"server/static/fonts/Probe.ttf":                       {0},
-		"server/static/vendor/htmx.min.js":                    []byte("//"),
-		"server/views/shell_templ.go":                         []byte("package views\n"),
-		"server/internal/persistence/hotpath/queries.sql.go":  []byte("package hotpath\n"),
-		"server/internal/proto/Boxland.go":                    []byte("package proto\n"),
+		"server/static/fonts/Probe.ttf":                      {0},
+		"server/static/vendor/htmx.min.js":                   []byte("//"),
+		"server/views/shell_templ.go":                        []byte("package views\n"),
+		"server/internal/persistence/hotpath/queries.sql.go": []byte("package hotpath\n"),
+		"server/internal/proto/Boxland.go":                   []byte("package proto\n"),
 	}
 	for rel, content := range files {
 		mustWrite(t, filepath.Join(root, rel), content)
@@ -56,7 +56,7 @@ func TestNeedReturnsNilWhenAllPresent(t *testing.T) {
 }
 
 // TestLabelsIsStable — Labels must enumerate the same set Need can
-// return, in the same order. This is a regression guard for the TLI's
+// return, in the same order. This is a regression guard for the TUI's
 // first-run card which lists missing items in the same order.
 func TestLabelsIsStable(t *testing.T) {
 	root := t.TempDir()

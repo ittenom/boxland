@@ -1,6 +1,6 @@
 //go:build preview
 
-package tli
+package tui
 
 import (
 	"fmt"
@@ -27,7 +27,7 @@ func itemByTitle(title string) item {
 // TestPreviewMenu dumps a stripped-ANSI render of the menu (with the
 // cursor on Design) for eyeballing.
 //
-//	go test -tags preview -run TestPreviewMenu -v ./internal/tli/...
+//	go test -tags preview -run TestPreviewMenu -v ./internal/tui/...
 func TestPreviewMenu(t *testing.T) {
 	m := newModel()
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 130, Height: 50})
@@ -43,7 +43,7 @@ func TestPreviewMenu(t *testing.T) {
 // Installation at position 1 (no longer featured, available for
 // re-running after a `git pull`).
 //
-//	go test -tags preview -run TestPreviewMenuInstallComplete -v ./internal/tli/...
+//	go test -tags preview -run TestPreviewMenuInstallComplete -v ./internal/tui/...
 func TestPreviewMenuInstallComplete(t *testing.T) {
 	m := newModel()
 	m.firstRunMissing = nil // suppress first-run card
@@ -64,7 +64,7 @@ func TestPreviewMenuInstallComplete(t *testing.T) {
 // TestPreviewMenuFreshClone synthesises the fresh-clone layout:
 // Check Installation at position 0, featured; Design dimmed below.
 //
-//	go test -tags preview -run TestPreviewMenuFreshClone -v ./internal/tli/...
+//	go test -tags preview -run TestPreviewMenuFreshClone -v ./internal/tui/...
 func TestPreviewMenuFreshClone(t *testing.T) {
 	m := newModel()
 	m.firstRunMissing = nil // skip the card so we can see the menu itself
@@ -85,7 +85,7 @@ func TestPreviewMenuFreshClone(t *testing.T) {
 // services strip, and stopwatch all render without spawning a real
 // subprocess.
 //
-//	go test -tags preview -run TestPreviewSplit -v ./internal/tli/...
+//	go test -tags preview -run TestPreviewSplit -v ./internal/tui/...
 func TestPreviewSplit(t *testing.T) {
 	t.Setenv("BOXLAND_HTTP_ADDR", ":8080")
 
@@ -126,7 +126,7 @@ func TestPreviewSplit(t *testing.T) {
 // tea.ExecProcess wipes the terminal on resume so the user only
 // briefly sees the real error).
 //
-//	go test -tags preview -run TestPreviewFailureCard -v ./internal/tli/...
+//	go test -tags preview -run TestPreviewFailureCard -v ./internal/tui/...
 func TestPreviewFailureCard(t *testing.T) {
 	m := newModel()
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 130, Height: 50})

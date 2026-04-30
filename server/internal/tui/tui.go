@@ -1,7 +1,7 @@
-// Package tli renders the Boxland Terminal Launch Interface — the menu
+// Package tui renders the Boxland Terminal UI — the menu
 // you see when you run `boxland` with no arguments.
 //
-// The TLI is built on Charmbracelet's bubbles + lipgloss components:
+// The TUI is built on Charmbracelet's bubbles + lipgloss components:
 //
 //   - viewport.Model holds the gradient logo header so it stays anchored
 //     at the top and gracefully overflows on tiny terminals.
@@ -25,7 +25,7 @@
 // Style cues come from the lipgloss "layout" example: thin underline
 // rules, columns aligned without dividers, color carried by foreground
 // only.
-package tli
+package tui
 
 import (
 	"context"
@@ -86,6 +86,7 @@ type job struct {
 	capture     *captureBuffer // non-nil for interactive jobs (tee'd output)
 	started     time.Time
 	cancelArmed bool
+	rebooting   bool
 	listening   bool // server detected as accepting connections
 }
 
@@ -114,7 +115,7 @@ type model struct {
 	tailLines []string
 
 	// First-run state. When the working tree is missing required
-	// build artifacts (fonts, templ output, codegen, ...), the TLI
+	// build artifacts (fonts, templ output, codegen, ...), the TUI
 	// shows a friendly card before the menu and intercepts `s` to run
 	// Setup. firstRunDone goes true once the user has either run setup
 	// or dismissed the card (pressing Tab/Enter to bypass).
@@ -147,7 +148,7 @@ type failedJobView struct {
 	tail    []string
 }
 
-// ANSI 256-color palette. We avoid truecolor so the TLI looks consistent
+// ANSI 256-color palette. We avoid truecolor so the TUI looks consistent
 // in Windows PowerShell, macOS Terminal, and Linux ttys alike.
 var (
 	cPink    = lipgloss.Color("205")
@@ -649,6 +650,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case key.Matches(msg, key.NewBinding(key.WithKeys("shift+tab"))):
 				m.toggleFocus()
 				return m, nil
+			case key.Matches(msg, key.NewBinding(key.WithKeys("r", "R"))):
+				return m.handleReboot()
 			case m.focus == focusMenu && key.Matches(msg, key.NewBinding(key.WithKeys("q", "esc"))):
 				if m.list.FilterState() == list.Unfiltered {
 					return m, tea.Quit
@@ -806,7 +809,7 @@ func (m *model) toggleFocus() {
 
 // handleCtrlC: cancel the current indefinite job if any (first press =
 // graceful, second = the runner's WaitDelay forces a kill); otherwise
-// quit the TLI.
+// quit the TUI.
 func (m model) handleCtrlC() (tea.Model, tea.Cmd) {
 	if m.currentIndefinite != nil {
 		j := m.currentIndefinite
@@ -817,6 +820,27 @@ func (m model) handleCtrlC() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, tea.Quit
+}
+
+// handleReboot restarts the current server job after its old process exits.
+// Only indefinite captured jobs (Design/Serve) can be rebooted; quick and
+// interactive jobs continue to use their normal run/stop behavior.
+func (m model) handleReboot() (tea.Model, tea.Cmd) {
+	j := m.currentIndefinite
+	if j == nil {
+		return m, nil
+	}
+	if !canRebootJob(j) {
+		return m, m.list.NewStatusMessage("Reboot is only available for server jobs.")
+	}
+	j.cancelArmed = true
+	j.rebooting = true
+	j.runner.Cancel()
+	return m, m.list.NewStatusMessage("Rebooting " + j.it.title + "…")
+}
+
+func canRebootJob(j *job) bool {
+	return j != nil && j.runner != nil && len(ServiceLinks(j.it.title)) > 0
 }
 
 // hasJobs reports whether any subprocess is live or any tail content is
@@ -838,6 +862,14 @@ func (m model) startSelected() (tea.Model, tea.Cmd) {
 
 	if _, dup := m.jobs[it.title]; dup {
 		return m, m.list.NewStatusMessage(it.title + " is already running.")
+	}
+
+	return m.startItem(it)
+}
+
+func (m model) startItem(it item) (tea.Model, tea.Cmd) {
+	if len(it.cmd) == 0 {
+		return m, nil
 	}
 
 	if m.currentIndefinite != nil {
@@ -960,6 +992,10 @@ func (m model) handleRunDone(msg runDoneMsg) (tea.Model, tea.Cmd) {
 	if j.it.indefinite && j.cancelArmed {
 		err = nil
 	}
+	var reboot item
+	if j.rebooting {
+		reboot = j.it
+	}
 
 	// Failed interactive jobs get the failure card treatment. We only
 	// trigger it when there's actually captured output to show; an
@@ -990,6 +1026,12 @@ func (m model) handleRunDone(msg runDoneMsg) (tea.Model, tea.Cmd) {
 	// Re-apply size so the menu re-expands now that hasJobs() may
 	// have flipped to false (or the surviving job set changed).
 	m.applySize(m.width, m.height)
+
+	if reboot.title != "" {
+		next, rebootCmd := m.startItem(reboot)
+		m = next.(model)
+		cmds = append(cmds, rebootCmd, m.list.NewStatusMessage("Restarting "+reboot.title+"…"))
+	}
 
 	return m, tea.Batch(cmds...)
 }
@@ -1067,7 +1109,7 @@ func (m model) View() string {
 	))
 }
 
-// renderFirstRunCard is the friendly pre-menu view the TLI shows on a
+// renderFirstRunCard is the friendly pre-menu view the TUI shows on a
 // fresh clone. It explains in plain English what's missing and how to
 // fix it with one keystroke.
 func (m model) renderFirstRunCard() string {
@@ -1167,7 +1209,7 @@ func (m model) renderFailureCard() string {
 // pane. The two are joined horizontally — no extra layout dep needed.
 //
 // When an update is available, a one-line banner sits above the body so
-// users notice it on TLI launch even before they look at the menu.
+// users notice it on TUI launch even before they look at the menu.
 func (m model) viewBody() string {
 	menu := m.list.View()
 	body := menu
@@ -1186,7 +1228,7 @@ func (m model) viewBody() string {
 // above the menu when the cached update status flags a newer release.
 // Returns "" when there's nothing to say (no check yet, up-to-date,
 // or BOXLAND_DISABLE_UPDATE_CHECK=true). Color-coded with the same
-// pink/cyan palette as the rest of the TLI so it's instantly
+// pink/cyan palette as the rest of the TUI so it's instantly
 // recognisable as part of the family.
 func (m model) renderUpdateBanner() string {
 	s := m.updateStatus
@@ -1311,9 +1353,9 @@ func alignBetween(left, right string, width int) string {
 func renderHeader(width int) string {
 	logo := renderLogo()
 	titleRow := lipgloss.JoinHorizontal(lipgloss.Top,
-		titleStyle.Render("Boxland TLI"),
+		titleStyle.Render("Boxland TUI"),
 		dotSep,
-		taglineStyle.Render("Terminal Launch Interface"),
+		taglineStyle.Render("Terminal UI"),
 	)
 	return lipgloss.JoinVertical(lipgloss.Left,
 		logo,
@@ -1358,12 +1400,16 @@ func (m model) renderFooter(width int) string {
 			hint("q", "quit"),
 		}, footerLabel.Render("   "))
 	} else {
-		hintRow = strings.Join([]string{
+		hints := []string{
 			hint("tab", "switch pane"),
 			hint("↑/↓", "scroll"),
 			hint("enter", "run"),
-			hint("ctrl+c", cancelHint(m)),
-		}, footerLabel.Render("   "))
+		}
+		if canRebootJob(m.currentIndefinite) {
+			hints = append(hints, hint("r", "reboot"))
+		}
+		hints = append(hints, hint("ctrl+c", cancelHint(m)))
+		hintRow = strings.Join(hints, footerLabel.Render("   "))
 	}
 
 	left := m.renderRunStatus()
@@ -1408,7 +1454,11 @@ func (m model) renderRunStatus() string {
 		main += footerLabel.Render(" + " + pluralizeJobs(extras))
 	}
 	if j.cancelArmed {
-		main += footerLabel.Render("   cancelling…")
+		if j.rebooting {
+			main += footerLabel.Render("   rebooting…")
+		} else {
+			main += footerLabel.Render("   cancelling…")
+		}
 	}
 	return main
 }
@@ -1497,14 +1547,14 @@ func padOrTruncate(s string, w int) string {
 // Public API
 // ---------------------------------------------------------------------------
 
-// Run starts the TLI to completion and returns the final model. The TLI
+// Run starts the TUI to completion and returns the final model. The TUI
 // dispatches selected commands itself, so callers don't need to fork a
 // second subprocess afterwards.
 func Run() (tea.Model, error) {
 	return tea.NewProgram(newModel()).Run()
 }
 
-// RunAndExec drives the TLI; selected commands are executed in-loop, so
+// RunAndExec drives the TUI; selected commands are executed in-loop, so
 // by the time we return there's nothing further to do.
 func RunAndExec() error {
 	_, err := Run()

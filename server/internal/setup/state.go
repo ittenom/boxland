@@ -5,7 +5,7 @@
 // committed to the repo, so Need() returns nil on every fresh clone.
 // The check remains useful as a tripwire — if a generator output
 // disappears (someone re-adds a stale gitignore rule, or hand-deletes
-// a directory), the TLI shows a friendly first-run card and the test
+// a directory), the TUI shows a friendly first-run card and the test
 // in tripwire_test.go fails CI before users hit the cryptic compile
 // error.
 //
@@ -23,7 +23,7 @@ import (
 // Need reports which build prerequisites are missing on disk under
 // repoRoot. An empty slice means the working tree is ready to compile
 // and run; a non-empty slice means a generated output is missing and
-// the TLI's friendly first-run card should fire.
+// the TUI's friendly first-run card should fire.
 func Need(repoRoot string) []string {
 	cs := checks(repoRoot)
 	var missing []string
@@ -67,7 +67,7 @@ func checks(repoRoot string) []check {
 
 // RequiredCmds is the canonical list of executables `boxland install`
 // insists on finding before it can run. Both the CLI's install flow
-// and the TLI's "is the install complete?" decision read from this
+// and the TUI's "is the install complete?" decision read from this
 // list, so renames stay in lockstep.
 func RequiredCmds() []string {
 	return []string{"docker", "go", "node", "npm", "sqlc", "flatc"}

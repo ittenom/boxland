@@ -38,7 +38,7 @@
 //     Restore from the printed backup path:
 //     boxland backup import backups/pre-update-….tar.gz --yes
 //     and `git checkout <prev-commit>` to undo the source move.
-package main
+package boxlandcmd
 
 import (
 	"context"
@@ -96,7 +96,7 @@ func runUpdate(args []string) error {
 }
 
 // runUpdateCheck prints the current/latest pair without modifying
-// anything. Used by the TLI's "Check for updates" menu row and as a
+// anything. Used by the TUI's "Check for updates" menu row and as a
 // pre-flight sanity check users can invoke directly. Returns 0 even
 // when an update IS available — the exit code reflects "did the
 // check itself succeed", not "is the user up to date".
@@ -209,14 +209,14 @@ func runUpdatePrePull(f updateFlags) error {
 		return fmt.Errorf("git pull: %w", err)
 	}
 
-	// Step 5: hand off to the new binary. `go run ./server/cmd/boxland`
-	// compiles whatever's on disk now (post-pull) and runs phase 2.
+	// Step 5: hand off to the new binary. `go run .` from the server
+	// module compiles whatever's on disk now (post-pull) and runs phase 2.
 	// We pass through --no-backup (already done by phase 1) and the
 	// secret --resume flag so the new binary doesn't try to git-pull
 	// a second time.
 	fmt.Println()
 	fmt.Println("Handing off to the freshly pulled CLI for install + migrate + web build...")
-	resumeArgs := []string{"run", "./server/cmd/boxland", "update", "--resume", "--no-backup"}
+	resumeArgs := []string{"run", ".", "update", "--resume", "--no-backup"}
 	return runIn("server", "go", resumeArgs...)
 }
 

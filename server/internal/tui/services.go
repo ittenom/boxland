@@ -1,10 +1,10 @@
-// services.go — derive and detect the live HTTP services the TLI pins to
+// services.go — derive and detect the live HTTP services the TUI pins to
 // the top of the logs pane while a Boxland server job is running.
 //
 // We don't ask the running subprocess "what URLs are you serving?" because
 // the server doesn't print a banner. Instead we:
 //
-//  1. derive the URLs at TLI startup from BOXLAND_HTTP_ADDR (the same env
+//  1. derive the URLs at TUI startup from BOXLAND_HTTP_ADDR (the same env
 //     var server/internal/config consults; default ":8080"), and
 //  2. only show them once we've seen the "http listening" log line that
 //     runServe emits via slog. Until then the strip says "waiting…".
@@ -12,7 +12,7 @@
 // Keeping detection a pure function makes it cheap to test without
 // spawning a real server.
 
-package tli
+package tui
 
 import (
 	"os"
@@ -37,7 +37,7 @@ func DetectListening(line string) bool {
 	return strings.Contains(line, listeningMarker)
 }
 
-// ServiceLinks returns the URLs the TLI pins for an indefinite item that
+// ServiceLinks returns the URLs the TUI pins for an indefinite item that
 // runs the Boxland HTTP server (today: "design" and "serve"). title is the
 // item title; for items that don't run the server it returns nil so the
 // caller can suppress the pinned strip entirely.
@@ -83,7 +83,7 @@ func baseURL(addr string) string {
 }
 
 // splitHostPort is a tiny stand-in for net.SplitHostPort that tolerates
-// the bare ":8080" form without pulling net/url validation into the TLI.
+// the bare ":8080" form without pulling net/url validation into the TUI.
 func splitHostPort(addr string) (host, port string, ok bool) {
 	i := strings.LastIndex(addr, ":")
 	if i < 0 {

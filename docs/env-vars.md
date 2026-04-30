@@ -87,7 +87,7 @@ flow. See [docs/updates.md](./updates.md) for the full story.
 
 | Var | Default | Purpose |
 |---|---|---|
-| `BOXLAND_DISABLE_UPDATE_CHECK` | unset | Set to `true` (or `1`/`yes`/`on`) to suppress the GitHub probe entirely. The TLI banner, designer chrome pill, and `/design/api/version` all stop reporting an update. Useful for offline workshops, air-gapped servers, and CI. |
+| `BOXLAND_DISABLE_UPDATE_CHECK` | unset | Set to `true` (or `1`/`yes`/`on`) to suppress the GitHub probe entirely. The TUI banner, designer chrome pill, and `/design/api/version` all stop reporting an update. Useful for offline workshops, air-gapped servers, and CI. |
 | `BOXLAND_GITHUB_TOKEN` | unset | GitHub personal access token (read-only `public_repo` scope is enough). Lifts the anonymous rate limit (60/hr/IP) to 5,000/hr/user — useful when many users share an IP behind NAT, or when checking against a private fork mirror. |
 | `AOI_RADIUS_TILES` | `24` | Default subscription radius. PLAN.md §4h "16-tile chunks" + AOI radius. |
 | `RECONNECT_GAP_TICK_LIMIT` | `600` | Reconnects within this many ticks resume via `AckTick` + diff replay; longer gaps force a full `Snapshot`. |

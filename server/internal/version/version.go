@@ -4,7 +4,7 @@
 // The canonical SemVer string lives in this package's VERSION file.
 // We embed it (rather than reading from disk at runtime) so:
 //
-//   - `go run ./server/cmd/boxland` from a fresh checkout works
+//   - `go run ./server` from a fresh checkout works
 //     without any preprocessor step,
 //   - a built binary carries the version even when run far from the
 //     repo root, and

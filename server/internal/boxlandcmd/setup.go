@@ -26,7 +26,7 @@
 // and skip that step, so users can still get a partial boot if they
 // only need the design tools (templ + fonts + vendor).
 
-package main
+package boxlandcmd
 
 import (
 	"fmt"
@@ -38,7 +38,7 @@ import (
 	"time"
 )
 
-// setupResult captures one step's outcome. The TLI's first-run prompt
+// setupResult captures one step's outcome. The TUI's first-run prompt
 // renders these as a checklist so the user sees what changed.
 type setupResult struct {
 	Step   string // human label, e.g. "fonts"

@@ -18,7 +18,7 @@ Boxland is a designer-friendly MMORPG engine that makes it easy to turn on your 
 (3) From the boxland/ directory, run:
 
 ```
-go run ./server/cmd/boxland
+go run ./server
 ```
 
 (4) Do **Check Installation** from the menu to add any missing system dependencies (Node.js, Docker Desktop) and install the server code. 
@@ -32,7 +32,7 @@ chrome and your in-game HUDs, so any tweak you make in the asset
 manager updates both surfaces. The pack ships under CC BY 4.0; see
 [LICENSE-THIRD-PARTY.md](LICENSE-THIRD-PARTY.md) for attribution.
 
-(6) When the TLI shows a pink **Update available** banner, run
+(6) When the TUI shows a pink **Update available** banner, run
 `boxland update` to pull the new release, run new migrations, and
 rebuild. See [docs/updates.md](docs/updates.md) for details.
 

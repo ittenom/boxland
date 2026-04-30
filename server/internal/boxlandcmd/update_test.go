@@ -1,4 +1,4 @@
-package main
+package boxlandcmd
 
 import (
 	"bytes"
@@ -44,10 +44,10 @@ func TestParseUpdateFlags_UnknownFlagFails(t *testing.T) {
 
 func TestSanitizeForFilename(t *testing.T) {
 	cases := map[string]string{
-		"":                "unknown",
-		"v0.1.0":          "v0.1.0",
-		"v0.1.0+build/1":  "v0.1.0+build-1",
-		"with spaces":     "with-spaces",
+		"":               "unknown",
+		"v0.1.0":         "v0.1.0",
+		"v0.1.0+build/1": "v0.1.0+build-1",
+		"with spaces":    "with-spaces",
 	}
 	for in, want := range cases {
 		if got := sanitizeForFilename(in); got != want {

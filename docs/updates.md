@@ -1,12 +1,12 @@
 # Updating Boxland
 
 Boxland ships from a Git repo, not as a packaged binary, so an update
-is "pull the new source, regenerate, migrate, rebuild." The TLI
+is "pull the new source, regenerate, migrate, rebuild." The TUI
 notices when there's a new release and offers to do it for you.
 
 ## TL;DR
 
-When the TLI shows the pink **Update available** banner, run:
+When the TUI shows the pink **Update available** banner, run:
 
 ```
 boxland update
@@ -29,10 +29,10 @@ pick up the new build.
 
 There are three places Boxland tells you about a new release:
 
-- **TLI banner** — a one-line pink strip above the menu the moment
+- **TUI banner** — a one-line pink strip above the menu the moment
   the cached check returns. The "U" hotkey jumps straight to the
   update flow (or re-checks if no update is known yet).
-- **TLI menu** — the **Update Boxland** row pins to position 0 with
+- **TUI menu** — the **Update Boxland** row pins to position 0 with
   the `ready` badge while an update is available, then drops to the
   bottom of the menu (as **Check for updates**) once you're current.
 - **Designer chrome bar** — a quiet pulsing pill in the in-app
@@ -54,7 +54,7 @@ boxland update --no-backup  # Skip the pre-update DB snapshot (CI only).
 ## Disabling the check
 
 Set `BOXLAND_DISABLE_UPDATE_CHECK=true` to skip every GitHub probe.
-The cache is also bypassed, the TLI banner stays hidden, the
+The cache is also bypassed, the TUI banner stays hidden, the
 designer chrome pill never renders, and `/design/api/version` returns
 a blank status. Useful for offline workshops, air-gapped servers,
 and CI.
@@ -88,7 +88,7 @@ The release ritual is:
    GitHub release pointing at the tag. The release name **must**
    parse as SemVer (with or without a leading `v`); pre-releases
    and drafts are ignored by the updater.
-4. The next time anyone launches the TLI, the banner appears within
+4. The next time anyone launches the TUI, the banner appears within
    a minute (cache TTL respected).
 
 The updater also looks at the release `body` so the markdown there

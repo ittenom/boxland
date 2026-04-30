@@ -1,4 +1,4 @@
-package tli
+package tui
 
 import (
 	"errors"
@@ -81,8 +81,8 @@ func TestViewRendersEveryItem(t *testing.T) {
 			t.Errorf("View missing item title %q", it.title)
 		}
 	}
-	if !strings.Contains(out, "Boxland TLI") {
-		t.Error("View missing Boxland TLI header")
+	if !strings.Contains(out, "Boxland TUI") {
+		t.Error("View missing Boxland TUI header")
 	}
 }
 
@@ -235,8 +235,85 @@ func TestCancelKeyCancelsCurrentIndefinite(t *testing.T) {
 	m = drainToCompletion(t, m, "Probe")
 }
 
+func TestRebootKeyArmsCurrentServerJob(t *testing.T) {
+	m := readyModel(t)
+	design := item{
+		title: "Design", badge: "quick start", desc: "test server",
+		cmd:        []string{"go", "version"},
+		indefinite: true,
+	}
+	cancelled := false
+	live := &job{
+		id:     design.title,
+		it:     design,
+		runner: &runner{cancel: func() { cancelled = true }},
+	}
+	m.jobs[design.title] = live
+	m.currentIndefinite = live
+
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if !cancelled {
+		t.Fatal("reboot key must cancel the current server process")
+	}
+	if !live.cancelArmed || !live.rebooting {
+		t.Fatalf("reboot key must arm reboot state; got cancelArmed=%v rebooting=%v", live.cancelArmed, live.rebooting)
+	}
+}
+
+func TestRebootStartsFreshServerAfterOldJobExits(t *testing.T) {
+	m := readyModel(t)
+	design := item{
+		title: "Design", badge: "quick start", desc: "test server",
+		cmd:        []string{"go", "version"},
+		indefinite: true,
+	}
+	old := &job{
+		id:          design.title,
+		it:          design,
+		cancelArmed: true,
+		rebooting:   true,
+	}
+	m.jobs[design.title] = old
+	m.currentIndefinite = old
+
+	m, _ = step(t, m, runDoneMsg{jobID: design.title, err: errors.New("killed"), elapsed: time.Second})
+	fresh, ok := m.jobs[design.title]
+	if !ok {
+		t.Fatal("reboot should start a fresh server job")
+	}
+	if fresh == old {
+		t.Fatal("reboot should replace the old job")
+	}
+	if m.currentIndefinite != fresh {
+		t.Fatal("fresh server job should become the current indefinite job")
+	}
+	m = drainToCompletion(t, m, design.title)
+}
+
+func TestRebootKeyIgnoresNonServerIndefinite(t *testing.T) {
+	m := readyModel(t)
+	probe := item{
+		title: "Probe", badge: "smoke", desc: "long-running probe",
+		cmd:        []string{"go", "version"},
+		indefinite: true,
+	}
+	cancelled := false
+	live := &job{
+		id:     probe.title,
+		it:     probe,
+		runner: &runner{cancel: func() { cancelled = true }},
+	}
+	m.jobs[probe.title] = live
+	m.currentIndefinite = live
+
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cancelled || live.cancelArmed || live.rebooting {
+		t.Fatalf("non-server jobs should not reboot; cancelled=%v cancelArmed=%v rebooting=%v", cancelled, live.cancelArmed, live.rebooting)
+	}
+}
+
 // TestCtrlCWithNoJobsQuits — ctrl+c at the menu when nothing is running
-// should quit the TLI.
+// should quit the TUI.
 func TestCtrlCWithNoJobsQuits(t *testing.T) {
 	m := readyModel(t)
 	_, cmd := step(t, m, tea.KeyMsg{Type: tea.KeyCtrlC})
@@ -358,9 +435,9 @@ func TestServiceLinksDerivedFromAddr(t *testing.T) {
 // and unrelated lines must not.
 func TestDetectListening(t *testing.T) {
 	cases := map[string]bool{
-		"":                                                    false,
-		"INFO postgres connected":                             false,
-		"time=... level=INFO msg=\"http listening\" addr=:80": true,
+		"":                        false,
+		"INFO postgres connected": false,
+		"time=... level=INFO msg=\"http listening\" addr=:80":    true,
 		`{"level":"INFO","msg":"http listening","addr":":8080"}`: true,
 	}
 	for line, want := range cases {
@@ -468,7 +545,7 @@ func TestFirstRunCardHidesAfterDismiss(t *testing.T) {
 	}
 }
 
-// TestFirstRunCardQuitsOnQ — q from the card quits the TLI cleanly.
+// TestFirstRunCardQuitsOnQ — q from the card quits the TUI cleanly.
 func TestFirstRunCardQuitsOnQ(t *testing.T) {
 	m := readyModel(t)
 	m.firstRunMissing = []string{"fonts"}
@@ -591,7 +668,7 @@ func TestCheckInstallationItemPresent(t *testing.T) {
 }
 
 // TestFailureCardShownOnInteractiveFailure — when an interactive job
-// exits non-zero with captured tail, the TLI raises a failure card
+// exits non-zero with captured tail, the TUI raises a failure card
 // instead of letting bubbletea's tea.ExecProcess wipe the trailing
 // output unseen.
 func TestFailureCardShownOnInteractiveFailure(t *testing.T) {

@@ -1,5 +1,5 @@
 // Package updater talks to GitHub Releases to decide whether the
-// running Boxland is behind the latest published version. The TLI
+// running Boxland is behind the latest published version. The TUI
 // surfaces the result as a banner; the designer chrome reads the
 // cached snapshot to render an in-app "update available" pill.
 //
@@ -12,14 +12,14 @@
 //
 //   - Cache aggressively. GitHub's unauthenticated quota is 60 req/h
 //     per IP. A persistent on-disk cache with ETag conditional
-//     requests means repeated TLI starts inside the TTL never spend
+//     requests means repeated TUI starts inside the TTL never spend
 //     a quota call, and even out-of-TTL checks usually return 304
 //     (which doesn't count). The cache also doubles as the source
 //     for the in-app designer banner — the HTTP handler reads it
 //     synchronously without ever touching the network.
 //
 //   - Never block startup. CheckLatest is intentionally synchronous
-//     so callers control concurrency: the TLI fires it in a tea.Cmd
+//     so callers control concurrency: the TUI fires it in a tea.Cmd
 //     goroutine and the menu paints first.
 //
 //   - Honour `BOXLAND_DISABLE_UPDATE_CHECK` (offline / CI / private
@@ -44,14 +44,14 @@ import (
 	"boxland/server/internal/version"
 )
 
-// DefaultRepo points at the public Boxland repo. The TLI passes this
+// DefaultRepo points at the public Boxland repo. The TUI passes this
 // to NewClient explicitly so tests and forks can override without
 // reaching into the package.
 const DefaultRepo = "ittenom/boxland"
 
 // DefaultTTL is how long we trust a cached "latest release" snapshot
 // before doing another conditional GET. Twelve hours is a comfortable
-// fit: every second TLI launch on a typical dev day reuses cache, but
+// fit: every second TUI launch on a typical dev day reuses cache, but
 // users still see new releases the same day they ship.
 const DefaultTTL = 12 * time.Hour
 
@@ -65,7 +65,7 @@ const minCheckInterval = 30 * time.Second
 // nothing.
 type Status struct {
 	Current      string    `json:"current"`
-	Latest       string    `json:"latest"`         // empty when unknown
+	Latest       string    `json:"latest"` // empty when unknown
 	HasUpdate    bool      `json:"has_update"`
 	ReleaseURL   string    `json:"release_url,omitempty"`
 	ReleaseNotes string    `json:"release_notes,omitempty"`
@@ -139,7 +139,7 @@ func (c *Client) CheckLatest(ctx context.Context, opts CheckOpts) (*Status, erro
 	cache, _ := c.readCache()
 
 	// Cache fast path: serve from cache if the entry is fresh,
-	// unless ForceRefresh is set (TLI's "U" hotkey for re-check).
+	// unless ForceRefresh is set (TUI's "U" hotkey for re-check).
 	if !opts.ForceRefresh && cache != nil && c.cacheFresh(cache) {
 		return cache.toStatus(version.Current()), nil
 	}
