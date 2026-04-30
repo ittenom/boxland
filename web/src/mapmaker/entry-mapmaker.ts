@@ -306,9 +306,8 @@ export async function bootMapmaker(): Promise<EditorApp | null> {
 	});
 	renderToolbar();
 
-	// 6b) Left/right rails. These are intentionally simple, but
-	// already use the Gradient slot/frame primitives through the
-	// shared PaletteGrid and framed layout slots.
+	// 6b) Left/right rails. These use the shared Pixi UI primitives
+	// for panel, slot, and scrollbar chrome.
 	app.slots.sidebar.addChild(sectionLabel("Layers"));
 	const layerList = new Container();
 	layerList.layout = { width: "100%", flexDirection: "column", gap: 4 };

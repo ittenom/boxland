@@ -1,6 +1,6 @@
 // Boxland — palette grid widget.
 //
-// Theme-skinned grid of selectable entity-type entries. Used by
+// Token-skinned grid of selectable entity-type entries. Used by
 // the mapmaker (tile classes) and the level editor (placeable
 // classes). Each entry shows a 32x32 thumbnail clipped to the
 // entity's atlas cell + an optional name label.

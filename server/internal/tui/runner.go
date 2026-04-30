@@ -5,9 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
-	goruntime "runtime"
 	"sync"
 	"time"
 
@@ -74,15 +72,13 @@ type runner struct {
 func startRunner(jobID, name string, args []string) (*runner, tea.Cmd, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, name, args...)
+	configureProcessTree(cmd)
 
 	cmd.Cancel = func() error {
 		if cmd.Process == nil {
 			return nil
 		}
-		if goruntime.GOOS == "windows" {
-			return cmd.Process.Kill()
-		}
-		return cmd.Process.Signal(os.Interrupt)
+		return cancelProcessTree(cmd)
 	}
 	cmd.WaitDelay = 5 * time.Second
 

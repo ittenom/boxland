@@ -8,6 +8,10 @@ export { Theme, Roles, bindThemeToTextureCache } from "./theme";
 export type { Role, ThemeEntry, NineSliceInsets } from "./theme";
 export { NineSlice } from "./nine-slice";
 export type { NineSliceOptions } from "./nine-slice";
+export { pixiUITokens, surfacePalette } from "./tokens";
+export type { PixiUITokens, SurfaceTone, SurfacePalette } from "./tokens";
+export { Surface, roleTone } from "./surface";
+export type { SurfaceOptions } from "./surface";
 export {
 	makeButton, makeCheckBox, makeSlider, makeInput,
 	makeList, makeScrollBox, makeSelect, makeLabel,

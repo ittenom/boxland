@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -98,6 +100,32 @@ func TestLandingDoesNotCatchAll(t *testing.T) {
 	srv.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/nope", nil))
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("/nope: got %d, want 404", rr.Code)
+	}
+}
+
+func TestStaticHandlerPrefersLocalStaticFiles(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	local := filepath.Join(root, "server", "static", "web")
+	if err := os.MkdirAll(local, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(local, "probe.js"), []byte("local-probe"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := New(Health{}, Mounts{})
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/static/web/probe.js", nil))
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if got := rr.Body.String(); got != "local-probe" {
+		t.Fatalf("body: got %q, want local-probe", got)
+	}
+	if got := rr.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control: got %q, want no-store", got)
 	}
 }
 

@@ -24,11 +24,12 @@ export type { EditorHarnessOptions, FrameScheduler } from "./editor-harness";
 
 // UI primitives layer (theme + 9-slice + widgets). See ./ui.
 export {
-	Theme, Roles, NineSlice,
+	Theme, Roles, NineSlice, Surface, pixiUITokens, surfacePalette,
 	bindThemeToTextureCache,
 } from "./ui";
 export type {
 	Role, ThemeEntry, NineSliceInsets, NineSliceOptions,
+	SurfaceOptions, PixiUITokens, SurfaceTone, SurfacePalette,
 } from "./ui";
 
 // Editor harness (Pixi-rendered editor scenes). See ./editors.

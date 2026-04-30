@@ -119,6 +119,7 @@ func New(d Deps) http.Handler {
 	// makes sense for the person who launched the server. Read-only
 	// (purely a cache-read), so safe to hit on every page load.
 	mux.Handle("GET /design/api/version", auth(getVersionStatus(d)))
+	mux.Handle("GET /design/dev/pixi-ui", auth(getPixiUIGallery(d)))
 
 	// Asset Manager surface (PLAN.md §5c).
 	mux.Handle("GET /design/assets", auth(getAssetsList(d)))
@@ -776,11 +777,11 @@ func renderHTML(w http.ResponseWriter, r *http.Request, c templ.Component) {
 // The page is a two-pane IDE: folder rail on the left, contents grid
 // on the right. Query parameters drive the right-pane content:
 //
-//   ?folder_id=<id>  → that folder's contents (uses folder.sort_mode)
-//   ?kind=<kind>     → kind-root view (every asset of `kind` whose
-//                      folder_id IS NULL)
-//   neither set      → legacy flat grid (kept for filter=orphan deep
-//                      links and other non-folder views)
+//	?folder_id=<id>  → that folder's contents (uses folder.sort_mode)
+//	?kind=<kind>     → kind-root view (every asset of `kind` whose
+//	                   folder_id IS NULL)
+//	neither set      → legacy flat grid (kept for filter=orphan deep
+//	                   links and other non-folder views)
 //
 // In every case the rail (Tree) is populated for all four kind_roots.
 func getAssetsList(d Deps) http.HandlerFunc {
@@ -1798,16 +1799,16 @@ func parseTags(raw string) []string {
 
 // getEntitiesList renders the entities grid. Honors:
 //
-//   ?class=tile|npc|pc|logic   — scopes by entity_class. Per the
-//                                holistic redesign, each class has its
-//                                own /design/entities/{tiles|npcs|...}
-//                                URL that sets this param.
-//   ?class=library_sprites|library_audio|library_ui — Phase 2 stubs:
-//                                redirect to the matching Library tab,
-//                                which in v1 still uses the asset list.
-//   ?filter=no-sprite          — narrow to entities missing a sprite.
-//   ?q=...                     — search by name (ILIKE).
-//   ?tags=foo,bar              — tag filter.
+//	?class=tile|npc|pc|logic   — scopes by entity_class. Per the
+//	                             holistic redesign, each class has its
+//	                             own /design/entities/{tiles|npcs|...}
+//	                             URL that sets this param.
+//	?class=library_sprites|library_audio|library_ui — Phase 2 stubs:
+//	                             redirect to the matching Library tab,
+//	                             which in v1 still uses the asset list.
+//	?filter=no-sprite          — narrow to entities missing a sprite.
+//	?q=...                     — search by name (ILIKE).
+//	?tags=foo,bar              — tag filter.
 func getEntitiesList(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		class := strings.TrimSpace(r.URL.Query().Get("class"))

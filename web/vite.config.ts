@@ -64,6 +64,7 @@ export default defineConfig({
         "character-generator": resolve(here, "src/character-generator/entry-character-generator.ts"),
         "level-editor":       resolve(here, "src/level-editor/entry-level-editor.ts"),
         mapmaker:             resolve(here, "src/mapmaker/entry-mapmaker.ts"),
+        "pixi-ui-gallery":    resolve(here, "src/render/ui/entry-pixi-ui-gallery.ts"),
       },
       // Stable filenames so the Templ pages can <script src="/static/web/<entry>.js"/>
       // without templating in build hashes. Long-cache headers come from

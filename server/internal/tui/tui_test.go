@@ -2,12 +2,16 @@ package tui
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+
+	"boxland/server/internal/updater"
 )
 
 // step runs Update and re-asserts back to model. Keeps tests focused on
@@ -33,6 +37,10 @@ func readyModel(t *testing.T) model {
 	m.firstRunDone = true
 	m, _ = step(t, m, tea.WindowSizeMsg{Width: 110, Height: 50})
 	return m
+}
+
+func testUpdateAvailable() *updater.Status {
+	return &updater.Status{Current: "0.1.0", Latest: "0.2.0", HasUpdate: true}
 }
 
 // itemNamed pulls the named entry from defaultItems(), so tests don't
@@ -288,6 +296,111 @@ func TestRebootStartsFreshServerAfterOldJobExits(t *testing.T) {
 		t.Fatal("fresh server job should become the current indefinite job")
 	}
 	m = drainToCompletion(t, m, design.title)
+}
+
+func TestRebootUsesSourceRunWhenRepoRootIsAvailable(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(filepath.Join(root))
+	if err := os.MkdirAll(filepath.Join(root, "server"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "web"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "server", "go.mod"), []byte("module probe\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "web", "package.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	reboot := sourceRebootItem(item{title: "Design", cmd: []string{"boxland", "design"}})
+	want := []string{"go", "-C", root, "run", "./server", "design"}
+	if strings.Join(reboot.cmd, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("reboot cmd = %#v, want %#v", reboot.cmd, want)
+	}
+}
+
+func TestUpdateStopsRunningServerThenRestartsAfterSuccess(t *testing.T) {
+	m := readyModel(t)
+	design := item{
+		title: "Design", badge: "quick start", desc: "test server",
+		cmd:        []string{"go", "version"},
+		indefinite: true,
+	}
+	cancelled := false
+	live := &job{
+		id:     design.title,
+		it:     design,
+		runner: &runner{cancel: func() { cancelled = true }},
+	}
+	m.jobs[design.title] = live
+	m.currentIndefinite = live
+	m.updateStatus = testUpdateAvailable()
+	m.refreshMenuItems()
+
+	updateIdx := itemIndex(m.list.Items(), updateBoxlandTitle)
+	if updateIdx < 0 {
+		t.Fatal("update row missing")
+	}
+	m.list.Select(updateIdx)
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if !cancelled {
+		t.Fatal("starting update should stop the running server")
+	}
+	if !live.cancelArmed || !live.rebooting {
+		t.Fatalf("server should be marked as stopping for update; cancelArmed=%v rebooting=%v", live.cancelArmed, live.rebooting)
+	}
+	if live.afterStop.title != updateBoxlandTitle {
+		t.Fatalf("server exit should launch update, got afterStop=%q", live.afterStop.title)
+	}
+	if m.restartAfterUpdate.title != design.title {
+		t.Fatalf("restartAfterUpdate = %q, want %q", m.restartAfterUpdate.title, design.title)
+	}
+
+	m, _ = step(t, m, runDoneMsg{jobID: design.title, err: errors.New("killed"), elapsed: time.Second})
+	if _, ok := m.jobs[updateBoxlandTitle]; !ok {
+		t.Fatal("update job should start after server exits")
+	}
+	if m.currentIndefinite != nil {
+		t.Fatal("server should not restart before update completes")
+	}
+
+	m, _ = step(t, m, runDoneMsg{jobID: updateBoxlandTitle, elapsed: time.Second})
+	fresh, ok := m.jobs[design.title]
+	if !ok {
+		t.Fatal("server should restart after successful update")
+	}
+	if fresh == live {
+		t.Fatal("server restart should create a fresh job")
+	}
+	if m.currentIndefinite != fresh {
+		t.Fatal("restarted server should become currentIndefinite")
+	}
+	m = drainToCompletion(t, m, design.title)
+}
+
+func TestUpdateDoesNotRestartServerAfterFailure(t *testing.T) {
+	m := readyModel(t)
+	design := item{
+		title: "Design", badge: "quick start", desc: "test server",
+		cmd:        []string{"go", "version"},
+		indefinite: true,
+	}
+	m.restartAfterUpdate = design
+	m.jobs[updateBoxlandTitle] = &job{
+		id:      updateBoxlandTitle,
+		it:      updateBoxlandItem(testUpdateAvailable()),
+		started: time.Now(),
+	}
+
+	m, _ = step(t, m, runDoneMsg{jobID: updateBoxlandTitle, err: errors.New("update failed"), elapsed: time.Second})
+	if _, ok := m.jobs[design.title]; ok {
+		t.Fatal("server should not restart after failed update")
+	}
+	if m.restartAfterUpdate.title != "" {
+		t.Fatal("restartAfterUpdate should be cleared after update failure")
+	}
 }
 
 func TestRebootKeyIgnoresNonServerIndefinite(t *testing.T) {

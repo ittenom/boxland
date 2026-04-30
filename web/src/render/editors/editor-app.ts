@@ -109,10 +109,6 @@ export class EditorApp {
 		const app = new EditorApp(pixi, slots, harness, opts.host);
 		app.attachResizeObserver();
 
-		// Pre-warm theme textures so chrome panels paint with art
-		// from frame 1.
-		void opts.theme.prefetchAll();
-
 		return app;
 	}
 

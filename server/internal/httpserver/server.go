@@ -8,6 +8,9 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	staticfs "boxland/server/static"
@@ -105,7 +108,10 @@ func landingHandler() http.HandlerFunc {
 	}
 }
 
-// staticHandler serves the embedded /static/ tree with long-cache headers.
+// staticHandler serves /static/. During local development it overlays files
+// from the working tree's server/static directory so staged web bundles are
+// visible without rebuilding the Go binary; production still falls back to
+// the embedded tree.
 // Per PLAN.md §6h: static assets get long-cache because they're versioned
 // either by content-addressed asset paths (CDN) or by build-time hashes.
 func staticHandler() http.Handler {
@@ -116,9 +122,44 @@ func staticHandler() http.Handler {
 	}
 	fileSrv := http.FileServer(http.FS(sub))
 	return http.StripPrefix("/static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveLocalStatic(w, r) {
+			return
+		}
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		fileSrv.ServeHTTP(w, r)
 	}))
+}
+
+func serveLocalStatic(w http.ResponseWriter, r *http.Request) bool {
+	localRoot := findLocalStaticRoot()
+	if localRoot == "" {
+		return false
+	}
+	rel := filepath.Clean(strings.TrimPrefix(r.URL.Path, "/"))
+	if rel == "." || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return false
+	}
+	path := filepath.Join(localRoot, rel)
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	http.ServeFile(w, r, path)
+	return true
+}
+
+func findLocalStaticRoot() string {
+	for _, candidate := range []string{
+		filepath.Join("server", "static"),
+		"static",
+	} {
+		info, err := os.Stat(candidate)
+		if err == nil && info.IsDir() {
+			return candidate
+		}
+	}
+	return ""
 }
 
 type healthResponse struct {

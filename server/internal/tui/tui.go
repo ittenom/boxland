@@ -87,6 +87,8 @@ type job struct {
 	started     time.Time
 	cancelArmed bool
 	rebooting   bool
+	rebootItem  item // optional replacement command used for reboot
+	afterStop   item // optional job to launch after this one exits
 	listening   bool // server detected as accepting connections
 }
 
@@ -137,6 +139,10 @@ type model struct {
 	// from GitHub (or the user disabled checks via env).
 	updateClient *updater.Client
 	updateStatus *updater.Status
+	// restartAfterUpdate remembers a running server job that was stopped
+	// so Update Boxland could take the terminal. On a successful update
+	// we start it again so the freshly built assets are served.
+	restartAfterUpdate item
 }
 
 // failedJobView holds just enough about a failed interactive job to
@@ -835,12 +841,49 @@ func (m model) handleReboot() (tea.Model, tea.Cmd) {
 	}
 	j.cancelArmed = true
 	j.rebooting = true
+	j.rebootItem = sourceRebootItem(j.it)
 	j.runner.Cancel()
-	return m, m.list.NewStatusMessage("Rebooting " + j.it.title + "…")
+	return m, m.list.NewStatusMessage("Rebuilding and rebooting " + j.it.title + "…")
 }
 
 func canRebootJob(j *job) bool {
 	return j != nil && j.runner != nil && len(ServiceLinks(j.it.title)) > 0
+}
+
+func sourceRebootItem(it item) item {
+	if it.title != "Design" && it.title != "Serve" {
+		return it
+	}
+	root := findRepoRoot()
+	if root == "" {
+		return it
+	}
+	next := it
+	subcmd := strings.ToLower(it.title)
+	next.cmd = []string{"go", "-C", root, "run", "./server", subcmd}
+	return next
+}
+
+func findRepoRoot() string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	for {
+		if hasFile(filepath.Join(wd, "server", "go.mod")) && hasFile(filepath.Join(wd, "web", "package.json")) {
+			return wd
+		}
+		parent := filepath.Dir(wd)
+		if parent == wd {
+			return ""
+		}
+		wd = parent
+	}
+}
+
+func hasFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 // hasJobs reports whether any subprocess is live or any tail content is
@@ -873,6 +916,15 @@ func (m model) startItem(it item) (tea.Model, tea.Cmd) {
 	}
 
 	if m.currentIndefinite != nil {
+		if it.title == updateBoxlandTitle && it.interactive && canRebootJob(m.currentIndefinite) {
+			j := m.currentIndefinite
+			j.cancelArmed = true
+			j.rebooting = true
+			j.afterStop = it
+			m.restartAfterUpdate = j.it
+			j.runner.Cancel()
+			return m, m.list.NewStatusMessage("Stopping " + j.it.title + " before updating…")
+		}
 		if it.indefinite {
 			return m, m.list.NewStatusMessage("Stop " + m.currentIndefinite.it.title + " first (ctrl+c).")
 		}
@@ -995,7 +1047,11 @@ func (m model) handleRunDone(msg runDoneMsg) (tea.Model, tea.Cmd) {
 	var reboot item
 	if j.rebooting {
 		reboot = j.it
+		if j.rebootItem.title != "" {
+			reboot = j.rebootItem
+		}
 	}
+	afterStop := j.afterStop
 
 	// Failed interactive jobs get the failure card treatment. We only
 	// trigger it when there's actually captured output to show; an
@@ -1027,10 +1083,24 @@ func (m model) handleRunDone(msg runDoneMsg) (tea.Model, tea.Cmd) {
 	// have flipped to false (or the surviving job set changed).
 	m.applySize(m.width, m.height)
 
-	if reboot.title != "" {
+	if afterStop.title != "" {
+		next, afterStopCmd := m.startItem(afterStop)
+		m = next.(model)
+		cmds = append(cmds, afterStopCmd, m.list.NewStatusMessage("Starting "+afterStop.title+"…"))
+	} else if reboot.title != "" {
 		next, rebootCmd := m.startItem(reboot)
 		m = next.(model)
 		cmds = append(cmds, rebootCmd, m.list.NewStatusMessage("Restarting "+reboot.title+"…"))
+	}
+
+	if msg.jobID == updateBoxlandTitle && err == nil && m.restartAfterUpdate.title != "" {
+		restart := m.restartAfterUpdate
+		m.restartAfterUpdate = item{}
+		next, restartCmd := m.startItem(restart)
+		m = next.(model)
+		cmds = append(cmds, restartCmd, m.list.NewStatusMessage("Restarting "+restart.title+"…"))
+	} else if msg.jobID == updateBoxlandTitle {
+		m.restartAfterUpdate = item{}
 	}
 
 	return m, tea.Batch(cmds...)
