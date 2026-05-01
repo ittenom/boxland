@@ -2,8 +2,8 @@ import Config
 
 # Configure your database
 config :boxland, Boxland.Repo,
-  username: "postgres",
-  password: "postgres",
+  username: "boxland",
+  password: "boxland",
   hostname: "localhost",
   database: "boxland_dev",
   stacktrace: true,

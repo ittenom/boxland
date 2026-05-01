@@ -35,3 +35,8 @@ boxland-*.tar
 npm-debug.log
 /assets/node_modules/
 
+# Local env files
+.env.dev
+.env.prod
+.env.local
+
