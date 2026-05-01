@@ -7,6 +7,10 @@ defmodule Boxland.Application do
 
   @impl true
   def start(_type, _args) do
+    if System.get_env("RUN_MIGRATIONS_ON_BOOT") == "true" do
+      Boxland.Release.migrate()
+    end
+
     children = [
       BoxlandWeb.Telemetry,
       Boxland.Repo,
