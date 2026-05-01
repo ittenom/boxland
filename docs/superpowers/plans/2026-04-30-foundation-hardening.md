@@ -2968,7 +2968,7 @@ defmodule Boxland.Scripting.HostTest do
 
   describe "evaluate/1" do
     test "runs a trivial Lua expression" do
-      assert {:ok, [3.0]} = Host.evaluate("return 1 + 2")
+      assert {:ok, [3]} = Host.evaluate("return 1 + 2")
     end
 
     test "returns multiple values" do
@@ -3022,7 +3022,9 @@ defmodule Boxland.Scripting.Host do
     state = sandboxed_state()
     try do
       case :luerl.do(source, state) do
-        {results, _new_state} -> {:ok, results}
+        {:ok, results, _new_state} -> {:ok, results}
+        {:lua_error, reason, _state} -> {:error, reason}
+        {:error, errors, _} -> {:error, errors}
       end
     rescue
       e -> {:error, Exception.message(e)}
