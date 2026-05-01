@@ -34,7 +34,6 @@ defmodule Boxland.Auth.Designers do
       designer && Password.verify(designer.password_hash, password) -> {:ok, designer}
       designer -> :error
       true ->
-        # Constant-time path even when no user exists — Argon2.no_user_verify
         Password.verify(nil, password)
         :error
     end
@@ -44,14 +43,16 @@ defmodule Boxland.Auth.Designers do
   Create a new session for a designer. Returns `{:ok, plain_token}`.
   The plain token must be set as the client's cookie value.
   """
-  def create_session(designer_id, _ip) do
+  def create_session(designer_id, ip) do
     plain_token = :crypto.strong_rand_bytes(@session_token_bytes) |> Base.url_encode64(padding: false)
     token_hash = :crypto.hash(:sha256, plain_token)
     expires_at = DateTime.utc_now() |> DateTime.add(@session_ttl_seconds) |> DateTime.truncate(:second)
+
     case %DesignerSession{}
          |> DesignerSession.changeset(%{
            designer_id: designer_id,
            token_hash: token_hash,
+           ip: ip,
            expires_at: expires_at
          })
          |> Repo.insert() do

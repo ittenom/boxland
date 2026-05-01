@@ -42,11 +42,16 @@ defmodule Boxland.Auth.DesignersTest do
       {:ok, designer: d}
     end
 
-    test "create + fetch round-trip", %{designer: d} do
+    test "create + fetch round-trip stores IP and returns the designer", %{designer: d} do
       {:ok, plain_token} = Designers.create_session(d.id, "127.0.0.1")
       assert is_binary(plain_token)
       assert {:ok, fetched} = Designers.fetch_session(plain_token)
       assert fetched.id == d.id
+
+      # Verify the IP was actually persisted
+      token_hash = :crypto.hash(:sha256, plain_token)
+      stored = Boxland.Repo.get_by(Boxland.Auth.DesignerSession, token_hash: token_hash)
+      assert stored.ip == "127.0.0.1"
     end
 
     test "fetch_session/1 returns :not_found for unknown token" do
