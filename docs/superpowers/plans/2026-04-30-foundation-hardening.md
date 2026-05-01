@@ -360,7 +360,24 @@ Append to `.gitignore`:
 .env.local
 ```
 
-- [ ] **Step 4: Bring up services and verify**
+- [ ] **Step 4: Update `config/dev.exs` to match docker creds**
+
+Phoenix's generated `config/dev.exs` uses `username: "postgres", password: "postgres"`. Our docker-compose creates `boxland/boxland`. Edit `config/dev.exs` to change the Repo block credentials:
+
+```elixir
+config :boxland, Boxland.Repo,
+  username: "boxland",
+  password: "boxland",
+  hostname: "localhost",
+  database: "boxland_dev",
+  stacktrace: true,
+  show_sensitive_data_on_connection_error: true,
+  pool_size: 10
+```
+
+(Keep all other lines in `dev.exs` — Endpoint config, watchers, etc. — unchanged. Only the `Boxland.Repo` block changes.)
+
+- [ ] **Step 5: Bring up services and verify**
 
 Run:
 ```bash
@@ -369,7 +386,7 @@ docker compose ps
 ```
 Expected: postgres, redis, minio all show `running` with `healthy` status (postgres + redis after a few seconds).
 
-- [ ] **Step 5: Verify Postgres reachable from mix**
+- [ ] **Step 6: Verify Postgres reachable from mix**
 
 Run:
 ```bash
@@ -377,11 +394,11 @@ mix ecto.create
 ```
 Expected: `The database for Boxland.Repo has been created`.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add docker-compose.yml .env.dev.example .gitignore
-git commit -m "chore: add docker-compose for local postgres/redis/minio"
+git add docker-compose.yml .env.dev.example .gitignore config/dev.exs
+git commit -m "chore: add docker-compose for local postgres/redis/minio + match dev creds"
 ```
 
 ---
