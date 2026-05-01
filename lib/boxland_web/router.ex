@@ -20,6 +20,11 @@ defmodule BoxlandWeb.Router do
     get "/", PageController, :home
   end
 
+  scope "/", BoxlandWeb do
+    get "/healthz", HealthController, :healthz
+    get "/readyz", HealthController, :readyz
+  end
+
   # Other scopes may use custom stacks.
   # scope "/api", BoxlandWeb do
   #   pipe_through :api
