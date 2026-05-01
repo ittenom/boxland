@@ -1,0 +1,15 @@
+.git
+.gitignore
+_build
+deps
+.env*
+.elixir_ls
+*.beam
+priv/static
+docker-compose.yml
+docs
+README.md
+LICENSE
+node_modules
+assets/node_modules
+test
