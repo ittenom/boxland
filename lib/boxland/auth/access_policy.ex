@@ -23,11 +23,11 @@ defmodule Boxland.Auth.AccessPolicy do
 
   # ---
 
-  defp check(:player, %{player_id: pid}, {_lvl, :shared}), do: :ok
+  defp check(:player, %{player_id: _pid}, {_lvl, :shared}), do: :ok
   defp check(:player, %{player_id: pid}, {_lvl, {:user, uid}}) when pid == uid, do: :ok
   defp check(:player, _, {_lvl, {:user, _}}), do: {:error, :forbidden}
 
-  defp check(:player, %{player_id: pid}, {_lvl, {:party, party_id}}) do
+  defp check(:player, %{player_id: _pid}, {_lvl, {:party, _party_id}}) do
     # TODO when parties exist: check membership; for v1 reject
     {:error, :parties_not_implemented}
   end
