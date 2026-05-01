@@ -22,7 +22,10 @@ defmodule Boxland.Auth.Player do
     |> cast(attrs, [:email, :password_hash, :display_name])
     |> validate_required([:display_name])
     |> validate_format(:email, ~r/@/, message: "must contain @ if provided", allow_nil: true)
-    |> update_change(:email, fn nil -> nil; v -> String.downcase(v) end)
+    |> update_change(:email, fn
+      nil -> nil
+      v -> String.downcase(v)
+    end)
     |> unique_constraint(:email)
   end
 end

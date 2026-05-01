@@ -10,6 +10,7 @@ defmodule Boxland.Repo.Migrations.InitialSchema do
       add :display_name, :string, null: false
       timestamps(type: :utc_datetime)
     end
+
     create unique_index(:designers, [:email])
 
     create table(:designer_sessions) do
@@ -19,6 +20,7 @@ defmodule Boxland.Repo.Migrations.InitialSchema do
       add :expires_at, :utc_datetime, null: false
       timestamps(type: :utc_datetime, updated_at: false)
     end
+
     create unique_index(:designer_sessions, [:token_hash])
     create index(:designer_sessions, [:designer_id])
 
@@ -28,6 +30,7 @@ defmodule Boxland.Repo.Migrations.InitialSchema do
       add :display_name, :string, null: false
       timestamps(type: :utc_datetime)
     end
+
     create unique_index(:players, [:email], where: "email IS NOT NULL")
 
     create table(:player_oauth_links) do
@@ -36,6 +39,7 @@ defmodule Boxland.Repo.Migrations.InitialSchema do
       add :provider_user_id, :string, null: false
       timestamps(type: :utc_datetime, updated_at: false)
     end
+
     create unique_index(:player_oauth_links, [:provider, :provider_user_id])
     create index(:player_oauth_links, [:player_id])
 
@@ -45,6 +49,7 @@ defmodule Boxland.Repo.Migrations.InitialSchema do
       add :expires_at, :utc_datetime, null: false
       timestamps(type: :utc_datetime, updated_at: false)
     end
+
     create unique_index(:player_sessions, [:refresh_token_hash])
     create index(:player_sessions, [:player_id])
 
@@ -61,6 +66,7 @@ defmodule Boxland.Repo.Migrations.InitialSchema do
       add :metadata, :map, null: false, default: %{}
       timestamps(type: :utc_datetime)
     end
+
     create unique_index(:assets, [:sha256])
     create index(:assets, [:owner_id])
     create index(:assets, [:kind])
@@ -75,6 +81,7 @@ defmodule Boxland.Repo.Migrations.InitialSchema do
       add :height, :integer, null: false
       timestamps(type: :utc_datetime)
     end
+
     create unique_index(:maps, [:owner_id, :slug])
 
     create table(:map_layers) do
@@ -84,6 +91,7 @@ defmodule Boxland.Repo.Migrations.InitialSchema do
       add :tiles, :map, null: false, default: %{}
       timestamps(type: :utc_datetime)
     end
+
     create unique_index(:map_layers, [:map_id, :name])
     create index(:map_layers, [:map_id, :z_index])
 
@@ -101,6 +109,7 @@ defmodule Boxland.Repo.Migrations.InitialSchema do
       add :default_z_index, :integer, null: false, default: 25
       timestamps(type: :utc_datetime)
     end
+
     create unique_index(:entity_types, [:owner_id, :slug])
 
     # === WORLDS ===
@@ -111,6 +120,7 @@ defmodule Boxland.Repo.Migrations.InitialSchema do
       add :name, :string, null: false
       timestamps(type: :utc_datetime)
     end
+
     create unique_index(:worlds, [:owner_id, :slug])
 
     # === LEVELS ===
@@ -125,6 +135,7 @@ defmodule Boxland.Repo.Migrations.InitialSchema do
       add :instancing, :string, null: false, default: "shared"
       timestamps(type: :utc_datetime)
     end
+
     create unique_index(:levels, [:owner_id, :slug])
     create index(:levels, [:world_id])
     create index(:levels, [:map_id])
@@ -139,6 +150,7 @@ defmodule Boxland.Repo.Migrations.InitialSchema do
       add :script_state, :map, null: false, default: %{}
       timestamps(type: :utc_datetime)
     end
+
     create index(:level_entities, [:level_id])
     create index(:level_entities, [:level_id, :z_index_override])
 
@@ -151,6 +163,7 @@ defmodule Boxland.Repo.Migrations.InitialSchema do
       add :flushed_at, :utc_datetime, null: false
       timestamps(type: :utc_datetime, updated_at: false)
     end
+
     create unique_index(:level_state, [:level_id, :instance_key])
   end
 end

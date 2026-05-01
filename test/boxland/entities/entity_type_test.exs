@@ -6,8 +6,13 @@ defmodule Boxland.Entities.EntityTypeTest do
   setup do
     {:ok, designer} =
       %Boxland.Auth.Designer{}
-      |> Boxland.Auth.Designer.changeset(%{email: "d@e.com", password_hash: "x", display_name: "D"})
+      |> Boxland.Auth.Designer.changeset(%{
+        email: "d@e.com",
+        password_hash: "x",
+        display_name: "D"
+      })
       |> Boxland.Repo.insert()
+
     {:ok, designer: designer}
   end
 
@@ -22,6 +27,7 @@ defmodule Boxland.Entities.EntityTypeTest do
       %EntityType{}
       |> EntityType.changeset(%{owner_id: d.id, slug: "barrel", name: "Barrel"})
       |> Boxland.Repo.insert()
+
     assert et.components == []
     assert et.scripts == []
     assert et.animation_bindings == %{}
@@ -37,6 +43,7 @@ defmodule Boxland.Entities.EntityTypeTest do
       components: [%{"kind" => "movable", "config" => %{"speed_px_per_sec" => 64}}],
       scripts: [%{"hook" => "on_tick", "source" => %{"type" => "builtin", "action" => "idle"}}]
     }
+
     changeset = EntityType.changeset(%EntityType{}, attrs)
     assert changeset.valid?
   end

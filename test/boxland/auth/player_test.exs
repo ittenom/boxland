@@ -26,6 +26,7 @@ defmodule Boxland.Auth.PlayerTest do
     setup do
       {:ok, player} =
         %Player{} |> Player.changeset(%{display_name: "P"}) |> Boxland.Repo.insert()
+
       {:ok, player: player}
     end
 
@@ -37,8 +38,13 @@ defmodule Boxland.Auth.PlayerTest do
 
     test "duplicate (provider, provider_user_id) is rejected", %{player: p} do
       attrs = %{player_id: p.id, provider: "google", provider_user_id: "shared"}
-      assert {:ok, _} = %PlayerOAuthLink{} |> PlayerOAuthLink.changeset(attrs) |> Boxland.Repo.insert()
-      assert {:error, changeset} = %PlayerOAuthLink{} |> PlayerOAuthLink.changeset(attrs) |> Boxland.Repo.insert()
+
+      assert {:ok, _} =
+               %PlayerOAuthLink{} |> PlayerOAuthLink.changeset(attrs) |> Boxland.Repo.insert()
+
+      assert {:error, changeset} =
+               %PlayerOAuthLink{} |> PlayerOAuthLink.changeset(attrs) |> Boxland.Repo.insert()
+
       refute changeset.valid?
     end
   end
@@ -47,6 +53,7 @@ defmodule Boxland.Auth.PlayerTest do
     setup do
       {:ok, player} =
         %Player{} |> Player.changeset(%{display_name: "P"}) |> Boxland.Repo.insert()
+
       {:ok, player: player}
     end
 
@@ -56,6 +63,7 @@ defmodule Boxland.Auth.PlayerTest do
         refresh_token_hash: :crypto.hash(:sha256, "rt"),
         expires_at: DateTime.utc_now() |> DateTime.add(3600) |> DateTime.truncate(:second)
       }
+
       changeset = PlayerSession.changeset(%PlayerSession{}, attrs)
       assert changeset.valid?
     end

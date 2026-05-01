@@ -17,6 +17,7 @@ defmodule Boxland.Scripting.Catalog do
         |> Enum.filter(&String.ends_with?(&1, ".lua"))
         |> Enum.map(&Path.rootname/1)
         |> Enum.sort()
+
       _ ->
         []
     end
@@ -25,8 +26,10 @@ defmodule Boxland.Scripting.Catalog do
   @doc "Load and parse a single built-in action by name."
   def load(name) when is_binary(name) do
     path = Path.join(@actions_dir, "#{name}.lua")
+
     if File.exists?(path) do
       source = File.read!(path)
+
       case Boxland.Scripting.Host.evaluate(source) do
         {:ok, [descriptor]} when is_list(descriptor) -> {:ok, descriptor}
         {:ok, _} -> {:error, :invalid_descriptor}

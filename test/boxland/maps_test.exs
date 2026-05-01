@@ -6,13 +6,25 @@ defmodule Boxland.MapsTest do
   setup do
     {:ok, designer} =
       %Boxland.Auth.Designer{}
-      |> Boxland.Auth.Designer.changeset(%{email: "d@e.com", password_hash: "x", display_name: "D"})
+      |> Boxland.Auth.Designer.changeset(%{
+        email: "d@e.com",
+        password_hash: "x",
+        display_name: "D"
+      })
       |> Boxland.Repo.insert()
+
     {:ok, designer: designer}
   end
 
   test "valid map produces a valid changeset", %{designer: d} do
-    attrs = %{owner_id: d.id, slug: "starter-village", name: "Starter Village", width: 64, height: 64}
+    attrs = %{
+      owner_id: d.id,
+      slug: "starter-village",
+      name: "Starter Village",
+      width: 64,
+      height: 64
+    }
+
     changeset = Map.changeset(%Map{}, attrs)
     assert changeset.valid?
   end
@@ -31,13 +43,18 @@ defmodule Boxland.MapsTest do
   end
 
   test "Layer changeset accepts tiles jsonb", %{designer: d} do
-    {:ok, map} = %Map{} |> Map.changeset(%{owner_id: d.id, slug: "m", name: "M", width: 10, height: 10}) |> Boxland.Repo.insert()
+    {:ok, map} =
+      %Map{}
+      |> Map.changeset(%{owner_id: d.id, slug: "m", name: "M", width: 10, height: 10})
+      |> Boxland.Repo.insert()
+
     attrs = %{
       map_id: map.id,
       name: "ground",
       z_index: 0,
       tiles: %{"0,0" => %{"sprite_id" => 1}, "1,0" => %{"sheet_id" => 2, "frame" => 5}}
     }
+
     changeset = Layer.changeset(%Layer{}, attrs)
     assert changeset.valid?
   end

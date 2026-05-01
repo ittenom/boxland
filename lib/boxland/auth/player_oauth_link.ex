@@ -19,7 +19,9 @@ defmodule Boxland.Auth.PlayerOAuthLink do
     |> cast(attrs, [:player_id, :provider, :provider_user_id])
     |> validate_required([:player_id, :provider, :provider_user_id])
     |> validate_inclusion(:provider, @valid_providers)
-    |> unique_constraint([:provider, :provider_user_id], name: :player_oauth_links_provider_provider_user_id_index)
+    |> unique_constraint([:provider, :provider_user_id],
+      name: :player_oauth_links_provider_provider_user_id_index
+    )
     |> foreign_key_constraint(:player_id)
   end
 end

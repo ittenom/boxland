@@ -12,8 +12,10 @@ defmodule Boxland.Auth.Tokens do
 
   @endpoint BoxlandWeb.Endpoint
   @namespace "game_token"
-  @player_max_age 900           # 15 minutes
-  @sandbox_max_age 1800         # 30 minutes
+  # 15 minutes
+  @player_max_age 900
+  # 30 minutes
+  @sandbox_max_age 1800
 
   @doc "Mint a player access token. `claims` must include `:player_id`."
   def mint_player_access(%{player_id: pid}) do
@@ -39,7 +41,8 @@ defmodule Boxland.Auth.Tokens do
   `{:error, reason}`. Enforces max_age based on the realm field.
   """
   def verify_game_token(token) do
-    with {:ok, claims} <- Phoenix.Token.verify(@endpoint, @namespace, token, max_age: @sandbox_max_age),
+    with {:ok, claims} <-
+           Phoenix.Token.verify(@endpoint, @namespace, token, max_age: @sandbox_max_age),
          :ok <- enforce_age_for_realm(claims) do
       {:ok, claims}
     end
@@ -48,6 +51,7 @@ defmodule Boxland.Auth.Tokens do
   defp enforce_age_for_realm(%{realm: :player, iat: iat}) do
     if System.system_time(:second) - iat <= @player_max_age, do: :ok, else: {:error, :expired}
   end
+
   defp enforce_age_for_realm(%{realm: :designer_sandbox}), do: :ok
   defp enforce_age_for_realm(_), do: {:error, :invalid_claims}
 end

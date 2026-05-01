@@ -12,6 +12,7 @@ defmodule Boxland.Auth.Password do
   OAuth-only players who have no password.
   """
   def verify(nil, _plaintext), do: Argon2.no_user_verify() && false
+
   def verify(hash, plaintext) when is_binary(hash) and is_binary(plaintext) do
     Argon2.verify_pass(plaintext, hash)
   end

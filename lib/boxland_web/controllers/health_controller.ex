@@ -15,7 +15,9 @@ defmodule BoxlandWeb.HealthController do
   """
   def readyz(conn, _params) do
     case check_db() do
-      :ok -> text(conn, "ready")
+      :ok ->
+        text(conn, "ready")
+
       {:error, reason} ->
         conn
         |> put_status(503)

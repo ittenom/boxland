@@ -6,8 +6,13 @@ defmodule Boxland.Library.AssetTest do
   setup do
     {:ok, designer} =
       %Boxland.Auth.Designer{}
-      |> Boxland.Auth.Designer.changeset(%{email: "d@e.com", password_hash: "x", display_name: "D"})
+      |> Boxland.Auth.Designer.changeset(%{
+        email: "d@e.com",
+        password_hash: "x",
+        display_name: "D"
+      })
       |> Boxland.Repo.insert()
+
     {:ok, designer: designer}
   end
 
@@ -22,6 +27,7 @@ defmodule Boxland.Library.AssetTest do
       mime_type: "image/png",
       metadata: %{"collision" => %{"kind" => "preset", "value" => "solid"}}
     }
+
     changeset = Asset.changeset(%Asset{}, attrs)
     assert changeset.valid?
   end
@@ -37,6 +43,7 @@ defmodule Boxland.Library.AssetTest do
       mime_type: "image/png",
       metadata: %{}
     }
+
     changeset = Asset.changeset(%Asset{}, attrs)
     refute changeset.valid?
     assert "is invalid" in errors_on(changeset).kind
@@ -44,6 +51,7 @@ defmodule Boxland.Library.AssetTest do
 
   test "duplicate sha256 is rejected", %{designer: d} do
     sha = :crypto.hash(:sha256, "shared")
+
     attrs = %{
       owner_id: d.id,
       kind: "sprite",
@@ -54,8 +62,12 @@ defmodule Boxland.Library.AssetTest do
       mime_type: "image/png",
       metadata: %{}
     }
+
     assert {:ok, _} = %Asset{} |> Asset.changeset(attrs) |> Boxland.Repo.insert()
-    assert {:error, changeset} = %Asset{} |> Asset.changeset(%{attrs | name: "b"}) |> Boxland.Repo.insert()
+
+    assert {:error, changeset} =
+             %Asset{} |> Asset.changeset(%{attrs | name: "b"}) |> Boxland.Repo.insert()
+
     refute changeset.valid?
   end
 
@@ -76,6 +88,7 @@ defmodule Boxland.Library.AssetTest do
         ]
       }
     }
+
     changeset = Asset.changeset(%Asset{}, attrs)
     assert changeset.valid?
   end

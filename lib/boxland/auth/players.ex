@@ -9,13 +9,16 @@ defmodule Boxland.Auth.Players do
   alias Boxland.Repo
   alias Boxland.Auth.{Player, PlayerOAuthLink, PlayerSession, Password, Tokens}
 
-  @refresh_ttl_seconds 60 * 60 * 24 * 30   # 30 days
+  # 30 days
+  @refresh_ttl_seconds 60 * 60 * 24 * 30
   @refresh_token_bytes 32
 
   def register_with_password(attrs) do
     pw = attrs[:password] || attrs["password"]
+
     if is_binary(pw) and byte_size(pw) >= 10 do
       attrs = Map.put(attrs, :password_hash, Password.hash(pw))
+
       %Player{}
       |> Player.changeset(attrs)
       |> Repo.insert()
@@ -24,12 +27,18 @@ defmodule Boxland.Auth.Players do
         %Player{}
         |> Player.changeset(attrs)
         |> Ecto.Changeset.add_error(:password, "must be at least 10 characters")
+
       {:error, changeset}
     end
   end
 
   def register_with_oauth(%{provider: provider, provider_user_id: puid} = attrs) do
-    case Repo.one(from(l in PlayerOAuthLink, where: l.provider == ^provider and l.provider_user_id == ^puid, preload: :player)) do
+    case Repo.one(
+           from(l in PlayerOAuthLink,
+             where: l.provider == ^provider and l.provider_user_id == ^puid,
+             preload: :player
+           )
+         ) do
       %PlayerOAuthLink{player: player} ->
         {:ok, player}
 
@@ -42,7 +51,11 @@ defmodule Boxland.Auth.Players do
 
           {:ok, _link} =
             %PlayerOAuthLink{}
-            |> PlayerOAuthLink.changeset(%{player_id: player.id, provider: provider, provider_user_id: puid})
+            |> PlayerOAuthLink.changeset(%{
+              player_id: player.id,
+              provider: provider,
+              provider_user_id: puid
+            })
             |> Repo.insert()
 
           player
@@ -54,9 +67,12 @@ defmodule Boxland.Auth.Players do
     player = Repo.get_by(Player, email: String.downcase(email))
 
     cond do
-      player && Password.verify(player.password_hash, password) -> {:ok, player}
+      player && Password.verify(player.password_hash, password) ->
+        {:ok, player}
+
       true ->
-        Password.verify(nil, password)   # constant-time
+        # constant-time
+        Password.verify(nil, password)
         :error
     end
   end
@@ -64,10 +80,16 @@ defmodule Boxland.Auth.Players do
   def mint_refresh_token(player_id) do
     plain = :crypto.strong_rand_bytes(@refresh_token_bytes) |> Base.url_encode64(padding: false)
     hashed = :crypto.hash(:sha256, plain)
-    expires_at = DateTime.utc_now() |> DateTime.add(@refresh_ttl_seconds) |> DateTime.truncate(:second)
+
+    expires_at =
+      DateTime.utc_now() |> DateTime.add(@refresh_ttl_seconds) |> DateTime.truncate(:second)
 
     case %PlayerSession{}
-         |> PlayerSession.changeset(%{player_id: player_id, refresh_token_hash: hashed, expires_at: expires_at})
+         |> PlayerSession.changeset(%{
+           player_id: player_id,
+           refresh_token_hash: hashed,
+           expires_at: expires_at
+         })
          |> Repo.insert() do
       {:ok, _} -> {:ok, plain}
       {:error, cs} -> {:error, cs}
@@ -84,9 +106,10 @@ defmodule Boxland.Auth.Players do
     now = DateTime.utc_now()
 
     Repo.transaction(fn ->
-      session_q = from s in PlayerSession,
-        where: s.refresh_token_hash == ^token_hash,
-        preload: [:player]
+      session_q =
+        from s in PlayerSession,
+          where: s.refresh_token_hash == ^token_hash,
+          preload: [:player]
 
       case Repo.one(session_q) do
         nil ->

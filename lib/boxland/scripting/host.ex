@@ -15,6 +15,7 @@ defmodule Boxland.Scripting.Host do
   @spec evaluate(String.t()) :: {:ok, list()} | {:error, term()}
   def evaluate(source) when is_binary(source) do
     state = sandboxed_state()
+
     try do
       case :luerl.do(source, state) do
         {:ok, results, _new_state} -> {:ok, results}

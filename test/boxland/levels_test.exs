@@ -12,14 +12,17 @@ defmodule Boxland.LevelsTest do
       %Designer{}
       |> Designer.changeset(%{email: "d@e.com", password_hash: "x", display_name: "D"})
       |> Boxland.Repo.insert()
+
     {:ok, map} =
       %Map{}
       |> Map.changeset(%{owner_id: designer.id, slug: "m", name: "M", width: 32, height: 32})
       |> Boxland.Repo.insert()
+
     {:ok, et} =
       %EntityType{}
       |> EntityType.changeset(%{owner_id: designer.id, slug: "et", name: "ET"})
       |> Boxland.Repo.insert()
+
     {:ok, designer: designer, map: map, et: et}
   end
 
@@ -45,7 +48,11 @@ defmodule Boxland.LevelsTest do
     end
 
     test "valid level in a world", %{designer: d, map: m} do
-      {:ok, w} = %World{} |> World.changeset(%{owner_id: d.id, slug: "w", name: "W"}) |> Boxland.Repo.insert()
+      {:ok, w} =
+        %World{}
+        |> World.changeset(%{owner_id: d.id, slug: "w", name: "W"})
+        |> Boxland.Repo.insert()
+
       attrs = %{owner_id: d.id, slug: "in-world", name: "InW", map_id: m.id, world_id: w.id}
       changeset = Level.changeset(%Level{}, attrs)
       assert changeset.valid?
@@ -65,6 +72,7 @@ defmodule Boxland.LevelsTest do
         %Level{}
         |> Level.changeset(%{owner_id: d.id, slug: "lvl", name: "L", map_id: m.id})
         |> Boxland.Repo.insert()
+
       {:ok, level: level}
     end
 

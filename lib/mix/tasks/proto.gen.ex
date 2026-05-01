@@ -39,14 +39,18 @@ defmodule Mix.Tasks.Proto.Gen do
     # Use --plugin flag to explicitly locate protoc-gen-elixir since ~/.mix/escripts
     # is not on PATH by default in the System.cmd environment.
     elixir_plugin = Path.expand("~/.mix/escripts/protoc-gen-elixir")
+
     elixir_args = [
       "--proto_path=#{@schemas_dir}",
       "--plugin=protoc-gen-elixir=#{elixir_plugin}",
       "--elixir_out=plugins=grpc:#{@elixir_out}"
       | proto_files
     ]
+
     case System.cmd("protoc", elixir_args, stderr_to_stdout: true) do
-      {_, 0} -> :ok
+      {_, 0} ->
+        :ok
+
       {out, code} ->
         Mix.shell().error("protoc (elixir) failed (exit #{code}):\n#{out}")
         exit({:shutdown, code})
@@ -54,6 +58,7 @@ defmodule Mix.Tasks.Proto.Gen do
 
     # TypeScript generation via ts-proto
     ts_plugin = Path.expand("assets/node_modules/.bin/protoc-gen-ts_proto")
+
     ts_args = [
       "--proto_path=#{@schemas_dir}",
       "--plugin=protoc-gen-ts_proto=#{ts_plugin}",
@@ -61,8 +66,11 @@ defmodule Mix.Tasks.Proto.Gen do
       "--ts_proto_opt=esModuleInterop=true,outputServices=false,useOptionals=messages"
       | proto_files
     ]
+
     case System.cmd("protoc", ts_args, stderr_to_stdout: true) do
-      {_, 0} -> Mix.shell().info("Generated proto modules to #{@elixir_out} and #{@ts_out}")
+      {_, 0} ->
+        Mix.shell().info("Generated proto modules to #{@elixir_out} and #{@ts_out}")
+
       {out, code} ->
         Mix.shell().error("protoc (ts) failed (exit #{code}):\n#{out}")
         exit({:shutdown, code})
@@ -92,7 +100,9 @@ defmodule Mix.Tasks.Proto.Gen do
         files
         |> Enum.sort()
         |> Enum.map(fn f -> {f, File.read!(Path.join(dir, f))} end)
-      _ -> []
+
+      _ ->
+        []
     end
   end
 end

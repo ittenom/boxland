@@ -9,14 +9,17 @@ defmodule Boxland.Auth.Designers do
   alias Boxland.Repo
   alias Boxland.Auth.{Designer, DesignerSession, Password}
 
-  @session_ttl_seconds 60 * 60 * 24 * 30   # 30 days
+  # 30 days
+  @session_ttl_seconds 60 * 60 * 24 * 30
   @session_token_bytes 32
 
   @doc "Register a new designer. Hashes the plaintext password with Argon2."
   def register_designer(attrs) do
     case validate_password(attrs) do
       :ok ->
-        attrs = Map.put(attrs, :password_hash, Password.hash(attrs[:password] || attrs["password"]))
+        attrs =
+          Map.put(attrs, :password_hash, Password.hash(attrs[:password] || attrs["password"]))
+
         %Designer{}
         |> Designer.changeset(attrs)
         |> Repo.insert()
@@ -31,8 +34,12 @@ defmodule Boxland.Auth.Designers do
     designer = Repo.get_by(Designer, email: String.downcase(email))
 
     cond do
-      designer && Password.verify(designer.password_hash, password) -> {:ok, designer}
-      designer -> :error
+      designer && Password.verify(designer.password_hash, password) ->
+        {:ok, designer}
+
+      designer ->
+        :error
+
       true ->
         Password.verify(nil, password)
         :error
@@ -44,9 +51,13 @@ defmodule Boxland.Auth.Designers do
   The plain token must be set as the client's cookie value.
   """
   def create_session(designer_id, ip) do
-    plain_token = :crypto.strong_rand_bytes(@session_token_bytes) |> Base.url_encode64(padding: false)
+    plain_token =
+      :crypto.strong_rand_bytes(@session_token_bytes) |> Base.url_encode64(padding: false)
+
     token_hash = :crypto.hash(:sha256, plain_token)
-    expires_at = DateTime.utc_now() |> DateTime.add(@session_ttl_seconds) |> DateTime.truncate(:second)
+
+    expires_at =
+      DateTime.utc_now() |> DateTime.add(@session_ttl_seconds) |> DateTime.truncate(:second)
 
     case %DesignerSession{}
          |> DesignerSession.changeset(%{
@@ -94,11 +105,13 @@ defmodule Boxland.Auth.Designers do
 
   defp validate_password(%{password: pw}) when is_binary(pw) and byte_size(pw) >= 10, do: :ok
   defp validate_password(%{"password" => pw}) when is_binary(pw) and byte_size(pw) >= 10, do: :ok
+
   defp validate_password(_attrs) do
     changeset =
       %Designer{}
       |> Ecto.Changeset.change()
       |> Ecto.Changeset.add_error(:password, "must be at least 10 characters")
+
     {:error, changeset}
   end
 end

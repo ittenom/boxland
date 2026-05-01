@@ -11,11 +11,13 @@ defmodule Boxland.Auth.AccessPolicyTest do
   end
 
   test "player cannot join another player's user instance" do
-    assert {:error, _} = AccessPolicy.allow_join?(%{realm: :player, player_id: 99}, "level:42:user:42")
+    assert {:error, _} =
+             AccessPolicy.allow_join?(%{realm: :player, player_id: 99}, "level:42:user:42")
   end
 
   test "player cannot join a sandbox instance" do
-    assert {:error, _} = AccessPolicy.allow_join?(%{realm: :player, player_id: 99}, "level:42:sandbox:7")
+    assert {:error, _} =
+             AccessPolicy.allow_join?(%{realm: :player, player_id: 99}, "level:42:sandbox:7")
   end
 
   test "designer-sandbox can only join own sandbox" do

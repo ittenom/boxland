@@ -24,7 +24,17 @@ defmodule Boxland.Entities.EntityType do
 
   def changeset(entity_type, attrs) do
     entity_type
-    |> cast(attrs, [:owner_id, :slug, :name, :visual_ref, :animation_bindings, :components, :scripts, :default_collision_mask, :default_z_index])
+    |> cast(attrs, [
+      :owner_id,
+      :slug,
+      :name,
+      :visual_ref,
+      :animation_bindings,
+      :components,
+      :scripts,
+      :default_collision_mask,
+      :default_z_index
+    ])
     |> validate_required([:owner_id, :slug, :name])
     |> validate_format(:slug, ~r/^[a-z0-9][a-z0-9-]*$/)
     |> unique_constraint([:owner_id, :slug])

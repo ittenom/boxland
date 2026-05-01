@@ -5,7 +5,11 @@ defmodule Boxland.Auth.AccessPolicy do
   connect — defense in depth.
   """
 
-  @type assigns :: %{required(:realm) => atom(), required(:player_id) => integer(), optional(:level_id) => integer()}
+  @type assigns :: %{
+          required(:realm) => atom(),
+          required(:player_id) => integer(),
+          optional(:level_id) => integer()
+        }
 
   @spec allow_join?(assigns, String.t()) :: :ok | {:error, atom()}
   def allow_join?(%{realm: realm} = assigns, "level:" <> rest) do
@@ -22,14 +26,21 @@ defmodule Boxland.Auth.AccessPolicy do
   defp check(:player, %{player_id: pid}, {_lvl, :shared}), do: :ok
   defp check(:player, %{player_id: pid}, {_lvl, {:user, uid}}) when pid == uid, do: :ok
   defp check(:player, _, {_lvl, {:user, _}}), do: {:error, :forbidden}
+
   defp check(:player, %{player_id: pid}, {_lvl, {:party, party_id}}) do
     # TODO when parties exist: check membership; for v1 reject
     {:error, :parties_not_implemented}
   end
+
   defp check(:player, _, {_lvl, {:sandbox, _}}), do: {:error, :forbidden}
 
-  defp check(:designer_sandbox, %{player_id: did, level_id: my_lvl}, {topic_lvl, {:sandbox, target_did}})
+  defp check(
+         :designer_sandbox,
+         %{player_id: did, level_id: my_lvl},
+         {topic_lvl, {:sandbox, target_did}}
+       )
        when did == target_did and my_lvl == topic_lvl, do: :ok
+
   defp check(:designer_sandbox, _, _), do: {:error, :forbidden}
 
   defp check(_, _, _), do: {:error, :forbidden}
@@ -38,15 +49,22 @@ defmodule Boxland.Auth.AccessPolicy do
     case String.split(rest, ":") do
       [lvl, "shared"] ->
         with {lvl_id, ""} <- Integer.parse(lvl), do: {:ok, {lvl_id, :shared}}
+
       [lvl, "user", uid] ->
-        with {lvl_id, ""} <- Integer.parse(lvl), {uid_int, ""} <- Integer.parse(uid),
+        with {lvl_id, ""} <- Integer.parse(lvl),
+             {uid_int, ""} <- Integer.parse(uid),
              do: {:ok, {lvl_id, {:user, uid_int}}}
+
       [lvl, "party", pid] ->
-        with {lvl_id, ""} <- Integer.parse(lvl), {pid_int, ""} <- Integer.parse(pid),
+        with {lvl_id, ""} <- Integer.parse(lvl),
+             {pid_int, ""} <- Integer.parse(pid),
              do: {:ok, {lvl_id, {:party, pid_int}}}
+
       [lvl, "sandbox", did] ->
-        with {lvl_id, ""} <- Integer.parse(lvl), {did_int, ""} <- Integer.parse(did),
+        with {lvl_id, ""} <- Integer.parse(lvl),
+             {did_int, ""} <- Integer.parse(did),
              do: {:ok, {lvl_id, {:sandbox, did_int}}}
+
       _ ->
         :error
     end

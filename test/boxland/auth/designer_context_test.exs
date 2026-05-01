@@ -4,21 +4,39 @@ defmodule Boxland.Auth.DesignersTest do
 
   describe "register_designer/1" do
     test "creates a designer with a hashed password" do
-      assert {:ok, designer} = Designers.register_designer(%{email: "n@example.com", password: "supersecret123", display_name: "New"})
+      assert {:ok, designer} =
+               Designers.register_designer(%{
+                 email: "n@example.com",
+                 password: "supersecret123",
+                 display_name: "New"
+               })
+
       assert designer.id
       assert designer.password_hash
       assert designer.password_hash != "supersecret123"
     end
 
     test "rejects short password" do
-      assert {:error, changeset} = Designers.register_designer(%{email: "n@x.com", password: "short", display_name: "N"})
+      assert {:error, changeset} =
+               Designers.register_designer(%{
+                 email: "n@x.com",
+                 password: "short",
+                 display_name: "N"
+               })
+
       refute changeset.valid?
     end
   end
 
   describe "authenticate/2" do
     setup do
-      {:ok, d} = Designers.register_designer(%{email: "auth@x.com", password: "rightpassword", display_name: "Auth"})
+      {:ok, d} =
+        Designers.register_designer(%{
+          email: "auth@x.com",
+          password: "rightpassword",
+          display_name: "Auth"
+        })
+
       {:ok, designer: d}
     end
 
@@ -38,7 +56,13 @@ defmodule Boxland.Auth.DesignersTest do
 
   describe "create_session/2 + fetch_session/1" do
     setup do
-      {:ok, d} = Designers.register_designer(%{email: "s@x.com", password: "longenough!", display_name: "S"})
+      {:ok, d} =
+        Designers.register_designer(%{
+          email: "s@x.com",
+          password: "longenough!",
+          display_name: "S"
+        })
+
       {:ok, designer: d}
     end
 

@@ -25,7 +25,16 @@ defmodule Boxland.Library.Asset do
 
   def changeset(asset, attrs) do
     asset
-    |> cast(attrs, [:owner_id, :kind, :name, :sha256, :content_url, :byte_size, :mime_type, :metadata])
+    |> cast(attrs, [
+      :owner_id,
+      :kind,
+      :name,
+      :sha256,
+      :content_url,
+      :byte_size,
+      :mime_type,
+      :metadata
+    ])
     |> validate_required([:owner_id, :kind, :name, :sha256, :content_url, :byte_size, :mime_type])
     |> validate_inclusion(:kind, @valid_kinds)
     |> validate_number(:byte_size, greater_than: 0)

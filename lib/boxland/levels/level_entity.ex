@@ -21,7 +21,15 @@ defmodule Boxland.Levels.LevelEntity do
 
   def changeset(level_entity, attrs) do
     level_entity
-    |> cast(attrs, [:level_id, :entity_type_id, :pos_x, :pos_y, :z_index_override, :instance_overrides, :script_state])
+    |> cast(attrs, [
+      :level_id,
+      :entity_type_id,
+      :pos_x,
+      :pos_y,
+      :z_index_override,
+      :instance_overrides,
+      :script_state
+    ])
     |> validate_required([:level_id, :entity_type_id, :pos_x, :pos_y])
     |> foreign_key_constraint(:level_id)
     |> foreign_key_constraint(:entity_type_id)
