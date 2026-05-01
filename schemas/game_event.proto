@@ -1,0 +1,6 @@
+syntax = "proto3";
+package boxland.game;
+
+message GameEvent {
+  uint32 event_type = 1;
+}

@@ -1,0 +1,6 @@
+syntax = "proto3";
+package boxland.game;
+
+message JoinAck {
+  uint64 server_time_ms = 1;
+}

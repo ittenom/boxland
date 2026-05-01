@@ -1,0 +1,7 @@
+syntax = "proto3";
+package boxland.game;
+
+message Snapshot {
+  uint32 tick = 1;
+  uint64 server_time_ms = 2;
+}

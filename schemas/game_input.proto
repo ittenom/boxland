@@ -1,0 +1,13 @@
+syntax = "proto3";
+package boxland.game;
+
+message Input {
+  uint64 client_time_ms = 1;
+  oneof verb {
+    Move move = 10;
+  }
+  message Move {
+    sint32 dx = 1;
+    sint32 dy = 2;
+  }
+}
