@@ -30,3 +30,13 @@ config :logger, level: :info
 
 # Runtime production configuration, including reading
 # of environment variables, is done on config/runtime.exs.
+
+# Structured logs (no ANSI colors, UTC timestamps, JSON-friendly format)
+# Railway aggregates structured stdout logs without an extra exporter.
+config :logger, :default_handler,
+  formatter: {Logger.Formatter,
+    [colors: [enabled: false], format: "$time [$level] $metadata$message\n"]}
+
+config :logger,
+  level: :info,
+  utc_log: true
