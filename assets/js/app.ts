@@ -23,9 +23,18 @@ import "phoenix_html"
 import {Socket} from "phoenix"
 import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/boxland"
+// @ts-expect-error – topbar has no type declarations
 import topbar from "../vendor/topbar"
 
-const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
+declare global {
+  interface Window {
+    liveSocket: typeof liveSocket;
+    liveReloader: unknown;
+  }
+}
+
+const csrfMeta = document.querySelector("meta[name='csrf-token']")
+const csrfToken = csrfMeta ? csrfMeta.getAttribute("content") : null
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
@@ -33,8 +42,11 @@ const liveSocket = new LiveSocket("/live", Socket, {
 })
 
 // Show progress bar on live navigation and form submits
+// eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
 topbar.config({barColors: {0: "#29d"}, shadowColor: "rgba(0, 0, 0, .3)"})
+// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 window.addEventListener("phx:page-loading-start", _info => topbar.show(300))
+// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 window.addEventListener("phx:page-loading-stop", _info => topbar.hide())
 
 // connect if there are any LiveViews on the page
@@ -52,19 +64,20 @@ window.liveSocket = liveSocket
 //     1. stream server logs to the browser console
 //     2. click on elements to jump to their definitions in your code editor
 //
-if (process.env.NODE_ENV === "development") {
-  window.addEventListener("phx:live_reload:attached", ({detail: reloader}) => {
+if (typeof process !== "undefined" && process.env["NODE_ENV"] === "development") {
+  window.addEventListener("phx:live_reload:attached", (e: Event) => {
     // Enable server log streaming to client.
     // Disable with reloader.disableServerLogs()
+    const reloader = (e as CustomEvent<{enableServerLogs(): void; disableServerLogs(): void; openEditorAtCaller(el: EventTarget | null): void; openEditorAtDef(el: EventTarget | null): void}>).detail
     reloader.enableServerLogs()
 
     // Open configured PLUG_EDITOR at file:line of the clicked element's HEEx component
     //
     //   * click with "c" key pressed to open at caller location
     //   * click with "d" key pressed to open at function component definition location
-    let keyDown
-    window.addEventListener("keydown", e => keyDown = e.key)
-    window.addEventListener("keyup", _e => keyDown = null)
+    let keyDown: string | null = null
+    window.addEventListener("keydown", e => { keyDown = e.key })
+    window.addEventListener("keyup", _e => { keyDown = null })
     window.addEventListener("click", e => {
       if(keyDown === "c"){
         e.preventDefault()
@@ -80,4 +93,3 @@ if (process.env.NODE_ENV === "development") {
     window.liveReloader = reloader
   })
 }
-
