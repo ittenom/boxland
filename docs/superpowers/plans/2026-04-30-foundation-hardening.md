@@ -2669,14 +2669,16 @@ defmodule Boxland.Auth.Players do
         nil ->
           Repo.rollback(:not_found)
 
-        %PlayerSession{expires_at: e} when DateTime.compare(e, now) == :lt ->
-          Repo.rollback(:expired)
-
-        %PlayerSession{player: player} = session ->
-          Repo.delete!(session)
-          access = Tokens.mint_player_access(%{player_id: player.id})
-          {:ok, new_refresh} = mint_refresh_token(player.id)
-          %{access_token: access, refresh_token: new_refresh, player: player}
+        %PlayerSession{player: player, expires_at: e} = session ->
+          # DateTime.compare cannot be used in a guard clause; check in body.
+          if DateTime.compare(e, now) == :lt do
+            Repo.rollback(:expired)
+          else
+            Repo.delete!(session)
+            access = Tokens.mint_player_access(%{player_id: player.id})
+            {:ok, new_refresh} = mint_refresh_token(player.id)
+            %{access_token: access, refresh_token: new_refresh, player: player}
+          end
       end
     end)
     |> case do
