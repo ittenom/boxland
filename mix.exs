@@ -73,7 +73,6 @@ defmodule Boxland.MixProject do
 
       # Wire format
       {:protobuf, "~> 0.13"},
-      {:google_protos, "~> 0.4"},
 
       # Object storage
       {:ex_aws, "~> 2.5"},
