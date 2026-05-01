@@ -1879,7 +1879,7 @@ defmodule Boxland.Game.LevelStateTest do
   end
 
   test "duplicate (level_id, instance_key) rejected", %{level: lvl} do
-    attrs = %{level_id: lvl.id, instance_key: "shared", state: <<>>, flushed_at: DateTime.utc_now() |> DateTime.truncate(:second)}
+    attrs = %{level_id: lvl.id, instance_key: "shared", state: <<0>>, flushed_at: DateTime.utc_now() |> DateTime.truncate(:second)}
     assert {:ok, _} = %LevelState{} |> LevelState.changeset(attrs) |> Boxland.Repo.insert()
     assert {:error, _} = %LevelState{} |> LevelState.changeset(attrs) |> Boxland.Repo.insert()
   end
