@@ -65,7 +65,28 @@ defmodule Boxland.MixProject do
       {:gettext, "~> 1.0"},
       {:jason, "~> 1.2"},
       {:dns_cluster, "~> 0.2.0"},
-      {:bandit, "~> 1.5"}
+      {:bandit, "~> 1.5"},
+
+      # Auth & security
+      {:argon2_elixir, "~> 4.0"},
+      {:hammer, "~> 7.0"},
+
+      # Wire format
+      {:protobuf, "~> 0.13"},
+      {:google_protos, "~> 0.4"},
+
+      # Object storage
+      {:ex_aws, "~> 2.5"},
+      {:ex_aws_s3, "~> 2.5"},
+      {:sweet_xml, "~> 0.7"},
+      {:hackney, "~> 1.20"},
+
+      # Image processing
+      {:vix, "~> 0.30"},
+      {:image, "~> 0.50"},
+
+      # Scripting
+      {:luerl, "~> 1.2"}
     ]
   end
 
