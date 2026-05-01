@@ -15,7 +15,7 @@ describe("Pixi UI surface tokens", () => {
 	});
 
 	it("keeps every tone backed by a concrete fill and border color", () => {
-		for (const tone of ["panel", "raised", "sunken", "button", "buttonActive", "buttonDisabled", "slot", "slotSelected", "scrollTrack", "scrollThumb", "input"] as const) {
+		for (const tone of ["panel", "raised", "sunken", "button", "buttonActive", "buttonDisabled", "toolActive", "slot", "slotSelected", "scrollTrack", "scrollThumb", "input"] as const) {
 			const palette = surfacePalette(tone);
 			expect(Number.isInteger(palette.fill)).toBe(true);
 			expect(Number.isInteger(palette.border)).toBe(true);
@@ -28,5 +28,11 @@ describe("Pixi UI surface tokens", () => {
 		expect(pixiUITokens.type.family).toContain("DM Mono");
 		expect(pixiUITokens.type.sizeXs).toBeLessThan(pixiUITokens.type.sizeSm);
 		expect(pixiUITokens.type.sizeSm).toBeLessThan(pixiUITokens.type.sizeMd);
+	});
+
+	it("keeps editor chrome square-edged", () => {
+		expect(pixiUITokens.shape.radiusSm).toBe(0);
+		expect(pixiUITokens.shape.radiusMd).toBe(0);
+		expect(pixiUITokens.shape.radiusLg).toBe(0);
 	});
 });

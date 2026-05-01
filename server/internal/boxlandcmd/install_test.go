@@ -195,6 +195,54 @@ func TestInstallCommandGoInstall(t *testing.T) {
 	}
 }
 
+// TestSqlcLinuxAttemptsGoInstallFirst pins the Linux sqlc install path:
+// prefer `go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest` before
+// trying distro package managers.
+func TestSqlcLinuxAttemptsGoInstallFirst(t *testing.T) {
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		t.Skip("asserts generic Linux install ordering")
+	}
+	bin := t.TempDir()
+	for _, name := range []string{"go", "zypper"} {
+		path := filepath.Join(bin, name)
+		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatalf("write fake %s: %v", name, err)
+		}
+	}
+	t.Setenv("PATH", bin)
+
+	var sqlc installRequirement
+	for _, r := range installRequirements() {
+		if r.Cmd == "sqlc" {
+			sqlc = r
+			break
+		}
+	}
+	if sqlc.Cmd == "" {
+		t.Fatal("no sqlc entry in installRequirements()")
+	}
+
+	attempts := installAttempts(sqlc)
+	if len(attempts) == 0 {
+		t.Fatal("expected at least one sqlc install attempt")
+	}
+	want := []string{"go", "install", "github.com/sqlc-dev/sqlc/cmd/sqlc@latest"}
+	if strings.Join(attempts[0], " ") != strings.Join(want, " ") {
+		t.Fatalf("first Linux sqlc install attempt = %v, want %v", attempts[0], want)
+	}
+}
+
+// TestInstallCommandZypper — OpenSUSE users should get a native
+// zypper install attempt from the TUI's Check Installation path
+// (`boxland install`) before we fall back to manual links.
+func TestInstallCommandZypper(t *testing.T) {
+	got := installCommand("zypper", "nodejs npm")
+	want := []string{"sudo", "zypper", "install", "-y", "nodejs", "npm"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("zypper command shape changed; got %v, want %v", got, want)
+	}
+}
+
 // TestPackageManagersForPlatformIncludesGoInstall — every platform
 // must list `goinstall` so requirements that opt into it (sqlc
 // today) actually get the fallback considered. Without this the
@@ -207,6 +255,42 @@ func TestPackageManagersForPlatformIncludesGoInstall(t *testing.T) {
 		}
 	}
 	t.Errorf("packageManagersForPlatform() must include \"goinstall\" on %s; got %v", runtime.GOOS, pms)
+}
+
+// TestLinuxPackageManagersIncludeZypper pins OpenSUSE support in the
+// installer order. On non-Linux platforms we still assert zypper is
+// not accidentally offered where it does not belong.
+func TestLinuxPackageManagersIncludeZypper(t *testing.T) {
+	pms := packageManagersForPlatform()
+	hasZypper := false
+	for _, pm := range pms {
+		if pm == "zypper" {
+			hasZypper = true
+			break
+		}
+	}
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		if hasZypper {
+			t.Errorf("zypper should only be a generic Linux package manager; got %v on %s", pms, runtime.GOOS)
+		}
+		return
+	}
+	if !hasZypper {
+		t.Errorf("packageManagersForPlatform() must include zypper on %s; got %v", runtime.GOOS, pms)
+	}
+}
+
+// TestInstallRequirementsHaveZypperPackages keeps the OpenSUSE package
+// map from regressing for requirements that cannot rely on go install.
+func TestInstallRequirementsHaveZypperPackages(t *testing.T) {
+	for _, r := range installRequirements() {
+		if r.Cmd == "sqlc" {
+			continue // covered by TestSqlcWindowsHasGoInstallFallback.
+		}
+		if got := r.Packages["zypper"]; got == "" {
+			t.Errorf("%s (%s) is missing a zypper package mapping", r.Name, r.Cmd)
+		}
+	}
 }
 
 // TestFreshInstallPathDirsIncludesWingetLinksOnWindows — after a

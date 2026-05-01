@@ -13,6 +13,7 @@ import { Container } from "pixi.js";
 
 import type { Theme, Role } from "./theme";
 import { Surface, roleTone } from "./surface";
+import type { PixiUITokens } from "./tokens";
 
 export interface NineSliceOptions {
 	theme: Theme;
@@ -24,6 +25,7 @@ export interface NineSliceOptions {
 	 *  muted slate so the placeholder is obviously a placeholder
 	 *  without being visually loud. */
 	fallbackColor?: number;
+	tokens?: PixiUITokens;
 }
 
 /** Compatibility wrapper around Surface. resize() lets callers update
@@ -39,12 +41,13 @@ export class NineSlice extends Container {
 		this._height = Math.max(1, Math.floor(opts.height));
 		void opts.theme;
 		void opts.fallbackColor;
-		this.bg = new Surface({
+		const surfaceOpts = {
 			width: this._width,
 			height: this._height,
 			tone: roleTone(String(opts.role)),
 			accentEdge: String(opts.role).includes("selected") || String(opts.role).includes("press") ? "left" : "none",
-		});
+		} as const;
+		this.bg = new Surface(opts.tokens ? { ...surfaceOpts, tokens: opts.tokens } : surfaceOpts);
 		this.addChild(this.bg);
 	}
 

@@ -102,9 +102,9 @@ export const pixiUITokens: PixiUITokens = {
 		xl: 20,
 	},
 	shape: {
-		radiusSm: 2,
-		radiusMd: 4,
-		radiusLg: 6,
+		radiusSm: 0,
+		radiusMd: 0,
+		radiusLg: 0,
 		borderWidth: 1,
 		focusWidth: 2,
 	},
@@ -117,6 +117,7 @@ export type SurfaceTone =
 	| "button"
 	| "buttonActive"
 	| "buttonDisabled"
+	| "toolActive"
 	| "slot"
 	| "slotSelected"
 	| "scrollTrack"
@@ -143,6 +144,8 @@ export function surfacePalette(tone: SurfaceTone, tokens: PixiUITokens = pixiUIT
 			return { fill: c.accentSoft, border: c.accent, highlight: c.accent, text: c.text };
 		case "buttonDisabled":
 			return { fill: c.disabled, border: c.border, text: c.textSubtle };
+		case "toolActive":
+			return { fill: c.accent, border: c.accentText, text: c.accentText };
 		case "slot":
 			return { fill: c.surfaceSunken, border: c.borderStrong, text: c.text };
 		case "slotSelected":

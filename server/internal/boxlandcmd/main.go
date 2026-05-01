@@ -92,17 +92,17 @@ func Main() {
 			os.Exit(1)
 		}
 	case "up":
-		if err := runExternal("docker", "compose", "-f", filepath.Join("docker", "docker-compose.yml"), "up", "-d"); err != nil {
+		if err := runDockerCompose("up", "-d"); err != nil {
 			slog.Error("up failed", "err", err)
 			os.Exit(1)
 		}
 	case "down":
-		if err := runExternal("docker", "compose", "-f", filepath.Join("docker", "docker-compose.yml"), "down"); err != nil {
+		if err := runDockerCompose("down"); err != nil {
 			slog.Error("down failed", "err", err)
 			os.Exit(1)
 		}
 	case "logs":
-		if err := runExternal("docker", "compose", "-f", filepath.Join("docker", "docker-compose.yml"), "logs", "-f", "--tail=100"); err != nil {
+		if err := runDockerCompose("logs", "-f", "--tail=100"); err != nil {
 			slog.Error("logs failed", "err", err)
 			os.Exit(1)
 		}
@@ -164,10 +164,10 @@ func usage() {
 // reads to decide whether the install is complete).
 func installRequirements() []installRequirement {
 	return []installRequirement{
-		{Name: "Docker Desktop", Cmd: "docker", VersionArgs: []string{"--version"}, URL: "https://www.docker.com/products/docker-desktop/", Packages: map[string]string{"winget": "Docker.DockerDesktop", "choco": "docker-desktop", "brew": "--cask docker", "apt": "docker.io docker-compose-plugin", "dnf": "docker docker-compose-plugin", "pacman": "docker docker-compose"}},
-		{Name: "Go", Cmd: "go", VersionArgs: []string{"version"}, URL: "https://go.dev/dl/", Packages: map[string]string{"winget": "GoLang.Go", "choco": "golang", "brew": "go", "apt": "golang-go", "dnf": "golang", "pacman": "go"}},
-		{Name: "Node.js", Cmd: "node", VersionArgs: []string{"--version"}, URL: "https://nodejs.org/", Packages: map[string]string{"winget": "OpenJS.NodeJS.LTS", "choco": "nodejs-lts", "brew": "node", "apt": "nodejs npm", "dnf": "nodejs npm", "pacman": "nodejs npm"}},
-		{Name: "npm", Cmd: "npm", VersionArgs: []string{"--version"}, URL: "https://docs.npmjs.com/downloading-and-installing-node-js-and-npm", Packages: map[string]string{"winget": "OpenJS.NodeJS.LTS", "choco": "nodejs-lts", "brew": "node", "apt": "npm", "dnf": "npm", "pacman": "npm"}},
+		{Name: "Docker Desktop", Cmd: "docker", VersionArgs: []string{"--version"}, URL: "https://www.docker.com/products/docker-desktop/", Packages: map[string]string{"winget": "Docker.DockerDesktop", "choco": "docker-desktop", "brew": "--cask docker", "apt": "docker.io docker-compose-plugin", "dnf": "docker docker-compose-plugin", "pacman": "docker docker-compose", "zypper": "docker docker-compose"}},
+		{Name: "Go", Cmd: "go", VersionArgs: []string{"version"}, URL: "https://go.dev/dl/", Packages: map[string]string{"winget": "GoLang.Go", "choco": "golang", "brew": "go", "apt": "golang-go", "dnf": "golang", "pacman": "go", "zypper": "go"}},
+		{Name: "Node.js", Cmd: "node", VersionArgs: []string{"--version"}, URL: "https://nodejs.org/", Packages: map[string]string{"winget": "OpenJS.NodeJS.LTS", "choco": "nodejs-lts", "brew": "node", "apt": "nodejs npm", "dnf": "nodejs npm", "pacman": "nodejs npm", "zypper": "nodejs npm"}},
+		{Name: "npm", Cmd: "npm", VersionArgs: []string{"--version"}, URL: "https://docs.npmjs.com/downloading-and-installing-node-js-and-npm", Packages: map[string]string{"winget": "OpenJS.NodeJS.LTS", "choco": "nodejs-lts", "brew": "node", "apt": "npm", "dnf": "npm", "pacman": "npm", "zypper": "npm"}},
 		// sqlc + flatc are required by `boxland setup` to regenerate
 		// the embedded hot-path queries and FlatBuffers code on a
 		// fresh clone. setup itself only warns when these are missing
@@ -187,7 +187,7 @@ func installRequirements() []installRequirement {
 		// portable zip that installs to the per-user
 		// %LOCALAPPDATA%\Microsoft\WinGet\Links shim dir, no
 		// elevation needed.
-		{Name: "flatc", Cmd: "flatc", VersionArgs: []string{"--version"}, URL: "https://flatbuffers.dev/flatbuffers_guide_building.html", Packages: map[string]string{"winget": "Google.flatbuffers", "choco": "flatc", "brew": "flatbuffers", "apt": "flatbuffers-compiler", "dnf": "flatbuffers-compiler", "pacman": "flatbuffers"}},
+		{Name: "flatc", Cmd: "flatc", VersionArgs: []string{"--version"}, URL: "https://flatbuffers.dev/flatbuffers_guide_building.html", Packages: map[string]string{"winget": "Google.flatbuffers", "choco": "flatc", "brew": "flatbuffers", "apt": "flatbuffers-compiler", "dnf": "flatbuffers-compiler", "pacman": "flatbuffers", "zypper": "flatbuffers-devel"}},
 	}
 }
 
@@ -208,7 +208,7 @@ func runInstall() error {
 	// If it's missing, every brew-using requirement below would fail
 	// instantly. Bootstrap brew first so the rest of Install can use
 	// it. (Windows has winget/choco fallbacks; Linux has apt/dnf/
-	// pacman — neither needs this.)
+	// pacman/zypper — none need this.)
 	if err := ensureBrewOnMac(); err != nil {
 		return err
 	}
@@ -278,7 +278,7 @@ func ensureRequirement(r installRequirement) error {
 	if path, err := exec.LookPath(r.Cmd); err == nil {
 		fmt.Printf("✓ %-15s %s\n", r.Name, path)
 		_ = runExternal(r.Cmd, r.VersionArgs...)
-		return nil
+		return configureInstalledRequirement(r)
 	}
 	fmt.Printf("✗ %-15s missing\n", r.Name)
 	attempts := installAttempts(r)
@@ -301,18 +301,29 @@ func ensureRequirement(r installRequirement) error {
 		refreshInstallPath()
 		if path, err := exec.LookPath(r.Cmd); err == nil {
 			fmt.Printf("✓ %-15s %s\n", r.Name, path)
-			return nil
+			return configureInstalledRequirement(r)
 		}
 	}
 	fmt.Printf("  Could not install automatically. Install from %s\n", hyperlink(r.URL, r.URL))
 	return fmt.Errorf("%s: not installed after package-manager attempts", r.Name)
 }
 
+func configureInstalledRequirement(r installRequirement) error {
+	if r.Cmd != "docker" {
+		return nil
+	}
+	return configureDockerForLinux()
+}
+
 func installAttempts(r installRequirement) [][]string {
 	candidates := packageManagersForPlatform()
 	out := make([][]string, 0, len(candidates))
 	for _, pm := range candidates {
-		if _, err := exec.LookPath(pm); err != nil {
+		probe := pm
+		if pm == "goinstall" {
+			probe = "go"
+		}
+		if _, err := exec.LookPath(probe); err != nil {
 			continue
 		}
 		pkg := r.Packages[pm]
@@ -335,7 +346,7 @@ func packageManagersForPlatform() []string {
 	case "darwin":
 		return []string{"brew", "goinstall"}
 	default:
-		return []string{"brew", "apt", "dnf", "pacman", "goinstall"}
+		return []string{"goinstall", "brew", "apt", "dnf", "pacman", "zypper"}
 	}
 }
 
@@ -359,6 +370,8 @@ func installCommand(pm, pkg string) []string {
 		return append([]string{"sudo", "dnf", "install", "-y"}, parts...)
 	case "pacman":
 		return append([]string{"sudo", "pacman", "-S", "--needed", "--noconfirm"}, parts...)
+	case "zypper":
+		return append([]string{"sudo", "zypper", "install", "-y"}, parts...)
 	case "goinstall":
 		// `go install <module>@<ver>` drops the binary in
 		// $GOBIN (or $GOPATH/bin). No elevation required, works on
@@ -617,6 +630,118 @@ func runBackup(args []string) error {
 	}
 }
 
+func runDockerCompose(args ...string) error {
+	dockerCmd, err := dockerCommand()
+	if err != nil {
+		return err
+	}
+	composeArgs := append(dockerCmd[1:], "compose", "-f", filepath.Join("docker", "docker-compose.yml"))
+	composeArgs = append(composeArgs, args...)
+	return runExternal(dockerCmd[0], composeArgs...)
+}
+
+var dockerInfoOutput = func() ([]byte, error) {
+	cmd := exec.Command("docker", "info")
+	return cmd.CombinedOutput()
+}
+
+var sudoDockerInfoOutput = func() ([]byte, error) {
+	cmd := exec.Command("sudo", "docker", "info")
+	return cmd.CombinedOutput()
+}
+
+func dockerCommand() ([]string, error) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		return nil, fmt.Errorf("Docker CLI is not installed or not on PATH. Run Check Installation, then retry")
+	}
+	if out, err := dockerInfoOutput(); err == nil {
+		_ = out
+		return []string{"docker"}, nil
+	}
+	if goruntime.GOOS == "linux" {
+		if out, err := sudoDockerInfoOutput(); err == nil {
+			_ = out
+			fmt.Println("Docker is not available to this shell yet; using sudo for Docker commands in this session.")
+			return []string{"sudo", "docker"}, nil
+		}
+	}
+	return nil, dockerDaemonError()
+}
+
+func ensureDockerDaemonReady() error {
+	_, err := dockerCommand()
+	return err
+}
+
+func dockerDaemonError() error {
+	out, err := dockerInfoOutput()
+	msg := strings.TrimSpace(string(out))
+	if msg == "" && err != nil {
+		msg = err.Error()
+	}
+	if msg == "" {
+		msg = "docker info did not report a reason"
+	}
+	return fmt.Errorf("Docker is installed, but the Docker daemon is not reachable.\n\n%s\n\nDocker reported:\n%s",
+		dockerDaemonHelp(), msg)
+}
+
+func dockerDaemonHelp() string {
+	if goruntime.GOOS != "linux" {
+		return "Start Docker Desktop and wait until it reports that Docker is running, then retry."
+	}
+	return "On OpenSUSE and other systemd Linux distros, start Docker and add your user to the docker group with:\n" +
+		"  sudo groupadd -f docker\n" +
+		"  sudo usermod -aG docker \"$USER\"\n" +
+		"  sudo systemctl enable docker.service\n" +
+		"  sudo systemctl restart docker.service\n" +
+		"  newgrp docker"
+}
+
+func configureDockerForLinux() error {
+	if goruntime.GOOS != "linux" {
+		return nil
+	}
+	if out, err := dockerInfoOutput(); err == nil {
+		_ = out
+		return nil
+	}
+	fmt.Println("  Configuring Docker service...")
+	user := dockerGroupUser()
+	if err := runExternal("sudo", "groupadd", "-f", "docker"); err != nil {
+		return fmt.Errorf("Docker is installed, but the docker group could not be created: %w. Try `sudo groupadd -f docker`, then re-run Install", err)
+	}
+	if user != "" {
+		fmt.Println("  Adding current user to the docker group...")
+		if err := runExternal("sudo", "usermod", "-aG", "docker", user); err != nil {
+			return fmt.Errorf("Docker is installed, but this user could not be added to the docker group: %w. Try `sudo usermod -aG docker \"$USER\"`, then run `newgrp docker`", err)
+		}
+	}
+	if err := runExternal("sudo", "systemctl", "enable", "docker.service"); err != nil {
+		return fmt.Errorf("Docker is installed, but the daemon could not be enabled on boot: %w. Try `sudo systemctl enable docker.service`, then re-run Install", err)
+	}
+	if err := runExternal("sudo", "systemctl", "restart", "docker.service"); err != nil {
+		return fmt.Errorf("Docker is installed, but the daemon could not be started: %w. Try `sudo systemctl restart docker.service`, then re-run Install", err)
+	}
+	if out, err := dockerInfoOutput(); err == nil {
+		_ = out
+		return nil
+	}
+	if out, err := sudoDockerInfoOutput(); err == nil {
+		_ = out
+		fmt.Println("  Docker is ready via sudo for this session. Run `newgrp docker` or sign out and back in to use Docker without sudo.")
+		return nil
+	}
+	return fmt.Errorf("Docker is installed, but the daemon is still not reachable. Run `sudo systemctl status docker.service` for details, then re-run Install")
+}
+
+func dockerGroupUser() string {
+	if u := os.Getenv("SUDO_USER"); u != "" && u != "root" {
+		return u
+	}
+	return os.Getenv("USER")
+}
+
 func runDesign() error {
 	// Refresh generated artifacts before kicking the design loop.
 	// Idempotent and instant when nothing changed; useful after a
@@ -685,7 +810,9 @@ func runWeb(name string, args ...string) error { return runIn(filepath.Join("web
 func runServer(name string, args ...string) error {
 	return runIn(filepath.Join("server"), name, args...)
 }
-func runExternal(name string, args ...string) error { return runIn("", name, args...) }
+
+var runExternal = func(name string, args ...string) error { return runIn("", name, args...) }
+
 func runIn(dir, name string, args ...string) error {
 	cmd := exec.Command(name, args...)
 	if dir != "" {

@@ -21,8 +21,9 @@ import (
 // message.
 //
 // The opener (refField in form.templ) sets:
-//   data-bx-target-id    -> id of the hidden input that receives the picked ID
-//   data-bx-target-label -> id of the visible <span> that shows the picked name
+//
+//	data-bx-target-id    -> id of the hidden input that receives the picked ID
+//	data-bx-target-label -> id of the visible <span> that shows the picked name
 //
 // The picker carries those selectors back to the picked item via data
 // attributes; boot.js writes the values when the user clicks a card.

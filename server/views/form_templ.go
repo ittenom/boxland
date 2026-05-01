@@ -16,11 +16,12 @@ import (
 )
 
 // FormProps drives the generic form renderer.
-//   Action — POST URL (HTMX hx-post target).
-//   Fields — descriptor list from a Configurable.
-//   Values — current values keyed by FieldDescriptor.Key. Missing keys
-//            render as empty inputs (or the descriptor's Default).
-//   SubmitLabel — text on the primary button. Defaults to "Save" if blank.
+//
+//	Action — POST URL (HTMX hx-post target).
+//	Fields — descriptor list from a Configurable.
+//	Values — current values keyed by FieldDescriptor.Key. Missing keys
+//	         render as empty inputs (or the descriptor's Default).
+//	SubmitLabel — text on the primary button. Defaults to "Save" if blank.
 type FormProps struct {
 	Action      string
 	Fields      []configurable.FieldDescriptor

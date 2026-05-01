@@ -61,7 +61,7 @@ func SandboxIndex(p SandboxIndexProps) templ.Component {
 			var templ_7745c5c3_Var3 string
 			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(formatIntPad(len(p.Items)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/sandbox.templ`, Line: 21, Col: 40}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/sandbox.templ`, Line: 21, Col: 40}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 			if templ_7745c5c3_Err != nil {
@@ -89,7 +89,7 @@ func SandboxIndex(p SandboxIndexProps) templ.Component {
 					var templ_7745c5c3_Var4 templ.SafeURL
 					templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinURLErrs(templ.URL(fmt.Sprintf("/design/sandbox/launch/%d", m.ID)))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/sandbox.templ`, Line: 51, Col: 97}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/sandbox.templ`, Line: 51, Col: 97}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 					if templ_7745c5c3_Err != nil {
@@ -102,7 +102,7 @@ func SandboxIndex(p SandboxIndexProps) templ.Component {
 					var templ_7745c5c3_Var5 string
 					templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(m.Name)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/sandbox.templ`, Line: 52, Col: 20}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/sandbox.templ`, Line: 52, Col: 20}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 					if templ_7745c5c3_Err != nil {
@@ -115,7 +115,7 @@ func SandboxIndex(p SandboxIndexProps) templ.Component {
 					var templ_7745c5c3_Var6 string
 					templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d × %d", m.Width, m.Height))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/sandbox.templ`, Line: 55, Col: 74}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/sandbox.templ`, Line: 55, Col: 74}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 					if templ_7745c5c3_Err != nil {
@@ -128,7 +128,7 @@ func SandboxIndex(p SandboxIndexProps) templ.Component {
 					var templ_7745c5c3_Var7 string
 					templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(m.Mode)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/sandbox.templ`, Line: 57, Col: 22}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/sandbox.templ`, Line: 57, Col: 22}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 					if templ_7745c5c3_Err != nil {
@@ -210,7 +210,7 @@ func SandboxGamePage(p SandboxGameProps) templ.Component {
 			var templ_7745c5c3_Var10 string
 			templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(formatInt64(p.Map.ID))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/sandbox.templ`, Line: 88, Col: 41}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/sandbox.templ`, Line: 88, Col: 41}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 			if templ_7745c5c3_Err != nil {
@@ -223,7 +223,7 @@ func SandboxGamePage(p SandboxGameProps) templ.Component {
 			var templ_7745c5c3_Var11 string
 			templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(p.Map.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/sandbox.templ`, Line: 89, Col: 32}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/sandbox.templ`, Line: 89, Col: 32}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 			if templ_7745c5c3_Err != nil {
@@ -236,7 +236,7 @@ func SandboxGamePage(p SandboxGameProps) templ.Component {
 			var templ_7745c5c3_Var12 string
 			templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", p.Map.Width))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/sandbox.templ`, Line: 90, Col: 53}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/sandbox.templ`, Line: 90, Col: 53}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 			if templ_7745c5c3_Err != nil {
@@ -249,7 +249,7 @@ func SandboxGamePage(p SandboxGameProps) templ.Component {
 			var templ_7745c5c3_Var13 string
 			templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", p.Map.Height))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/sandbox.templ`, Line: 91, Col: 55}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/sandbox.templ`, Line: 91, Col: 55}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 			if templ_7745c5c3_Err != nil {
@@ -262,7 +262,7 @@ func SandboxGamePage(p SandboxGameProps) templ.Component {
 			var templ_7745c5c3_Var14 string
 			templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(p.WSURL)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/sandbox.templ`, Line: 92, Col: 27}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/sandbox.templ`, Line: 92, Col: 27}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 			if templ_7745c5c3_Err != nil {
@@ -275,7 +275,7 @@ func SandboxGamePage(p SandboxGameProps) templ.Component {
 			var templ_7745c5c3_Var15 string
 			templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(p.WSTicket)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/sandbox.templ`, Line: 93, Col: 36}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/sandbox.templ`, Line: 93, Col: 36}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 			if templ_7745c5c3_Err != nil {
@@ -288,7 +288,7 @@ func SandboxGamePage(p SandboxGameProps) templ.Component {
 			var templ_7745c5c3_Var16 string
 			templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(p.InstanceID)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/sandbox.templ`, Line: 96, Col: 37}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/sandbox.templ`, Line: 96, Col: 37}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 			if templ_7745c5c3_Err != nil {
@@ -301,7 +301,7 @@ func SandboxGamePage(p SandboxGameProps) templ.Component {
 			var templ_7745c5c3_Var17 string
 			templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(p.InstanceID)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/sandbox.templ`, Line: 106, Col: 74}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/sandbox.templ`, Line: 106, Col: 74}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 			if templ_7745c5c3_Err != nil {
@@ -314,7 +314,7 @@ func SandboxGamePage(p SandboxGameProps) templ.Component {
 			var templ_7745c5c3_Var18 templ.SafeURL
 			templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinURLErrs(templ.URL(fmt.Sprintf("/design/maps/%d", p.Map.ID)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/sandbox.templ`, Line: 114, Col: 63}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/sandbox.templ`, Line: 114, Col: 63}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 			if templ_7745c5c3_Err != nil {
@@ -327,13 +327,13 @@ func SandboxGamePage(p SandboxGameProps) templ.Component {
 			var templ_7745c5c3_Var19 string
 			templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(p.Map.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `server/views/sandbox.templ`, Line: 123, Col: 53}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/sandbox.templ`, Line: 123, Col: 53}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "</span> <span style=\"margin-left: auto;\" data-bx-state-badge class=\"bx-muted\">connecting</span> <span class=\"bx-muted\" data-bx-tick></span></div><section class=\"bx-sandbox-hud__row\"><button type=\"button\" class=\"bx-btn bx-btn--small\" data-bx-sandbox-op=\"freeze\" title=\"Freeze the simulation\" data-copy-slot=\"sandbox.hud.freeze\">Freeze</button> <button type=\"button\" class=\"bx-btn bx-btn--small\" data-bx-sandbox-op=\"step\" title=\"Advance one tick (frozen only)\" data-copy-slot=\"sandbox.hud.step\">Step</button> <button type=\"button\" class=\"bx-btn bx-btn--small\" data-bx-sandbox-op=\"godmode\" title=\"Toggle damage / interaction immunity\" data-copy-slot=\"sandbox.hud.godmode\">Godmode</button> <button type=\"button\" class=\"bx-btn bx-btn--small\" data-bx-sandbox-op=\"spawn\" title=\"Open the spawn palette\" data-copy-slot=\"sandbox.hud.spawn\">Spawn…</button></section><details><summary class=\"bx-small bx-muted\" data-copy-slot=\"sandbox.hud.inspector\">Inspector</summary><div class=\"bx-stack-tight\" data-bx-inspector><p class=\"bx-small bx-muted\" data-copy-slot=\"sandbox.hud.inspector.empty\">Click an entity in the canvas to inspect it.</p></div></details><footer class=\"bx-small bx-muted\" data-copy-slot=\"sandbox.hud.cmdk\">⌘K opens the designer command palette.</footer></aside><script type=\"module\" src=\"/static/web/sandbox.js\" defer></script> <script>\r\n\t\t\t// Smarter Exit: prefer document.referrer when it's same-origin\r\n\t\t\t// and on a /design/* surface, so designers land back on the\r\n\t\t\t// page that launched the sandbox. The href attribute remains\r\n\t\t\t// as the safe fallback for users who right-click → open in\r\n\t\t\t// new tab.\r\n\t\t\t(function () {\r\n\t\t\t\tvar btn = document.querySelector(\"[data-bx-sandbox-exit]\");\r\n\t\t\t\tif (!btn) return;\r\n\t\t\t\ttry {\r\n\t\t\t\t\tvar ref = document.referrer ? new URL(document.referrer) : null;\r\n\t\t\t\t\tif (ref && ref.origin === window.location.origin && ref.pathname.startsWith(\"/design/\")) {\r\n\t\t\t\t\t\tbtn.setAttribute(\"href\", ref.pathname + ref.search);\r\n\t\t\t\t\t}\r\n\t\t\t\t} catch (e) { /* keep the fallback href */ }\r\n\t\t\t})();\r\n\t\t</script>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "</span> <span style=\"margin-left: auto;\" data-bx-state-badge class=\"bx-muted\">connecting</span> <span class=\"bx-muted\" data-bx-tick></span></div><section class=\"bx-sandbox-hud__row\"><button type=\"button\" class=\"bx-btn bx-btn--small\" data-bx-sandbox-op=\"freeze\" title=\"Freeze the simulation\" data-copy-slot=\"sandbox.hud.freeze\">Freeze</button> <button type=\"button\" class=\"bx-btn bx-btn--small\" data-bx-sandbox-op=\"step\" title=\"Advance one tick (frozen only)\" data-copy-slot=\"sandbox.hud.step\">Step</button> <button type=\"button\" class=\"bx-btn bx-btn--small\" data-bx-sandbox-op=\"godmode\" title=\"Toggle damage / interaction immunity\" data-copy-slot=\"sandbox.hud.godmode\">Godmode</button> <button type=\"button\" class=\"bx-btn bx-btn--small\" data-bx-sandbox-op=\"spawn\" title=\"Open the spawn palette\" data-copy-slot=\"sandbox.hud.spawn\">Spawn…</button></section><details><summary class=\"bx-small bx-muted\" data-copy-slot=\"sandbox.hud.inspector\">Inspector</summary><div class=\"bx-stack-tight\" data-bx-inspector><p class=\"bx-small bx-muted\" data-copy-slot=\"sandbox.hud.inspector.empty\">Click an entity in the canvas to inspect it.</p></div></details><footer class=\"bx-small bx-muted\" data-copy-slot=\"sandbox.hud.cmdk\">⌘K opens the designer command palette.</footer></aside><script type=\"module\" src=\"/static/web/sandbox.js\" defer></script> <script>\n\t\t\t// Smarter Exit: prefer document.referrer when it's same-origin\n\t\t\t// and on a /design/* surface, so designers land back on the\n\t\t\t// page that launched the sandbox. The href attribute remains\n\t\t\t// as the safe fallback for users who right-click → open in\n\t\t\t// new tab.\n\t\t\t(function () {\n\t\t\t\tvar btn = document.querySelector(\"[data-bx-sandbox-exit]\");\n\t\t\t\tif (!btn) return;\n\t\t\t\ttry {\n\t\t\t\t\tvar ref = document.referrer ? new URL(document.referrer) : null;\n\t\t\t\t\tif (ref && ref.origin === window.location.origin && ref.pathname.startsWith(\"/design/\")) {\n\t\t\t\t\t\tbtn.setAttribute(\"href\", ref.pathname + ref.search);\n\t\t\t\t\t}\n\t\t\t\t} catch (e) { /* keep the fallback href */ }\n\t\t\t})();\n\t\t</script>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}

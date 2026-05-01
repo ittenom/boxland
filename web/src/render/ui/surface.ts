@@ -28,7 +28,7 @@ export class Surface extends Container {
 			height: Math.max(1, Math.floor(opts.height)),
 			tone: opts.tone ?? "panel",
 			tokens: opts.tokens ?? pixiUITokens,
-			radius: opts.radius ?? pixiUITokens.shape.radiusMd,
+			radius: 0,
 			borderWidth: opts.borderWidth ?? pixiUITokens.shape.borderWidth,
 			focus: opts.focus ?? false,
 			accentEdge: opts.accentEdge ?? "none",
@@ -58,12 +58,12 @@ export class Surface extends Container {
 	override get height(): number { return this.opts.height; }
 
 	private redraw(): void {
-		const { width, height, radius, borderWidth, tokens, tone } = this.opts;
+		const { width, height, borderWidth, tokens, tone } = this.opts;
 		const p = surfacePalette(tone, tokens);
 		this.g.clear();
-		this.g.roundRect(0, 0, width, height, radius)
+		this.g.rect(0, 0, width, height)
 			.fill({ color: p.fill, alpha: this.opts.alpha })
-			.roundRect(0, 0, width, height, radius)
+			.rect(0, 0, width, height)
 			.stroke({ color: p.border, width: borderWidth, alignment: 1 });
 
 		if (p.highlight !== undefined && this.opts.accentEdge !== "none") {
@@ -87,7 +87,7 @@ export class Surface extends Container {
 
 		if (this.opts.focus) {
 			const inset = tokens.shape.focusWidth;
-			this.g.roundRect(inset, inset, Math.max(1, width - inset * 2), Math.max(1, height - inset * 2), Math.max(0, radius - inset))
+			this.g.rect(inset, inset, Math.max(1, width - inset * 2), Math.max(1, height - inset * 2))
 				.stroke({ color: tokens.color.focus, width: tokens.shape.focusWidth, alignment: 1 });
 		}
 	}

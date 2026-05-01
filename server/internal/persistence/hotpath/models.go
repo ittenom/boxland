@@ -3,3 +3,519 @@
 //   sqlc v1.31.1
 
 package hotpath
+
+import (
+	"net/netip"
+
+	"github.com/jackc/pgx/v5/pgtype"
+)
+
+type Asset struct {
+	ID                   int64              `db:"id"`
+	Kind                 string             `db:"kind"`
+	Name                 string             `db:"name"`
+	ContentAddressedPath string             `db:"content_addressed_path"`
+	OriginalFormat       string             `db:"original_format"`
+	MetadataJson         []byte             `db:"metadata_json"`
+	Tags                 []string           `db:"tags"`
+	FolderID             *int64             `db:"folder_id"`
+	DominantColor        *int64             `db:"dominant_color"`
+	CreatedBy            int64              `db:"created_by"`
+	CreatedAt            pgtype.Timestamptz `db:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `db:"updated_at"`
+}
+
+type AssetAnimation struct {
+	ID        int64              `db:"id"`
+	AssetID   int64              `db:"asset_id"`
+	Name      string             `db:"name"`
+	FrameFrom int32              `db:"frame_from"`
+	FrameTo   int32              `db:"frame_to"`
+	Direction string             `db:"direction"`
+	Fps       int32              `db:"fps"`
+	CreatedAt pgtype.Timestamptz `db:"created_at"`
+}
+
+type AssetFolder struct {
+	ID        int64              `db:"id"`
+	ParentID  *int64             `db:"parent_id"`
+	KindRoot  string             `db:"kind_root"`
+	Name      string             `db:"name"`
+	SortMode  string             `db:"sort_mode"`
+	CreatedBy int64              `db:"created_by"`
+	CreatedAt pgtype.Timestamptz `db:"created_at"`
+	UpdatedAt pgtype.Timestamptz `db:"updated_at"`
+}
+
+type AssetVariant struct {
+	ID                   int64              `db:"id"`
+	AssetID              int64              `db:"asset_id"`
+	PaletteVariantID     int64              `db:"palette_variant_id"`
+	ContentAddressedPath *string            `db:"content_addressed_path"`
+	Status               string             `db:"status"`
+	FailureReason        *string            `db:"failure_reason"`
+	BakedAt              pgtype.Timestamptz `db:"baked_at"`
+	CreatedAt            pgtype.Timestamptz `db:"created_at"`
+}
+
+type BoxlandMetum struct {
+	Key       string             `db:"key"`
+	Value     string             `db:"value"`
+	UpdatedAt pgtype.Timestamptz `db:"updated_at"`
+}
+
+type CharacterBake struct {
+	ID            int64              `db:"id"`
+	RecipeID      int64              `db:"recipe_id"`
+	RecipeHash    []byte             `db:"recipe_hash"`
+	AssetID       *int64             `db:"asset_id"`
+	Status        string             `db:"status"`
+	FailureReason string             `db:"failure_reason"`
+	BakedAt       pgtype.Timestamptz `db:"baked_at"`
+	CreatedAt     pgtype.Timestamptz `db:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `db:"updated_at"`
+}
+
+type CharacterPart struct {
+	ID                 int64              `db:"id"`
+	SlotID             int64              `db:"slot_id"`
+	AssetID            int64              `db:"asset_id"`
+	Name               string             `db:"name"`
+	Tags               []string           `db:"tags"`
+	CompatibleTags     []string           `db:"compatible_tags"`
+	LayerOrder         *int32             `db:"layer_order"`
+	FrameMapJson       []byte             `db:"frame_map_json"`
+	PaletteRegionsJson []byte             `db:"palette_regions_json"`
+	CreatedBy          int64              `db:"created_by"`
+	CreatedAt          pgtype.Timestamptz `db:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `db:"updated_at"`
+}
+
+type CharacterRecipe struct {
+	ID             int64              `db:"id"`
+	OwnerKind      string             `db:"owner_kind"`
+	OwnerID        int64              `db:"owner_id"`
+	Name           string             `db:"name"`
+	AppearanceJson []byte             `db:"appearance_json"`
+	StatsJson      []byte             `db:"stats_json"`
+	TalentsJson    []byte             `db:"talents_json"`
+	RecipeHash     []byte             `db:"recipe_hash"`
+	CreatedBy      int64              `db:"created_by"`
+	CreatedAt      pgtype.Timestamptz `db:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `db:"updated_at"`
+}
+
+type CharacterSlot struct {
+	ID                int64              `db:"id"`
+	Key               string             `db:"key"`
+	Label             string             `db:"label"`
+	Required          bool               `db:"required"`
+	OrderIndex        int32              `db:"order_index"`
+	DefaultLayerOrder int32              `db:"default_layer_order"`
+	AllowsPalette     bool               `db:"allows_palette"`
+	CreatedBy         *int64             `db:"created_by"`
+	CreatedAt         pgtype.Timestamptz `db:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `db:"updated_at"`
+}
+
+type CharacterStatSet struct {
+	ID                int64              `db:"id"`
+	Key               string             `db:"key"`
+	Name              string             `db:"name"`
+	StatsJson         []byte             `db:"stats_json"`
+	CreationRulesJson []byte             `db:"creation_rules_json"`
+	CreatedBy         int64              `db:"created_by"`
+	CreatedAt         pgtype.Timestamptz `db:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `db:"updated_at"`
+}
+
+type CharacterTalentNode struct {
+	ID                int64              `db:"id"`
+	TreeID            int64              `db:"tree_id"`
+	Key               string             `db:"key"`
+	Name              string             `db:"name"`
+	Description       string             `db:"description"`
+	IconAssetID       *int64             `db:"icon_asset_id"`
+	MaxRank           int32              `db:"max_rank"`
+	CostJson          []byte             `db:"cost_json"`
+	PrerequisitesJson []byte             `db:"prerequisites_json"`
+	EffectJson        []byte             `db:"effect_json"`
+	LayoutJson        []byte             `db:"layout_json"`
+	MutexGroup        string             `db:"mutex_group"`
+	CreatedAt         pgtype.Timestamptz `db:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `db:"updated_at"`
+}
+
+type CharacterTalentTree struct {
+	ID          int64              `db:"id"`
+	Key         string             `db:"key"`
+	Name        string             `db:"name"`
+	Description string             `db:"description"`
+	CurrencyKey string             `db:"currency_key"`
+	LayoutMode  string             `db:"layout_mode"`
+	CreatedBy   int64              `db:"created_by"`
+	CreatedAt   pgtype.Timestamptz `db:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `db:"updated_at"`
+}
+
+type Designer struct {
+	ID           int64              `db:"id"`
+	Email        string             `db:"email"`
+	PasswordHash string             `db:"password_hash"`
+	Role         string             `db:"role"`
+	CreatedAt    pgtype.Timestamptz `db:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `db:"updated_at"`
+}
+
+type DesignerSession struct {
+	TokenHash  []byte             `db:"token_hash"`
+	DesignerID int64              `db:"designer_id"`
+	CreatedAt  pgtype.Timestamptz `db:"created_at"`
+	ExpiresAt  pgtype.Timestamptz `db:"expires_at"`
+	UserAgent  *string            `db:"user_agent"`
+	Ip         *netip.Addr        `db:"ip"`
+}
+
+type DesignerWsTicket struct {
+	TicketHash []byte             `db:"ticket_hash"`
+	DesignerID int64              `db:"designer_id"`
+	Ip         netip.Addr         `db:"ip"`
+	ExpiresAt  pgtype.Timestamptz `db:"expires_at"`
+	ConsumedAt pgtype.Timestamptz `db:"consumed_at"`
+}
+
+type Draft struct {
+	ArtifactKind string             `db:"artifact_kind"`
+	ArtifactID   int64              `db:"artifact_id"`
+	DraftJson    []byte             `db:"draft_json"`
+	CreatedBy    int64              `db:"created_by"`
+	CreatedAt    pgtype.Timestamptz `db:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `db:"updated_at"`
+}
+
+type EdgeSocketType struct {
+	ID        int64              `db:"id"`
+	Name      string             `db:"name"`
+	Color     int64              `db:"color"`
+	CreatedBy *int64             `db:"created_by"`
+	CreatedAt pgtype.Timestamptz `db:"created_at"`
+	UpdatedAt pgtype.Timestamptz `db:"updated_at"`
+}
+
+type EntityAutomation struct {
+	EntityTypeID      int64              `db:"entity_type_id"`
+	AutomationAstJson []byte             `db:"automation_ast_json"`
+	UpdatedAt         pgtype.Timestamptz `db:"updated_at"`
+}
+
+type EntityComponent struct {
+	EntityTypeID  int64              `db:"entity_type_id"`
+	ComponentKind string             `db:"component_kind"`
+	ConfigJson    []byte             `db:"config_json"`
+	CreatedAt     pgtype.Timestamptz `db:"created_at"`
+}
+
+type EntityType struct {
+	ID                   int64              `db:"id"`
+	Name                 string             `db:"name"`
+	EntityClass          string             `db:"entity_class"`
+	SpriteAssetID        *int64             `db:"sprite_asset_id"`
+	AtlasIndex           int32              `db:"atlas_index"`
+	DefaultAnimationID   *int64             `db:"default_animation_id"`
+	TilemapID            *int64             `db:"tilemap_id"`
+	CellCol              *int32             `db:"cell_col"`
+	CellRow              *int32             `db:"cell_row"`
+	RecipeID             *int64             `db:"recipe_id"`
+	ActiveBakeID         *int64             `db:"active_bake_id"`
+	ColliderW            int32              `db:"collider_w"`
+	ColliderH            int32              `db:"collider_h"`
+	ColliderAnchorX      int32              `db:"collider_anchor_x"`
+	ColliderAnchorY      int32              `db:"collider_anchor_y"`
+	DefaultCollisionMask int64              `db:"default_collision_mask"`
+	YSortAnchor          bool               `db:"y_sort_anchor"`
+	DrawAbovePlayer      bool               `db:"draw_above_player"`
+	ProceduralInclude    bool               `db:"procedural_include"`
+	Tags                 []string           `db:"tags"`
+	CreatedBy            int64              `db:"created_by"`
+	CreatedAt            pgtype.Timestamptz `db:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `db:"updated_at"`
+}
+
+type Level struct {
+	ID                   int64              `db:"id"`
+	Name                 string             `db:"name"`
+	MapID                int64              `db:"map_id"`
+	WorldID              *int64             `db:"world_id"`
+	Public               bool               `db:"public"`
+	InstancingMode       string             `db:"instancing_mode"`
+	PersistenceMode      string             `db:"persistence_mode"`
+	RefreshWindowSeconds *int32             `db:"refresh_window_seconds"`
+	ResetRulesJson       []byte             `db:"reset_rules_json"`
+	SpectatorPolicy      string             `db:"spectator_policy"`
+	HudLayoutJson        []byte             `db:"hud_layout_json"`
+	FolderID             *int64             `db:"folder_id"`
+	CreatedBy            int64              `db:"created_by"`
+	CreatedAt            pgtype.Timestamptz `db:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `db:"updated_at"`
+}
+
+type LevelActionGroup struct {
+	ID          int64              `db:"id"`
+	LevelID     int64              `db:"level_id"`
+	Name        string             `db:"name"`
+	ActionsJson []byte             `db:"actions_json"`
+	CreatedAt   pgtype.Timestamptz `db:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `db:"updated_at"`
+}
+
+type LevelEntity struct {
+	ID                    int64              `db:"id"`
+	LevelID               int64              `db:"level_id"`
+	EntityTypeID          int64              `db:"entity_type_id"`
+	X                     int32              `db:"x"`
+	Y                     int32              `db:"y"`
+	RotationDegrees       int16              `db:"rotation_degrees"`
+	InstanceOverridesJson []byte             `db:"instance_overrides_json"`
+	Tags                  []string           `db:"tags"`
+	CreatedAt             pgtype.Timestamptz `db:"created_at"`
+}
+
+type LevelFlag struct {
+	LevelID   int64              `db:"level_id"`
+	Key       string             `db:"key"`
+	Kind      string             `db:"kind"`
+	ValueJson []byte             `db:"value_json"`
+	UpdatedAt pgtype.Timestamptz `db:"updated_at"`
+}
+
+type LevelSpectatorInvite struct {
+	LevelID   int64              `db:"level_id"`
+	PlayerID  int64              `db:"player_id"`
+	GrantedBy int64              `db:"granted_by"`
+	CreatedAt pgtype.Timestamptz `db:"created_at"`
+}
+
+type LevelState struct {
+	LevelID         int64              `db:"level_id"`
+	InstanceID      string             `db:"instance_id"`
+	StateBlobFb     []byte             `db:"state_blob_fb"`
+	LastFlushedTick int64              `db:"last_flushed_tick"`
+	UpdatedAt       pgtype.Timestamptz `db:"updated_at"`
+}
+
+type Map struct {
+	ID        int64              `db:"id"`
+	Name      string             `db:"name"`
+	Width     int32              `db:"width"`
+	Height    int32              `db:"height"`
+	Mode      string             `db:"mode"`
+	Seed      *int64             `db:"seed"`
+	CreatedBy int64              `db:"created_by"`
+	CreatedAt pgtype.Timestamptz `db:"created_at"`
+	UpdatedAt pgtype.Timestamptz `db:"updated_at"`
+}
+
+type MapConstraint struct {
+	ID        int64              `db:"id"`
+	MapID     int64              `db:"map_id"`
+	Kind      string             `db:"kind"`
+	Params    []byte             `db:"params"`
+	CreatedAt pgtype.Timestamptz `db:"created_at"`
+}
+
+type MapLayer struct {
+	ID            int64              `db:"id"`
+	MapID         int64              `db:"map_id"`
+	Name          string             `db:"name"`
+	Kind          string             `db:"kind"`
+	Ord           int32              `db:"ord"`
+	YSortEntities bool               `db:"y_sort_entities"`
+	CreatedAt     pgtype.Timestamptz `db:"created_at"`
+}
+
+type MapLightingCell struct {
+	MapID     int64 `db:"map_id"`
+	LayerID   int64 `db:"layer_id"`
+	X         int32 `db:"x"`
+	Y         int32 `db:"y"`
+	Color     int64 `db:"color"`
+	Intensity int16 `db:"intensity"`
+}
+
+type MapLockedCell struct {
+	MapID           int64              `db:"map_id"`
+	LayerID         int64              `db:"layer_id"`
+	X               int32              `db:"x"`
+	Y               int32              `db:"y"`
+	EntityTypeID    int64              `db:"entity_type_id"`
+	RotationDegrees int16              `db:"rotation_degrees"`
+	CreatedAt       pgtype.Timestamptz `db:"created_at"`
+}
+
+type MapSamplePatch struct {
+	MapID     int64              `db:"map_id"`
+	LayerID   int64              `db:"layer_id"`
+	X         int32              `db:"x"`
+	Y         int32              `db:"y"`
+	Width     int32              `db:"width"`
+	Height    int32              `db:"height"`
+	PatternN  int16              `db:"pattern_n"`
+	UpdatedAt pgtype.Timestamptz `db:"updated_at"`
+}
+
+type MapTile struct {
+	MapID                  int64  `db:"map_id"`
+	LayerID                int64  `db:"layer_id"`
+	X                      int32  `db:"x"`
+	Y                      int32  `db:"y"`
+	EntityTypeID           int64  `db:"entity_type_id"`
+	RotationDegrees        int16  `db:"rotation_degrees"`
+	AnimOverride           *int16 `db:"anim_override"`
+	CollisionShapeOverride *int16 `db:"collision_shape_override"`
+	CollisionMaskOverride  *int64 `db:"collision_mask_override"`
+	CustomFlagsJson        []byte `db:"custom_flags_json"`
+}
+
+type Palette struct {
+	ID        int64              `db:"id"`
+	Name      string             `db:"name"`
+	Colors    []int64            `db:"colors"`
+	CreatedBy *int64             `db:"created_by"`
+	CreatedAt pgtype.Timestamptz `db:"created_at"`
+	UpdatedAt pgtype.Timestamptz `db:"updated_at"`
+}
+
+type PaletteVariant struct {
+	ID               int64              `db:"id"`
+	AssetID          int64              `db:"asset_id"`
+	Name             string             `db:"name"`
+	PaletteID        *int64             `db:"palette_id"`
+	SourceToDestJson []byte             `db:"source_to_dest_json"`
+	CreatedBy        *int64             `db:"created_by"`
+	CreatedAt        pgtype.Timestamptz `db:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `db:"updated_at"`
+}
+
+type Player struct {
+	ID            int64              `db:"id"`
+	Email         string             `db:"email"`
+	PasswordHash  *string            `db:"password_hash"`
+	EmailVerified bool               `db:"email_verified"`
+	DisplayName   *string            `db:"display_name"`
+	CreatedAt     pgtype.Timestamptz `db:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `db:"updated_at"`
+}
+
+type PlayerCharacter struct {
+	ID           int64              `db:"id"`
+	PlayerID     int64              `db:"player_id"`
+	RecipeID     *int64             `db:"recipe_id"`
+	ActiveBakeID *int64             `db:"active_bake_id"`
+	EntityTypeID *int64             `db:"entity_type_id"`
+	Name         string             `db:"name"`
+	PublicBio    string             `db:"public_bio"`
+	PrivateNotes string             `db:"private_notes"`
+	CreatedAt    pgtype.Timestamptz `db:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `db:"updated_at"`
+}
+
+type PlayerEmailVerification struct {
+	TokenHash  []byte             `db:"token_hash"`
+	PlayerID   int64              `db:"player_id"`
+	ExpiresAt  pgtype.Timestamptz `db:"expires_at"`
+	ConsumedAt pgtype.Timestamptz `db:"consumed_at"`
+}
+
+type PlayerOauthLink struct {
+	PlayerID       int64              `db:"player_id"`
+	Provider       string             `db:"provider"`
+	ProviderUserID string             `db:"provider_user_id"`
+	LinkedAt       pgtype.Timestamptz `db:"linked_at"`
+}
+
+type PlayerSession struct {
+	RefreshTokenHash []byte             `db:"refresh_token_hash"`
+	PlayerID         int64              `db:"player_id"`
+	CreatedAt        pgtype.Timestamptz `db:"created_at"`
+	ExpiresAt        pgtype.Timestamptz `db:"expires_at"`
+	UserAgent        *string            `db:"user_agent"`
+	Ip               *netip.Addr        `db:"ip"`
+}
+
+type PublishDiff struct {
+	ID                 int64              `db:"id"`
+	ChangesetID        int64              `db:"changeset_id"`
+	ArtifactKind       string             `db:"artifact_kind"`
+	ArtifactID         int64              `db:"artifact_id"`
+	Op                 string             `db:"op"`
+	SummaryLine        string             `db:"summary_line"`
+	StructuredDiffJson []byte             `db:"structured_diff_json"`
+	PublishedBy        int64              `db:"published_by"`
+	CreatedAt          pgtype.Timestamptz `db:"created_at"`
+}
+
+type TileEdgeAssignment struct {
+	EntityTypeID  int64  `db:"entity_type_id"`
+	NorthSocketID *int64 `db:"north_socket_id"`
+	EastSocketID  *int64 `db:"east_socket_id"`
+	SouthSocketID *int64 `db:"south_socket_id"`
+	WestSocketID  *int64 `db:"west_socket_id"`
+}
+
+type TileGroup struct {
+	ID                           int64              `db:"id"`
+	Name                         string             `db:"name"`
+	Width                        int32              `db:"width"`
+	Height                       int32              `db:"height"`
+	LayoutJson                   []byte             `db:"layout_json"`
+	Tags                         []string           `db:"tags"`
+	ExcludeMembersFromProcedural bool               `db:"exclude_members_from_procedural"`
+	UseGroupInProcedural         bool               `db:"use_group_in_procedural"`
+	CreatedBy                    int64              `db:"created_by"`
+	CreatedAt                    pgtype.Timestamptz `db:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `db:"updated_at"`
+}
+
+type Tilemap struct {
+	ID            int64              `db:"id"`
+	AssetID       int64              `db:"asset_id"`
+	Name          string             `db:"name"`
+	Cols          int32              `db:"cols"`
+	Rows          int32              `db:"rows"`
+	TileSize      int32              `db:"tile_size"`
+	NonEmptyCount int32              `db:"non_empty_count"`
+	FolderID      *int64             `db:"folder_id"`
+	CreatedBy     int64              `db:"created_by"`
+	CreatedAt     pgtype.Timestamptz `db:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `db:"updated_at"`
+}
+
+type TilemapTile struct {
+	TilemapID    int64  `db:"tilemap_id"`
+	CellCol      int32  `db:"cell_col"`
+	CellRow      int32  `db:"cell_row"`
+	EntityTypeID int64  `db:"entity_type_id"`
+	PixelHash    []byte `db:"pixel_hash"`
+	EdgeHashN    []byte `db:"edge_hash_n"`
+	EdgeHashE    []byte `db:"edge_hash_e"`
+	EdgeHashS    []byte `db:"edge_hash_s"`
+	EdgeHashW    []byte `db:"edge_hash_w"`
+}
+
+type UserSetting struct {
+	Realm       string             `db:"realm"`
+	SubjectID   int64              `db:"subject_id"`
+	PayloadJson []byte             `db:"payload_json"`
+	UpdatedAt   pgtype.Timestamptz `db:"updated_at"`
+}
+
+type World struct {
+	ID           int64              `db:"id"`
+	Name         string             `db:"name"`
+	StartLevelID *int64             `db:"start_level_id"`
+	SettingsJson []byte             `db:"settings_json"`
+	FolderID     *int64             `db:"folder_id"`
+	CreatedBy    int64              `db:"created_by"`
+	CreatedAt    pgtype.Timestamptz `db:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `db:"updated_at"`
+}
