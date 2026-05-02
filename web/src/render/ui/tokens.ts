@@ -23,6 +23,8 @@ export interface PixiUIColorTokens {
 	success: number;
 	focus: number;
 	disabled: number;
+	headerRule: number;
+	dotGrid: number;
 }
 
 export interface PixiUITypographyTokens {
@@ -32,6 +34,7 @@ export interface PixiUITypographyTokens {
 	sizeSm: number;
 	sizeMd: number;
 	sizeLg: number;
+	sizeXl: number;
 	weightRegular: "400";
 	weightMedium: "600";
 	weightBold: "700";
@@ -44,6 +47,9 @@ export interface PixiUISpacingTokens {
 	md: number;
 	lg: number;
 	xl: number;
+	cardPad: number;
+	cardGap: number;
+	dotGrid: number;
 }
 
 export interface PixiUIShapeTokens {
@@ -52,6 +58,15 @@ export interface PixiUIShapeTokens {
 	radiusLg: number;
 	borderWidth: number;
 	focusWidth: number;
+	headerRuleWidth: number;
+}
+
+export interface PixiUIShadowTokens {
+	color: number;
+	alpha: number;
+	blur: number;
+	offsetX: number;
+	offsetY: number;
 }
 
 export interface PixiUITokens {
@@ -59,36 +74,40 @@ export interface PixiUITokens {
 	type: PixiUITypographyTokens;
 	space: PixiUISpacingTokens;
 	shape: PixiUIShapeTokens;
+	shadow: PixiUIShadowTokens;
 }
 
 export const pixiUITokens: PixiUITokens = {
 	color: {
-		canvas: 0x0c111b,
-		surface: 0x101827,
-		surfaceRaised: 0x172033,
-		surfaceSunken: 0x0b1220,
-		surfaceMuted: 0x1c2638,
-		border: 0x2d3b55,
-		borderStrong: 0x49617f,
-		text: 0xe8ecf2,
-		textMuted: 0xa9b0c0,
-		textSubtle: 0x748298,
-		accent: 0xffd84a,
-		accentSoft: 0x3b66bc,
-		accentText: 0x10131c,
-		warning: 0xf5b800,
-		danger: 0xff5a6a,
-		success: 0x5adfb0,
-		focus: 0x6ea0ff,
-		disabled: 0x30394a,
+		canvas: 0xefe9da,
+		surface: 0xfaf6ec,
+		surfaceRaised: 0xfffdf6,
+		surfaceSunken: 0xeae3d2,
+		surfaceMuted: 0xf2ecdc,
+		border: 0xcfc6b0,
+		borderStrong: 0xa39879,
+		text: 0x1c1812,
+		textMuted: 0x6a604f,
+		textSubtle: 0x9a9180,
+		accent: 0x2f5d8e,
+		accentSoft: 0xc8d7ea,
+		accentText: 0xffffff,
+		warning: 0xc78a26,
+		danger: 0xb24a4a,
+		success: 0x4f8a4a,
+		focus: 0x2f5d8e,
+		disabled: 0xddd5c2,
+		headerRule: 0xe6928c,
+		dotGrid: 0xa3c08a,
 	},
 	type: {
 		family: "DM Mono, Consolas, monospace",
 		monoFamily: "DM Mono, Consolas, monospace",
-		sizeXs: 9,
-		sizeSm: 11,
-		sizeMd: 13,
-		sizeLg: 16,
+		sizeXs: 10,
+		sizeSm: 12,
+		sizeMd: 14,
+		sizeLg: 18,
+		sizeXl: 28,
 		weightRegular: "400",
 		weightMedium: "600",
 		weightBold: "700",
@@ -100,6 +119,9 @@ export const pixiUITokens: PixiUITokens = {
 		md: 10,
 		lg: 14,
 		xl: 20,
+		cardPad: 16,
+		cardGap: 24,
+		dotGrid: 32,
 	},
 	shape: {
 		radiusSm: 0,
@@ -107,6 +129,14 @@ export const pixiUITokens: PixiUITokens = {
 		radiusLg: 0,
 		borderWidth: 1,
 		focusWidth: 2,
+		headerRuleWidth: 1,
+	},
+	shadow: {
+		color: 0x1a1305,
+		alpha: 0.18,
+		blur: 6,
+		offsetX: 3,
+		offsetY: 4,
 	},
 };
 
@@ -139,13 +169,13 @@ export function surfacePalette(tone: SurfaceTone, tokens: PixiUITokens = pixiUIT
 		case "sunken":
 			return { fill: c.surfaceSunken, border: c.border, text: c.textMuted };
 		case "button":
-			return { fill: c.surfaceMuted, border: c.borderStrong, text: c.text };
+			return { fill: c.surfaceRaised, border: c.borderStrong, text: c.text };
 		case "buttonActive":
 			return { fill: c.accentSoft, border: c.accent, highlight: c.accent, text: c.text };
 		case "buttonDisabled":
 			return { fill: c.disabled, border: c.border, text: c.textSubtle };
 		case "toolActive":
-			return { fill: c.accent, border: c.accentText, text: c.accentText };
+			return { fill: c.accent, border: c.accent, text: c.accentText };
 		case "slot":
 			return { fill: c.surfaceSunken, border: c.borderStrong, text: c.text };
 		case "slotSelected":
@@ -153,7 +183,7 @@ export function surfacePalette(tone: SurfaceTone, tokens: PixiUITokens = pixiUIT
 		case "scrollTrack":
 			return { fill: c.surfaceSunken, border: c.border };
 		case "scrollThumb":
-			return { fill: c.accentSoft, border: c.focus };
+			return { fill: c.borderStrong, border: c.borderStrong };
 		case "input":
 			return { fill: c.surfaceSunken, border: c.borderStrong, text: c.text };
 		case "panel":

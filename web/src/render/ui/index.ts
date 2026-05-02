@@ -12,6 +12,10 @@ export { pixiUITokens, surfacePalette } from "./tokens";
 export type { PixiUITokens, SurfaceTone, SurfacePalette } from "./tokens";
 export { Surface, roleTone } from "./surface";
 export type { SurfaceOptions } from "./surface";
+export { truncateText, wrapText, flowRow, drawDotGrid } from "./layout";
+export type { FlowRowOptions, FlowRowResult, DotGridOptions } from "./layout";
+export { Card } from "./card";
+export type { CardOptions, CardTitleSize } from "./card";
 export {
 	makeButton, makeCheckBox, makeSlider, makeInput,
 	makeList, makeScrollBox, makeSelect, makeLabel,
