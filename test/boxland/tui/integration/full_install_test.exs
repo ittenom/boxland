@@ -1,7 +1,7 @@
 defmodule Boxland.TUI.Integration.FullInstallTest do
-  @moduletag :integration
-
   use ExUnit.Case, async: false
+
+  @moduletag :integration
 
   alias Boxland.TUI.Install
 

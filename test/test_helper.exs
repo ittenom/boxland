@@ -1,4 +1,4 @@
-ExUnit.start()
+ExUnit.start(exclude: [:integration])
 Ecto.Adapters.SQL.Sandbox.mode(Boxland.Repo, :manual)
 
 # The TUI surface refactored Phoenix children out of automatic boot.
