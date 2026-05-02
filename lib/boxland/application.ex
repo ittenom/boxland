@@ -22,7 +22,37 @@ defmodule Boxland.Application do
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: Boxland.Supervisor]
-    Supervisor.start_link(children, opts)
+
+    case Supervisor.start_link(children, opts) do
+      {:ok, sup} ->
+        dispatch_argv()
+        {:ok, sup}
+
+      other -> other
+    end
+  end
+
+  defp dispatch_argv do
+    if Code.ensure_loaded?(Mix) and Mix.env() == :test do
+      :ok   # Don't dispatch during tests
+    else
+      do_dispatch_argv()
+    end
+  end
+
+  defp do_dispatch_argv do
+    case System.argv() do
+      [] -> Boxland.TUI.Server.start_link()       # default: open TUI
+      ["install" | argv] -> System.halt(Boxland.CLI.Install.main(argv))
+      ["run" | argv] -> Boxland.CLI.Run.main(argv)
+      ["--version"] ->
+        IO.puts("boxland #{Application.spec(:boxland, :vsn)}")
+        System.halt(0)
+      other ->
+        IO.puts(:stderr, "Unknown command: #{Enum.join(other, " ")}")
+        IO.puts(:stderr, "Usage: boxland [install | run | --version]")
+        System.halt(1)
+    end
   end
 
   # Tell Phoenix to update the endpoint configuration
