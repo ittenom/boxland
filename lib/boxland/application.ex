@@ -15,6 +15,7 @@ defmodule Boxland.Application do
       Boxland.Repo,
       {Phoenix.PubSub, name: Boxland.PubSub},
       {Finch, name: Boxland.Finch},
+      %{id: Boxland.TUI.LogBackend, start: {Boxland.TUI.LogBackend, :start_link, [[]]}, restart: :transient},  # ADD this
       Boxland.Server.Supervisor
     ]
 
