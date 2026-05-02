@@ -85,7 +85,10 @@ defmodule Boxland.MixProject do
       {:image, "~> 0.50"},
 
       # Scripting
-      {:luerl, "~> 1.2"}
+      {:luerl, "~> 1.2"},
+
+      # TUI
+      {:term_ui, github: "pcharbon70/term_ui", tag: "v1.0.0-rc"}
     ]
   end
 
