@@ -5,6 +5,8 @@
 services:
   postgres:
     image: postgres:16
+    networks:
+      - boxland-net
     environment:
       POSTGRES_USER: boxland
       POSTGRES_PASSWORD: boxland
@@ -21,6 +23,8 @@ services:
 
   redis:
     image: redis:7
+    networks:
+      - boxland-net
     ports:
       - "6379:6379"
     healthcheck:
@@ -31,6 +35,8 @@ services:
 
   minio:
     image: minio/minio
+    networks:
+      - boxland-net
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: boxland
@@ -40,3 +46,8 @@ services:
       - "9001:9001"
     volumes:
       - <%= @data_dir %>/services/minio_data:/data
+
+networks:
+  boxland-net:
+    name: boxland-net
+    external: true

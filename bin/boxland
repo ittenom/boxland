@@ -1,0 +1,25 @@
+#!/bin/sh
+# Boxland launcher.
+# Runs the TUI in a Docker container with the right flags.
+# Pass any arguments through (e.g. `boxland install`, `boxland --version`).
+
+set -e
+
+DATA_DIR="${BOXLAND_DATA_DIR:-$HOME/.boxland}"
+IMAGE="${BOXLAND_IMAGE:-boxland:dev-test}"
+NETWORK="boxland-net"
+
+# Ensure data dir exists and the named network exists (idempotent)
+mkdir -p "$DATA_DIR"
+docker network inspect "$NETWORK" >/dev/null 2>&1 || docker network create "$NETWORK" >/dev/null
+
+# TUI needs interactive TTY (-it). For non-interactive subcommands like
+# `boxland install` or `boxland --version`, -it still works (extra TTY
+# allocation is harmless when stdin is also a TTY; mostly invisible to scripts).
+exec docker run -it --rm \
+    --name boxland-tui \
+    --network "$NETWORK" \
+    -v "$DATA_DIR:/app/.boxland" \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -p 4000:4000 \
+    "$IMAGE" "$@"
