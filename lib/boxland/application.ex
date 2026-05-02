@@ -12,14 +12,10 @@ defmodule Boxland.Application do
     end
 
     children = [
-      BoxlandWeb.Telemetry,
       Boxland.Repo,
-      {DNSCluster, query: Application.get_env(:boxland, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Boxland.PubSub},
-      # Start a worker by calling: Boxland.Worker.start_link(arg)
-      # {Boxland.Worker, arg},
-      # Start to serve requests, typically the last entry
-      BoxlandWeb.Endpoint
+      {Finch, name: Boxland.Finch},
+      Boxland.Server.Supervisor
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
