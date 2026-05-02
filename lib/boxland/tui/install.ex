@@ -123,6 +123,71 @@ defmodule Boxland.TUI.Install do
     end
   end
 
+  # ---------- Stage 5: Secrets ----------
+
+  def stage_5_secrets(deps \\ default_deps()) do
+    path = Path.join(deps.data_dir.(), "secrets.exs")
+
+    if deps.file_exists.(path) do
+      :ok
+    else
+      secret = :crypto.strong_rand_bytes(64) |> Base.url_encode64(padding: false)
+      content = """
+      import Config
+
+      # Generated on Install. Regenerating requires DELETING this file
+      # (subsequent Install rewrites it) — note: any session tokens
+      # signed with the old secret will be invalidated.
+
+      config :boxland, BoxlandWeb.Endpoint,
+        secret_key_base: "#{secret}"
+      """
+
+      with :ok <- deps.file_write.(path, content),
+           :ok <- deps.chmod.(path, 0o600) do
+        :ok
+      else
+        {:error, reason} ->
+          {:error, %{stage: :secrets, reason: "Failed: #{inspect(reason)}", suggestion: nil}}
+      end
+    end
+  end
+
+  # ---------- Stage 6: Config file ----------
+
+  def stage_6_config(deps \\ default_deps()) do
+    path = Path.join(deps.data_dir.(), "config.exs")
+
+    if deps.file_exists.(path) do
+      :ok
+    else
+      template_path = Application.app_dir(:boxland, "priv/templates/user_config.exs.eex")
+      content = EEx.eval_file(template_path)
+
+      case deps.file_write.(path, content) do
+        :ok -> :ok
+        {:error, reason} ->
+          {:error, %{stage: :config, reason: "Failed: #{inspect(reason)}", suggestion: nil}}
+      end
+    end
+  end
+
+  # ---------- Stage 7: docker-compose template ----------
+
+  def stage_7_compose(deps \\ default_deps()) do
+    base = deps.data_dir.()
+    path = Path.join(base, "services/docker-compose.yml")
+
+    template_path = Application.app_dir(:boxland, "priv/templates/docker_compose.yml.eex")
+    content = EEx.eval_file(template_path, assigns: [data_dir: base])
+
+    case deps.file_write.(path, content) do
+      :ok -> :ok
+      {:error, reason} ->
+        {:error, %{stage: :compose, reason: "Failed: #{inspect(reason)}", suggestion: nil}}
+    end
+  end
+
   # ---------- Defaults ----------
 
   defp default_deps do

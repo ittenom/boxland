@@ -135,4 +135,104 @@ defmodule Boxland.TUI.InstallTest do
       assert :ok = Install.stage_4_data_directory(deps)
     end
   end
+
+  describe "stage_5_secrets/1" do
+    setup do
+      tmp = Path.join(System.tmp_dir!(), "boxland-test-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(tmp)
+      on_exit(fn -> File.rm_rf!(tmp) end)
+      {:ok, tmp: tmp}
+    end
+
+    test "writes secrets.exs with secret_key_base", %{tmp: tmp} do
+      deps = %{
+        data_dir: fn -> tmp end,
+        file_exists: &File.exists?/1,
+        file_write: &File.write/2,
+        chmod: &File.chmod/2
+      }
+      assert :ok = Install.stage_5_secrets(deps)
+      content = File.read!(Path.join(tmp, "secrets.exs"))
+      assert content =~ "secret_key_base:"
+      assert content =~ "import Config"
+    end
+
+    test "preserves existing secrets.exs", %{tmp: tmp} do
+      File.write!(Path.join(tmp, "secrets.exs"), "# preserved")
+      deps = %{
+        data_dir: fn -> tmp end,
+        file_exists: &File.exists?/1,
+        file_write: fn _, _ -> raise "should not write" end,
+        chmod: &File.chmod/2
+      }
+      assert :ok = Install.stage_5_secrets(deps)
+      assert File.read!(Path.join(tmp, "secrets.exs")) == "# preserved"
+    end
+
+    test "sets secrets.exs to mode 0600", %{tmp: tmp} do
+      deps = %{
+        data_dir: fn -> tmp end,
+        file_exists: &File.exists?/1,
+        file_write: &File.write/2,
+        chmod: &File.chmod/2
+      }
+      assert :ok = Install.stage_5_secrets(deps)
+      mode = File.stat!(Path.join(tmp, "secrets.exs")).mode |> rem(0o1000)
+      assert mode == 0o600
+    end
+  end
+
+  describe "stage_6_config/1" do
+    setup do
+      tmp = Path.join(System.tmp_dir!(), "boxland-test-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(tmp)
+      on_exit(fn -> File.rm_rf!(tmp) end)
+      {:ok, tmp: tmp}
+    end
+
+    test "writes config.exs from template", %{tmp: tmp} do
+      deps = %{
+        data_dir: fn -> tmp end,
+        file_exists: &File.exists?/1,
+        file_write: &File.write/2
+      }
+      assert :ok = Install.stage_6_config(deps)
+      content = File.read!(Path.join(tmp, "config.exs"))
+      assert content =~ "config :boxland, Boxland.Repo"
+      assert content =~ "import_config \"secrets.exs\""
+    end
+
+    test "preserves existing config.exs", %{tmp: tmp} do
+      File.write!(Path.join(tmp, "config.exs"), "# preserved")
+      deps = %{
+        data_dir: fn -> tmp end,
+        file_exists: &File.exists?/1,
+        file_write: fn _, _ -> raise "should not write" end
+      }
+      assert :ok = Install.stage_6_config(deps)
+      assert File.read!(Path.join(tmp, "config.exs")) == "# preserved"
+    end
+  end
+
+  describe "stage_7_compose/1" do
+    setup do
+      tmp = Path.join(System.tmp_dir!(), "boxland-test-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(Path.join(tmp, "services"))
+      on_exit(fn -> File.rm_rf!(tmp) end)
+      {:ok, tmp: tmp}
+    end
+
+    test "always overwrites docker-compose.yml (deterministic from template)", %{tmp: tmp} do
+      File.write!(Path.join(tmp, "services/docker-compose.yml"), "# stale")
+      deps = %{
+        data_dir: fn -> tmp end,
+        file_write: &File.write/2
+      }
+      assert :ok = Install.stage_7_compose(deps)
+      content = File.read!(Path.join(tmp, "services/docker-compose.yml"))
+      assert content =~ "image: postgres:16"
+      assert content =~ tmp <> "/services/pg_data"
+      refute content =~ "stale"
+    end
+  end
 end

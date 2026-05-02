@@ -1,0 +1,36 @@
+import Config
+
+# Boxland user config — written by Install on first run.
+# Hand-edit to change ports, OAuth credentials, S3 endpoint, etc.
+# Re-running Install regenerates this file ONLY IF it doesn't exist;
+# existing files are preserved.
+
+config :boxland, Boxland.Repo,
+  url: "ecto://boxland:boxland@localhost:5432/boxland",
+  pool_size: 10
+
+config :boxland, BoxlandWeb.Endpoint,
+  url: [host: "localhost", port: 4000, scheme: "http"],
+  http: [ip: {127, 0, 0, 1}, port: 4000]
+
+config :boxland, :redis_url, "redis://localhost:6379"
+
+config :ex_aws,
+  access_key_id: "boxland",
+  secret_access_key: "boxland-dev-secret"
+
+config :ex_aws, :s3,
+  host: "localhost:9000",
+  bucket: "boxland",
+  scheme: "http://"
+
+config :boxland, :cdn_base_url, "http://localhost:9000/boxland"
+
+config :boxland, :oauth,
+  google: [client_id: "", client_secret: ""],
+  apple: [client_id: "", client_secret: ""],
+  discord: [client_id: "", client_secret: ""]
+
+config :boxland, Boxland.Mailer, adapter: Swoosh.Adapters.Local
+
+import_config "secrets.exs"
