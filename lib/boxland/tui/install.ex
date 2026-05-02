@@ -90,6 +90,23 @@ defmodule Boxland.TUI.Install do
     }}
   end
 
+  # ---------- Stage 3: Docker check ----------
+
+  def stage_3_docker_check(deps \\ default_deps()) do
+    case deps.run_cmd.("docker", ["info"], stderr_to_stdout: true) do
+      {_, 0} ->
+        :ok
+
+      {output, _code} ->
+        suggestion = "Install Docker Desktop from https://docker.com/products/docker-desktop and ensure it's running, then retry."
+        {:error, %{
+          stage: :docker_check,
+          reason: String.trim(output) |> String.slice(0, 300),
+          suggestion: suggestion
+        }}
+    end
+  end
+
   # ---------- Defaults ----------
 
   defp default_deps do

@@ -84,4 +84,23 @@ defmodule Boxland.TUI.InstallTest do
       assert reason =~ "brew install vips failed"
     end
   end
+
+  describe "stage_3_docker_check/1" do
+    test "ok when docker info returns 0" do
+      deps = %{run_cmd: fn "docker", ["info"], _ -> {"Server Version: 24.0.6", 0} end}
+      assert :ok = Install.stage_3_docker_check(deps)
+    end
+
+    test "errors with install instructions when docker missing" do
+      deps = %{run_cmd: fn "docker", _, _ -> {"command not found", 127} end}
+      assert {:error, %{stage: :docker_check, suggestion: s}} = Install.stage_3_docker_check(deps)
+      assert s =~ "Install Docker"
+    end
+
+    test "errors when daemon not running" do
+      deps = %{run_cmd: fn "docker", _, _ -> {"Cannot connect to the Docker daemon", 1} end}
+      assert {:error, %{stage: :docker_check, reason: reason}} = Install.stage_3_docker_check(deps)
+      assert reason =~ "Cannot connect"
+    end
+  end
 end
