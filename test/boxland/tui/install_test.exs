@@ -330,4 +330,86 @@ defmodule Boxland.TUI.InstallTest do
       assert version == "0.1.0"
     end
   end
+
+  describe "run/1" do
+    setup do
+      tmp = Path.join(System.tmp_dir!(), "boxland-test-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(tmp)
+      on_exit(fn -> File.rm_rf!(tmp) end)
+      {:ok, tmp: tmp}
+    end
+
+    test "happy path: all stages succeed, marker written", %{tmp: tmp} do
+      deps = %{
+        os: fn -> {:darwin, :aarch64} end,
+        which: fn _ -> {:ok, "/usr/local/bin/x"} end,
+        run_cmd: fn
+          "docker", ["info"], _ -> {"OK", 0}
+          "docker", ["compose", "-f", _, "up", "-d"], _ -> {"Started", 0}
+          "docker", ["compose", "-f", _, "ps", "--format", "json"], _ ->
+            {~s({"Service":"postgres","Health":"healthy"}\n{"Service":"redis","Health":"healthy"}), 0}
+        end,
+        data_dir: fn -> tmp end,
+        file_exists: &File.exists?/1,
+        file_write: &File.write/2,
+        mkdir_p: &File.mkdir_p/1,
+        chmod: &File.chmod/2,
+        sleep: fn _ -> :ok end,
+        release_migrate: fn -> :ok end,
+        now: fn -> ~U[2026-05-01 12:00:00Z] end,
+        version: fn -> "0.1.0" end
+      }
+      assert {:ok, _report} = Install.run(deps)
+      assert File.exists?(Path.join(tmp, "installed"))
+      assert File.exists?(Path.join(tmp, "config.exs"))
+      assert File.exists?(Path.join(tmp, "secrets.exs"))
+      assert File.exists?(Path.join(tmp, "services/docker-compose.yml"))
+    end
+
+    test "stops at first failure, marker not written", %{tmp: tmp} do
+      deps = %{
+        os: fn -> {:darwin, :aarch64} end,
+        which: fn _ -> {:ok, "/usr/local/bin/x"} end,
+        run_cmd: fn
+          "docker", ["info"], _ -> {"daemon down", 1}    # stage 3 fails
+          _, _, _ -> raise "should not reach"
+        end,
+        data_dir: fn -> tmp end,
+        file_exists: &File.exists?/1,
+        file_write: &File.write/2,
+        mkdir_p: &File.mkdir_p/1,
+        chmod: &File.chmod/2,
+        sleep: fn _ -> :ok end,
+        release_migrate: fn -> raise "should not reach" end,
+        now: fn -> ~U[2026-05-01 12:00:00Z] end,
+        version: fn -> "0.1.0" end
+      }
+      assert {:error, %{stage: :docker_check}} = Install.run(deps)
+      refute File.exists?(Path.join(tmp, "installed"))
+    end
+
+    test "is idempotent on re-run after success", %{tmp: tmp} do
+      deps = %{
+        os: fn -> {:darwin, :aarch64} end,
+        which: fn _ -> {:ok, "/usr/local/bin/x"} end,
+        run_cmd: fn
+          "docker", ["info"], _ -> {"OK", 0}
+          "docker", ["compose", "-f", _, "up", "-d"], _ -> {"Started", 0}
+          "docker", ["compose", "-f", _, "ps", "--format", "json"], _ ->
+            {~s({"Service":"postgres","Health":"healthy"}\n{"Service":"redis","Health":"healthy"}), 0}
+        end,
+        data_dir: fn -> tmp end,
+        file_exists: &File.exists?/1,
+        file_write: &File.write/2,
+        mkdir_p: &File.mkdir_p/1,
+        chmod: &File.chmod/2,
+        sleep: fn _ -> :ok end,
+        release_migrate: fn -> :ok end,
+        now: fn -> ~U[2026-05-01 12:00:00Z] end,
+        version: fn -> "0.1.0" end
+      }
+      assert {:ok, _} = Install.run(deps)
+      assert {:ok, _} = Install.run(deps)
+    end
+  end
 end

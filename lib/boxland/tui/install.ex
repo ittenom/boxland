@@ -297,6 +297,29 @@ defmodule Boxland.TUI.Install do
     end
   end
 
+  # ---------- Orchestrator ----------
+
+  @doc """
+  Run all 9 stages sequentially. On success, writes the install marker
+  and returns `{:ok, report}` where `report` is the Stage 1 pre-flight
+  output. On failure, returns `{:error, error_struct}` from the failed
+  stage; subsequent stages are skipped; marker is NOT written.
+  """
+  def run(deps \\ default_deps()) do
+    with {:ok, report} <- stage_1_preflight(deps),
+         :ok <- stage_2_os_packages(report, deps),
+         :ok <- stage_3_docker_check(deps),
+         :ok <- stage_4_data_directory(deps),
+         :ok <- stage_5_secrets(deps),
+         :ok <- stage_6_config(deps),
+         :ok <- stage_7_compose(deps),
+         :ok <- stage_8_services(deps),
+         :ok <- stage_9_migrate(deps),
+         :ok <- write_marker(deps) do
+      {:ok, report}
+    end
+  end
+
   # ---------- Defaults ----------
 
   defp default_deps do
