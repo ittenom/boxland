@@ -51,4 +51,4 @@ ENV HOME=/app PORT=4000 PHX_SERVER=true RUN_MIGRATIONS_ON_BOOT=true
 EXPOSE 4000
 # Default CMD opens the TUI (argv-less = TUI per Boxland.Application's dispatch).
 # Use `docker run boxland install` etc. for non-interactive subcommands.
-CMD ["bin/boxland"]
+CMD ["bin/boxland", "start"]

@@ -1,25 +1,61 @@
 #!/bin/sh
 # Boxland launcher.
-# Runs the TUI in a Docker container with the right flags.
-# Pass any arguments through (e.g. `boxland install`, `boxland --version`).
+# Runs the TUI in a Docker container.
+# v1 supported subcommands: (default) → opens TUI; `--version` → prints version.
+# Other CLI subcommands are reachable via `bin/boxland eval` for power users
+# but not yet exposed at the launcher level.
 
 set -e
+
+# Update this when bumping mix.exs version.
+BOXLAND_VERSION="0.1.0"
 
 DATA_DIR="${BOXLAND_DATA_DIR:-$HOME/.boxland}"
 IMAGE="${BOXLAND_IMAGE:-boxland:dev-test}"
 NETWORK="boxland-net"
 
+case "$1" in
+  --version|-v)
+    echo "boxland $BOXLAND_VERSION"
+    exit 0
+    ;;
+  --help|-h)
+    cat <<EOF
+Boxland — terminal launcher for the Boxland 2D MMORPG engine + IDE.
+
+Usage:
+  boxland             Open the TUI (default)
+  boxland --version   Print version
+  boxland --help      This message
+
+The TUI handles install + server lifecycle. From inside the TUI:
+  Install         — first-run setup (deps, secrets, docker-compose, migrations)
+  Run Server      — toggle Phoenix on/off
+  Quit            — shut down everything
+EOF
+    exit 0
+    ;;
+  "")
+    : # fall through to TUI launch below
+    ;;
+  *)
+    echo "Unknown command: $1" >&2
+    echo "Run 'boxland --help' for usage." >&2
+    exit 1
+    ;;
+esac
+
 # Ensure data dir exists and the named network exists (idempotent)
 mkdir -p "$DATA_DIR"
 docker network inspect "$NETWORK" >/dev/null 2>&1 || docker network create "$NETWORK" >/dev/null
 
-# TUI needs interactive TTY (-it). For non-interactive subcommands like
-# `boxland install` or `boxland --version`, -it still works (extra TTY
-# allocation is harmless when stdin is also a TTY; mostly invisible to scripts).
+# TUI needs interactive TTY (-it). The image's CMD is `bin/boxland start`
+# (set by the Dockerfile from foundation Plan Task 24) — the release boots
+# normally and Application.start spawns the TUI process.
 exec docker run -it --rm \
     --name boxland-tui \
     --network "$NETWORK" \
     -v "$DATA_DIR:/app/.boxland" \
     -v /var/run/docker.sock:/var/run/docker.sock \
     -p 4000:4000 \
-    "$IMAGE" "$@"
+    "$IMAGE"

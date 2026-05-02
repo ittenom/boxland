@@ -43,6 +43,11 @@ defmodule Boxland.Application do
   defp do_dispatch_argv do
     case System.argv() do
       [] -> Boxland.TUI.Server.start_link()       # default: open TUI
+
+      ["start" | _] ->
+        # Release boot via `bin/boxland start` — launch TUI as the foreground process.
+        Boxland.TUI.Server.start_link()
+
       ["install" | argv] -> System.halt(Boxland.CLI.Install.main(argv))
       ["run" | argv] -> Boxland.CLI.Run.main(argv)
       ["--version"] ->
