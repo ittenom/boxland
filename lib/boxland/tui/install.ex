@@ -107,6 +107,22 @@ defmodule Boxland.TUI.Install do
     end
   end
 
+  # ---------- Stage 4: Data directory ----------
+
+  def stage_4_data_directory(deps \\ default_deps()) do
+    base = deps.data_dir.()
+    services = Path.join(base, "services")
+
+    with :ok <- deps.mkdir_p.(Path.join(services, "pg_data")),
+         :ok <- deps.mkdir_p.(Path.join(services, "minio_data")),
+         :ok <- deps.chmod.(base, 0o700) do
+      :ok
+    else
+      {:error, reason} ->
+        {:error, %{stage: :data_directory, reason: "Failed: #{inspect(reason)}", suggestion: nil}}
+    end
+  end
+
   # ---------- Defaults ----------
 
   defp default_deps do

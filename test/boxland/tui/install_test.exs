@@ -103,4 +103,36 @@ defmodule Boxland.TUI.InstallTest do
       assert reason =~ "Cannot connect"
     end
   end
+
+  describe "stage_4_data_directory/1" do
+    setup do
+      tmp = Path.join(System.tmp_dir!(), "boxland-test-#{System.unique_integer([:positive])}")
+      on_exit(fn -> File.rm_rf!(tmp) end)
+      {:ok, tmp: tmp}
+    end
+
+    test "creates the directory tree", %{tmp: tmp} do
+      deps = %{
+        data_dir: fn -> tmp end,
+        mkdir_p: &File.mkdir_p/1,
+        chmod: &File.chmod/2
+      }
+      assert :ok = Install.stage_4_data_directory(deps)
+      assert File.dir?(Path.join(tmp, "services/pg_data"))
+      assert File.dir?(Path.join(tmp, "services/minio_data"))
+    end
+
+    test "sets mode 0700 on data dir", %{tmp: tmp} do
+      deps = %{data_dir: fn -> tmp end, mkdir_p: &File.mkdir_p/1, chmod: &File.chmod/2}
+      assert :ok = Install.stage_4_data_directory(deps)
+      mode = File.stat!(tmp).mode |> rem(0o1000)
+      assert mode == 0o700
+    end
+
+    test "is idempotent on re-run", %{tmp: tmp} do
+      deps = %{data_dir: fn -> tmp end, mkdir_p: &File.mkdir_p/1, chmod: &File.chmod/2}
+      assert :ok = Install.stage_4_data_directory(deps)
+      assert :ok = Install.stage_4_data_directory(deps)
+    end
+  end
 end
