@@ -293,4 +293,41 @@ defmodule Boxland.TUI.InstallTest do
       assert reason =~ "Timeout"
     end
   end
+
+  describe "stage_9_migrate/1" do
+    test "calls release_migrate dep and returns ok" do
+      deps = %{release_migrate: fn -> send(self(), :migrated); :ok end}
+      assert :ok = Install.stage_9_migrate(deps)
+      assert_received :migrated
+    end
+
+    test "wraps errors from release_migrate" do
+      deps = %{release_migrate: fn -> raise "connection refused" end}
+      assert {:error, %{stage: :migrate, reason: reason}} = Install.stage_9_migrate(deps)
+      assert reason =~ "connection refused"
+    end
+  end
+
+  describe "write_marker/1" do
+    setup do
+      tmp = Path.join(System.tmp_dir!(), "boxland-test-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(tmp)
+      on_exit(fn -> File.rm_rf!(tmp) end)
+      {:ok, tmp: tmp}
+    end
+
+    test "writes timestamp + version on two lines", %{tmp: tmp} do
+      deps = %{
+        data_dir: fn -> tmp end,
+        now: fn -> ~U[2026-05-01 12:00:00Z] end,
+        version: fn -> "0.1.0" end,
+        file_write: &File.write/2
+      }
+      assert :ok = Install.write_marker(deps)
+      content = File.read!(Path.join(tmp, "installed"))
+      [ts, version] = String.split(String.trim(content), "\n")
+      assert ts == "2026-05-01T12:00:00Z"
+      assert version == "0.1.0"
+    end
+  end
 end

@@ -248,6 +248,55 @@ defmodule Boxland.TUI.Install do
     Map.get(statuses, "postgres") == "healthy" and Map.get(statuses, "redis") == "healthy"
   end
 
+  # ---------- Stage 9: Migrations ----------
+
+  def stage_9_migrate(deps \\ default_deps()) do
+    try do
+      :ok = deps.release_migrate.()
+      :ok
+    rescue
+      e ->
+        {:error, %{
+          stage: :migrate,
+          reason: "Migration failed: #{Exception.message(e)}",
+          suggestion: nil
+        }}
+    end
+  end
+
+  # ---------- Marker file ----------
+
+  def write_marker(deps \\ default_deps()) do
+    path = Path.join(deps.data_dir.(), "installed")
+    timestamp = deps.now.() |> DateTime.to_iso8601()
+    version = deps.version.()
+    content = "#{timestamp}\n#{version}\n"
+
+    case deps.file_write.(path, content) do
+      :ok -> :ok
+      {:error, reason} ->
+        {:error, %{stage: :marker, reason: "Failed to write marker: #{inspect(reason)}", suggestion: nil}}
+    end
+  end
+
+  @doc "Read the installed marker. Returns nil if missing."
+  def read_marker(deps \\ default_deps()) do
+    path = Path.join(deps.data_dir.(), "installed")
+    case File.read(path) do
+      {:ok, content} ->
+        case String.split(String.trim(content), "\n") do
+          [ts, version] ->
+            with {:ok, dt, _} <- DateTime.from_iso8601(ts) do
+              %{installed_at: dt, version: version}
+            else
+              _ -> nil
+            end
+          _ -> nil
+        end
+      _ -> nil
+    end
+  end
+
   # ---------- Defaults ----------
 
   defp default_deps do
