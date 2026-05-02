@@ -23,9 +23,12 @@ defmodule Boxland.TUI.LogBackend do
   def format(level, message, metadata \\ %{}) do
     time = Map.get(metadata, :time, DateTime.utc_now())
     {h, m, s, ms} = {time.hour, time.minute, time.second, div(elem(time.microsecond, 0), 1000)}
+
     Enum.join([
       :io_lib.format("~2..0B:~2..0B:~2..0B.~3..0B", [h, m, s, ms]) |> IO.iodata_to_binary(),
-      " [", to_string(level), "] ",
+      " [",
+      to_string(level),
+      "] ",
       message
     ])
   end

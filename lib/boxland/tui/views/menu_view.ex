@@ -21,11 +21,12 @@ defmodule Boxland.TUI.Views.MenuView do
     - :data_dir — String.t (~/.boxland or wherever)
   """
   def render(state) do
-    items = Menu.items(
-      installed_at: state.installed_at,
-      server_status: state.server_status,
-      upgrade_pending: state.upgrade_pending
-    )
+    items =
+      Menu.items(
+        installed_at: state.installed_at,
+        server_status: state.server_status,
+        upgrade_pending: state.upgrade_pending
+      )
 
     %{
       type: :container,
@@ -93,13 +94,23 @@ defmodule Boxland.TUI.Views.MenuView do
   """
   def flatten_for_test(tree) when is_map(tree) do
     case tree do
-      %{type: :container, children: kids} -> Enum.flat_map(kids, &flatten_for_test/1)
-      %{type: :logo, content: c} -> String.split(c, "\n")
+      %{type: :container, children: kids} ->
+        Enum.flat_map(kids, &flatten_for_test/1)
+
+      %{type: :logo, content: c} ->
+        String.split(c, "\n")
+
       %{type: :menu, items: items} ->
         Enum.map(items, fn i -> "#{i.marker} #{i.glyph} #{i.label}" end)
-      %{type: :info_strip, content: c} -> [c]
-      %{type: :key_hints, content: c} -> [c]
-      _ -> []
+
+      %{type: :info_strip, content: c} ->
+        [c]
+
+      %{type: :key_hints, content: c} ->
+        [c]
+
+      _ ->
+        []
     end
   end
 end

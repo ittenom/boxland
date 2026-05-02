@@ -65,7 +65,10 @@ defmodule Boxland.Server.Supervisor do
 
   defp phoenix_children do
     [
-      Supervisor.child_spec({DNSCluster, query: Application.get_env(:boxland, :dns_cluster_query) || :ignore}, id: :dns_cluster),
+      Supervisor.child_spec(
+        {DNSCluster, query: Application.get_env(:boxland, :dns_cluster_query) || :ignore},
+        id: :dns_cluster
+      ),
       Supervisor.child_spec(WebTelemetry, id: :telemetry),
       Supervisor.child_spec(WebEndpoint, id: :endpoint)
     ]

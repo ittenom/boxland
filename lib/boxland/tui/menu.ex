@@ -42,45 +42,117 @@ defmodule Boxland.TUI.Menu do
 
   defp pre_install_items do
     [
-      %{id: :install, label: "Install", description: "Install dependencies and set up Boxland.",
-        glyph: "★", style: :featured, disabled?: false},
-      %{id: :run_server, label: "Run Server", description: "Install must complete first.",
-        glyph: "▶", style: :muted, disabled?: true},
-      %{id: :quit, label: "Quit", description: "Exit Boxland.",
-        glyph: "⏻", style: :muted, disabled?: false}
+      %{
+        id: :install,
+        label: "Install",
+        description: "Install dependencies and set up Boxland.",
+        glyph: "★",
+        style: :featured,
+        disabled?: false
+      },
+      %{
+        id: :run_server,
+        label: "Run Server",
+        description: "Install must complete first.",
+        glyph: "▶",
+        style: :muted,
+        disabled?: true
+      },
+      %{
+        id: :quit,
+        label: "Quit",
+        description: "Exit Boxland.",
+        glyph: "⏻",
+        style: :muted,
+        disabled?: false
+      }
     ]
   end
 
   defp stopped_items do
     [
-      %{id: :run_server, label: "Run Server", description: "Phoenix on :4000",
-        glyph: "▶", style: :featured, disabled?: false},
-      %{id: :recheck_install, label: "Re-check Install", description: "Verify deps + heal.",
-        glyph: "⟲", style: :demoted, disabled?: false},
-      %{id: :quit, label: "Quit", description: "Exit Boxland.",
-        glyph: "⏻", style: :muted, disabled?: false}
+      %{
+        id: :run_server,
+        label: "Run Server",
+        description: "Phoenix on :4000",
+        glyph: "▶",
+        style: :featured,
+        disabled?: false
+      },
+      %{
+        id: :recheck_install,
+        label: "Re-check Install",
+        description: "Verify deps + heal.",
+        glyph: "⟲",
+        style: :demoted,
+        disabled?: false
+      },
+      %{
+        id: :quit,
+        label: "Quit",
+        description: "Exit Boxland.",
+        glyph: "⏻",
+        style: :muted,
+        disabled?: false
+      }
     ]
   end
 
   defp running_items do
     [
-      %{id: :stop_server, label: "Stop Server", description: "Stop Phoenix gracefully.",
-        glyph: "■", style: :featured, disabled?: false},
-      %{id: :recheck_install, label: "Re-check Install", description: "Stop server first.",
-        glyph: "⟲", style: :muted, disabled?: true},
-      %{id: :quit, label: "Quit", description: "Stop server and exit.",
-        glyph: "⏻", style: :muted, disabled?: false}
+      %{
+        id: :stop_server,
+        label: "Stop Server",
+        description: "Stop Phoenix gracefully.",
+        glyph: "■",
+        style: :featured,
+        disabled?: false
+      },
+      %{
+        id: :recheck_install,
+        label: "Re-check Install",
+        description: "Stop server first.",
+        glyph: "⟲",
+        style: :muted,
+        disabled?: true
+      },
+      %{
+        id: :quit,
+        label: "Quit",
+        description: "Stop server and exit.",
+        glyph: "⏻",
+        style: :muted,
+        disabled?: false
+      }
     ]
   end
 
   defp upgrade_pending_items do
     [
-      %{id: :recheck_install, label: "Re-check Install", description: "Upgrade detected — recommended.",
-        glyph: "⟲", style: :featured, disabled?: false},
-      %{id: :run_server, label: "Run Server", description: "Phoenix on :4000",
-        glyph: "▶", style: :demoted, disabled?: false},
-      %{id: :quit, label: "Quit", description: "Exit Boxland.",
-        glyph: "⏻", style: :muted, disabled?: false}
+      %{
+        id: :recheck_install,
+        label: "Re-check Install",
+        description: "Upgrade detected — recommended.",
+        glyph: "⟲",
+        style: :featured,
+        disabled?: false
+      },
+      %{
+        id: :run_server,
+        label: "Run Server",
+        description: "Phoenix on :4000",
+        glyph: "▶",
+        style: :demoted,
+        disabled?: false
+      },
+      %{
+        id: :quit,
+        label: "Quit",
+        description: "Exit Boxland.",
+        glyph: "⏻",
+        style: :muted,
+        disabled?: false
+      }
     ]
   end
 
@@ -90,7 +162,8 @@ defmodule Boxland.TUI.Menu do
     step = if direction == :down, do: 1, else: -1
 
     Stream.iterate(current_idx, &rem(&1 + step + n, n))
-    |> Stream.drop(1)   # don't return current
+    # don't return current
+    |> Stream.drop(1)
     |> Enum.find(fn i -> not Enum.at(items, i).disabled? end)
   end
 

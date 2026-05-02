@@ -10,16 +10,26 @@ defmodule Boxland.TUI.Theme do
   @doc "Named color tokens used throughout TUI views."
   def colors do
     %{
-      accent_warm:     {0xff, 0x9e, 0xc7},  # soft pink
-      accent_warm_end: {0xff, 0xb8, 0x6b},  # warm orange (logo gradient endpoint)
-      accent_cool:     {0x5c, 0xcf, 0xe6},  # cool blue (status indicators)
-      success:         {0x3d, 0xd9, 0x7c},  # green
-      warning:         {0xf4, 0xc4, 0x30},  # amber
-      error:           {0xf0, 0x68, 0x70},  # rose-red
-      text:            {0xe6, 0xe6, 0xe6},  # near-white
-      text_muted:      {0x99, 0x99, 0x99},  # gray60
-      text_subtle:     {0x66, 0x66, 0x66},  # gray40
-      border:          {0x66, 0x66, 0x66}   # gray40
+      # soft pink
+      accent_warm: {0xFF, 0x9E, 0xC7},
+      # warm orange (logo gradient endpoint)
+      accent_warm_end: {0xFF, 0xB8, 0x6B},
+      # cool blue (status indicators)
+      accent_cool: {0x5C, 0xCF, 0xE6},
+      # green
+      success: {0x3D, 0xD9, 0x7C},
+      # amber
+      warning: {0xF4, 0xC4, 0x30},
+      # rose-red
+      error: {0xF0, 0x68, 0x70},
+      # near-white
+      text: {0xE6, 0xE6, 0xE6},
+      # gray60
+      text_muted: {0x99, 0x99, 0x99},
+      # gray40
+      text_subtle: {0x66, 0x66, 0x66},
+      # gray40
+      border: {0x66, 0x66, 0x66}
     }
   end
 
@@ -64,6 +74,7 @@ defmodule Boxland.TUI.Theme do
   # Pads all lines to the same width using the longest line as reference.
   defp normalize_width(lines) do
     max_len = Enum.map(lines, &String.length/1) |> Enum.max()
+
     Enum.map(lines, fn line ->
       padding = max_len - String.length(line)
       line <> String.duplicate(" ", padding)

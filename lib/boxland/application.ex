@@ -15,7 +15,12 @@ defmodule Boxland.Application do
       Boxland.Repo,
       {Phoenix.PubSub, name: Boxland.PubSub},
       {Finch, name: Boxland.Finch},
-      %{id: Boxland.TUI.LogBackend, start: {Boxland.TUI.LogBackend, :start_link, [[]]}, restart: :transient},  # ADD this
+      # ADD this
+      %{
+        id: Boxland.TUI.LogBackend,
+        start: {Boxland.TUI.LogBackend, :start_link, [[]]},
+        restart: :transient
+      },
       Boxland.Server.Supervisor
     ]
 
@@ -28,13 +33,15 @@ defmodule Boxland.Application do
         dispatch_argv()
         {:ok, sup}
 
-      other -> other
+      other ->
+        other
     end
   end
 
   defp dispatch_argv do
     if Code.ensure_loaded?(Mix) and Mix.env() == :test do
-      :ok   # Don't dispatch during tests
+      # Don't dispatch during tests
+      :ok
     else
       do_dispatch_argv()
     end
@@ -42,17 +49,24 @@ defmodule Boxland.Application do
 
   defp do_dispatch_argv do
     case System.argv() do
-      [] -> Boxland.TUI.Server.start_link()       # default: open TUI
+      # default: open TUI
+      [] ->
+        Boxland.TUI.Server.start_link()
 
       ["start" | _] ->
         # Release boot via `bin/boxland start` — launch TUI as the foreground process.
         Boxland.TUI.Server.start_link()
 
-      ["install" | argv] -> System.halt(Boxland.CLI.Install.main(argv))
-      ["run" | argv] -> Boxland.CLI.Run.main(argv)
+      ["install" | argv] ->
+        System.halt(Boxland.CLI.Install.main(argv))
+
+      ["run" | argv] ->
+        Boxland.CLI.Run.main(argv)
+
       ["--version"] ->
         IO.puts("boxland #{Application.spec(:boxland, :vsn)}")
         System.halt(0)
+
       other ->
         IO.puts(:stderr, "Unknown command: #{Enum.join(other, " ")}")
         IO.puts(:stderr, "Usage: boxland [install | run | --version]")

@@ -58,36 +58,43 @@ defmodule Boxland.TUI.Install do
 
   def stage_2_os_packages(%{installed: %{libvips: false}, package_manager: :brew}, deps) do
     case deps.run_cmd.("brew", ["install", "vips"], stderr_to_stdout: true) do
-      {_, 0} -> :ok
+      {_, 0} ->
+        :ok
+
       {output, code} ->
-        {:error, %{
-          stage: :os_packages,
-          reason: "brew install vips failed (exit #{code}): #{output}",
-          suggestion: nil
-        }}
+        {:error,
+         %{
+           stage: :os_packages,
+           reason: "brew install vips failed (exit #{code}): #{output}",
+           suggestion: nil
+         }}
     end
   end
 
   def stage_2_os_packages(%{installed: %{libvips: false}, package_manager: pm}, _deps)
       when pm in [:apt, :dnf, :yum] do
-    cmd = case pm do
-      :apt -> "sudo apt install libvips42"
-      :dnf -> "sudo dnf install vips"
-      :yum -> "sudo yum install vips"
-    end
-    {:error, %{
-      stage: :os_packages,
-      reason: "libvips missing; install requires sudo and isn't escalated automatically",
-      suggestion: "Run: #{cmd}, then re-run Boxland Install."
-    }}
+    cmd =
+      case pm do
+        :apt -> "sudo apt install libvips42"
+        :dnf -> "sudo dnf install vips"
+        :yum -> "sudo yum install vips"
+      end
+
+    {:error,
+     %{
+       stage: :os_packages,
+       reason: "libvips missing; install requires sudo and isn't escalated automatically",
+       suggestion: "Run: #{cmd}, then re-run Boxland Install."
+     }}
   end
 
   def stage_2_os_packages(%{installed: %{libvips: false}, package_manager: nil}, _deps) do
-    {:error, %{
-      stage: :os_packages,
-      reason: "libvips missing and no supported package manager detected",
-      suggestion: "Install libvips manually for your platform, then re-run Boxland Install."
-    }}
+    {:error,
+     %{
+       stage: :os_packages,
+       reason: "libvips missing and no supported package manager detected",
+       suggestion: "Install libvips manually for your platform, then re-run Boxland Install."
+     }}
   end
 
   # ---------- Stage 3: Docker check ----------
@@ -98,12 +105,15 @@ defmodule Boxland.TUI.Install do
         :ok
 
       {output, _code} ->
-        suggestion = "Install Docker Desktop from https://docker.com/products/docker-desktop and ensure it's running, then retry."
-        {:error, %{
-          stage: :docker_check,
-          reason: String.trim(output) |> String.slice(0, 300),
-          suggestion: suggestion
-        }}
+        suggestion =
+          "Install Docker Desktop from https://docker.com/products/docker-desktop and ensure it's running, then retry."
+
+        {:error,
+         %{
+           stage: :docker_check,
+           reason: String.trim(output) |> String.slice(0, 300),
+           suggestion: suggestion
+         }}
     end
   end
 
@@ -132,6 +142,7 @@ defmodule Boxland.TUI.Install do
       :ok
     else
       secret = :crypto.strong_rand_bytes(64) |> Base.url_encode64(padding: false)
+
       content = """
       import Config
 
@@ -165,7 +176,9 @@ defmodule Boxland.TUI.Install do
       content = EEx.eval_file(template_path)
 
       case deps.file_write.(path, content) do
-        :ok -> :ok
+        :ok ->
+          :ok
+
         {:error, reason} ->
           {:error, %{stage: :config, reason: "Failed: #{inspect(reason)}", suggestion: nil}}
       end
@@ -182,7 +195,9 @@ defmodule Boxland.TUI.Install do
     content = EEx.eval_file(template_path, assigns: [data_dir: base])
 
     case deps.file_write.(path, content) do
-      :ok -> :ok
+      :ok ->
+        :ok
+
       {:error, reason} ->
         {:error, %{stage: :compose, reason: "Failed: #{inspect(reason)}", suggestion: nil}}
     end
@@ -195,16 +210,21 @@ defmodule Boxland.TUI.Install do
     compose_file = Path.join(base, "services/docker-compose.yml")
     max_polls = Map.get(deps, :max_health_polls, 30)
 
-    with {_, 0} <- deps.run_cmd.("docker", ["compose", "-f", compose_file, "up", "-d"], stderr_to_stdout: true),
+    with {_, 0} <-
+           deps.run_cmd.("docker", ["compose", "-f", compose_file, "up", "-d"],
+             stderr_to_stdout: true
+           ),
          :ok <- poll_health(compose_file, max_polls, deps) do
       :ok
     else
       {output, code} when is_binary(output) ->
-        {:error, %{
-          stage: :services,
-          reason: "docker compose up failed (exit #{code}): #{String.slice(output, 0, 300)}",
-          suggestion: "Verify Docker daemon is running and ports 5432/6379/9000/9001 are free, then retry."
-        }}
+        {:error,
+         %{
+           stage: :services,
+           reason: "docker compose up failed (exit #{code}): #{String.slice(output, 0, 300)}",
+           suggestion:
+             "Verify Docker daemon is running and ports 5432/6379/9000/9001 are free, then retry."
+         }}
 
       {:error, reason} ->
         {:error, %{stage: :services, reason: reason, suggestion: nil}}
@@ -212,7 +232,9 @@ defmodule Boxland.TUI.Install do
   end
 
   defp poll_health(compose_file, polls_remaining, deps) when polls_remaining > 0 do
-    case deps.run_cmd.("docker", ["compose", "-f", compose_file, "ps", "--format", "json"], stderr_to_stdout: true) do
+    case deps.run_cmd.("docker", ["compose", "-f", compose_file, "ps", "--format", "json"],
+           stderr_to_stdout: true
+         ) do
       {output, 0} ->
         if all_critical_healthy?(output) do
           :ok
@@ -256,11 +278,12 @@ defmodule Boxland.TUI.Install do
       :ok
     rescue
       e ->
-        {:error, %{
-          stage: :migrate,
-          reason: "Migration failed: #{Exception.message(e)}",
-          suggestion: nil
-        }}
+        {:error,
+         %{
+           stage: :migrate,
+           reason: "Migration failed: #{Exception.message(e)}",
+           suggestion: nil
+         }}
     end
   end
 
@@ -273,15 +296,19 @@ defmodule Boxland.TUI.Install do
     content = "#{timestamp}\n#{version}\n"
 
     case deps.file_write.(path, content) do
-      :ok -> :ok
+      :ok ->
+        :ok
+
       {:error, reason} ->
-        {:error, %{stage: :marker, reason: "Failed to write marker: #{inspect(reason)}", suggestion: nil}}
+        {:error,
+         %{stage: :marker, reason: "Failed to write marker: #{inspect(reason)}", suggestion: nil}}
     end
   end
 
   @doc "Read the installed marker. Returns nil if missing."
   def read_marker(deps \\ default_deps()) do
     path = Path.join(deps.data_dir.(), "installed")
+
     case File.read(path) do
       {:ok, content} ->
         case String.split(String.trim(content), "\n") do
@@ -291,9 +318,13 @@ defmodule Boxland.TUI.Install do
             else
               _ -> nil
             end
-          _ -> nil
+
+          _ ->
+            nil
         end
-      _ -> nil
+
+      _ ->
+        nil
     end
   end
 
