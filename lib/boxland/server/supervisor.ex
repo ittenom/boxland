@@ -38,7 +38,27 @@ defmodule Boxland.Server.Supervisor do
       end
     end)
 
-    :ok
+    wait_for_endpoint_ready()
+  end
+
+  # Phoenix.Endpoint creates an ETS table named after the endpoint module that
+  # holds runtime config (e.g. :secret_key_base). It's populated as part of
+  # Endpoint init, but tests that race with restart can observe the supervisor
+  # report "started" before the table exists. Block here so callers don't see
+  # a half-initialized Endpoint.
+  defp wait_for_endpoint_ready(retries \\ 50)
+
+  defp wait_for_endpoint_ready(0), do: :ok
+
+  defp wait_for_endpoint_ready(retries) do
+    case :ets.whereis(WebEndpoint) do
+      :undefined ->
+        Process.sleep(10)
+        wait_for_endpoint_ready(retries - 1)
+
+      _ ->
+        :ok
+    end
   end
 
   @doc """

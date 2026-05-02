@@ -1,6 +1,4 @@
 defmodule Boxland.Application do
-  # See https://hexdocs.pm/elixir/Application.html
-  # for more information on OTP Applications
   @moduledoc false
 
   use Application
@@ -15,7 +13,6 @@ defmodule Boxland.Application do
       Boxland.Repo,
       {Phoenix.PubSub, name: Boxland.PubSub},
       {Finch, name: Boxland.Finch},
-      # ADD this
       %{
         id: Boxland.TUI.LogBackend,
         start: {Boxland.TUI.LogBackend, :start_link, [[]]},
@@ -24,12 +21,11 @@ defmodule Boxland.Application do
       Boxland.Server.Supervisor
     ]
 
-    # See https://hexdocs.pm/elixir/Supervisor.html
-    # for other strategies and supported options
     opts = [strategy: :one_for_one, name: Boxland.Supervisor]
 
     case Supervisor.start_link(children, opts) do
       {:ok, sup} ->
+        attach_logger_handler()
         dispatch_argv()
         {:ok, sup}
 
@@ -38,9 +34,16 @@ defmodule Boxland.Application do
     end
   end
 
+  defp attach_logger_handler do
+    if not (Code.ensure_loaded?(Mix) and Mix.env() == :test) do
+      _ = :logger.add_handler(:boxland_tui, Boxland.TUI.LoggerHandler, %{})
+    end
+
+    :ok
+  end
+
   defp dispatch_argv do
     if Code.ensure_loaded?(Mix) and Mix.env() == :test do
-      # Don't dispatch during tests
       :ok
     else
       do_dispatch_argv()
@@ -49,14 +52,6 @@ defmodule Boxland.Application do
 
   defp do_dispatch_argv do
     case System.argv() do
-      # default: open TUI
-      [] ->
-        Boxland.TUI.Server.start_link()
-
-      ["start" | _] ->
-        # Release boot via `bin/boxland start` — launch TUI as the foreground process.
-        Boxland.TUI.Server.start_link()
-
       ["install" | argv] ->
         System.halt(Boxland.CLI.Install.main(argv))
 
@@ -67,6 +62,9 @@ defmodule Boxland.Application do
         IO.puts("boxland #{Application.spec(:boxland, :vsn)}")
         System.halt(0)
 
+      argv when argv == [] or hd(argv) == "start" ->
+        spawn_tui()
+
       other ->
         IO.puts(:stderr, "Unknown command: #{Enum.join(other, " ")}")
         IO.puts(:stderr, "Usage: boxland [install | run | --version]")
@@ -74,8 +72,15 @@ defmodule Boxland.Application do
     end
   end
 
-  # Tell Phoenix to update the endpoint configuration
-  # whenever the application is updated.
+  defp spawn_tui do
+    spawn(fn ->
+      _ = TermUI.Runtime.run(root: Boxland.TUI.App)
+      System.halt(0)
+    end)
+
+    :ok
+  end
+
   @impl true
   def config_change(changed, _new, removed) do
     BoxlandWeb.Endpoint.config_change(changed, removed)
