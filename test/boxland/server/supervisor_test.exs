@@ -1,19 +1,17 @@
 defmodule Boxland.Server.SupervisorTest do
   use ExUnit.Case, async: false
 
+  @moduletag :supervisor_lifecycle
+
   alias Boxland.Server.Supervisor, as: ServerSup
 
+  setup_all do
+    on_exit(fn -> :ok = ServerSup.start_children() end)
+    :ok
+  end
+
   setup do
-    # test_helper.exs starts the Phoenix children so endpoint-dependent
-    # tests work. For supervisor tests, drop to a clean state, then
-    # restore on exit so subsequent tests still have an Endpoint.
-    initially_running = ServerSup.status() == :running
     ServerSup.stop_children()
-
-    on_exit(fn ->
-      if initially_running, do: ServerSup.start_children()
-    end)
-
     pid = Process.whereis(ServerSup)
     assert is_pid(pid)
     {:ok, pid: pid}

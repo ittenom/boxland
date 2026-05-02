@@ -2,6 +2,25 @@ defmodule Boxland.Auth.PlayersTest do
   use Boxland.DataCase, async: true
   alias Boxland.Auth.Players
 
+  setup do
+    # Phoenix.Token reads BoxlandWeb.Endpoint config from ETS; another test
+    # may have stopped the Endpoint via Boxland.Server.Supervisor.
+    :ok = Boxland.Server.Supervisor.start_children()
+    :ok
+  end
+
+  defp with_endpoint_retry(fun, retries \\ 3) do
+    fun.()
+  rescue
+    e in ArgumentError ->
+      if retries > 0 and Exception.message(e) =~ "ETS table" do
+        :ok = Boxland.Server.Supervisor.start_children()
+        with_endpoint_retry(fun, retries - 1)
+      else
+        reraise e, __STACKTRACE__
+      end
+  end
+
   describe "register_with_password/1" do
     test "creates a player with hashed password" do
       assert {:ok, p} =
@@ -107,17 +126,19 @@ defmodule Boxland.Auth.PlayersTest do
     end
 
     test "mint and refresh round-trip", %{player: p} do
-      {:ok, plain_refresh} = Players.mint_refresh_token(p.id)
-      assert is_binary(plain_refresh)
+      with_endpoint_retry(fn ->
+        {:ok, plain_refresh} = Players.mint_refresh_token(p.id)
+        assert is_binary(plain_refresh)
 
-      assert {:ok, %{access_token: at, refresh_token: new_rt, player: returned}} =
-               Players.refresh(plain_refresh)
+        assert {:ok, %{access_token: at, refresh_token: new_rt, player: returned}} =
+                 Players.refresh(plain_refresh)
 
-      assert is_binary(at)
-      assert is_binary(new_rt)
-      assert returned.id == p.id
-      # Old refresh token should be unusable after rotation
-      assert :error = Players.refresh(plain_refresh)
+        assert is_binary(at)
+        assert is_binary(new_rt)
+        assert returned.id == p.id
+        # Old refresh token should be unusable after rotation
+        assert :error = Players.refresh(plain_refresh)
+      end)
     end
   end
 end

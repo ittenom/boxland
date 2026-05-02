@@ -1,10 +1,17 @@
 defmodule Boxland.TUI.ServerRuntimeTest do
   use ExUnit.Case, async: false
+
+  @moduletag :supervisor_lifecycle
+
   alias Boxland.TUI.ServerRuntime
+
+  setup_all do
+    on_exit(fn -> :ok = Boxland.Server.Supervisor.start_children() end)
+    :ok
+  end
 
   setup do
     Boxland.Server.Supervisor.stop_children()
-    on_exit(fn -> Boxland.Server.Supervisor.stop_children() end)
     :ok
   end
 

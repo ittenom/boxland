@@ -6,9 +6,35 @@ defmodule Boxland.TUI.LogBackendTest do
 
   setup do
     # Restart with small buffer for predictable testing
-    if Process.whereis(LogBackend), do: GenServer.stop(LogBackend)
+    safe_stop()
     {:ok, _pid} = LogBackend.start_link(buffer_size: 4)
+
+    on_exit(fn ->
+      # Restore the supervised LogBackend with default config so subsequent
+      # test files inherit a healthy instance.
+      safe_stop()
+      _ = LogBackend.start_link([])
+    end)
+
     :ok
+  end
+
+  defp safe_stop do
+    case Process.whereis(LogBackend) do
+      nil -> :ok
+      pid -> try_stop(pid)
+    end
+  end
+
+  defp try_stop(pid) do
+    ref = Process.monitor(pid)
+    Process.exit(pid, :shutdown)
+
+    receive do
+      {:DOWN, ^ref, :process, ^pid, _} -> :ok
+    after
+      500 -> :ok
+    end
   end
 
   test "format/3 produces HH:MM:SS.mmm [level] message" do
