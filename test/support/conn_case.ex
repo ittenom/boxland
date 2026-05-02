@@ -32,6 +32,10 @@ defmodule BoxlandWeb.ConnCase do
   end
 
   setup tags do
+    # Ensure Phoenix children are running — supervisor-mutation tests in
+    # other files may have torn them down. Idempotent.
+    Boxland.Server.Supervisor.start_children()
+
     Boxland.DataCase.setup_sandbox(tags)
     {:ok, conn: Phoenix.ConnTest.build_conn()}
   end
