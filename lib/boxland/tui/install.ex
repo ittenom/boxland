@@ -188,6 +188,66 @@ defmodule Boxland.TUI.Install do
     end
   end
 
+  # ---------- Stage 8: Bring up services ----------
+
+  def stage_8_services(deps \\ default_deps()) do
+    base = deps.data_dir.()
+    compose_file = Path.join(base, "services/docker-compose.yml")
+    max_polls = Map.get(deps, :max_health_polls, 30)
+
+    with {_, 0} <- deps.run_cmd.("docker", ["compose", "-f", compose_file, "up", "-d"], stderr_to_stdout: true),
+         :ok <- poll_health(compose_file, max_polls, deps) do
+      :ok
+    else
+      {output, code} when is_binary(output) ->
+        {:error, %{
+          stage: :services,
+          reason: "docker compose up failed (exit #{code}): #{String.slice(output, 0, 300)}",
+          suggestion: "Verify Docker daemon is running and ports 5432/6379/9000/9001 are free, then retry."
+        }}
+
+      {:error, reason} ->
+        {:error, %{stage: :services, reason: reason, suggestion: nil}}
+    end
+  end
+
+  defp poll_health(compose_file, polls_remaining, deps) when polls_remaining > 0 do
+    case deps.run_cmd.("docker", ["compose", "-f", compose_file, "ps", "--format", "json"], stderr_to_stdout: true) do
+      {output, 0} ->
+        if all_critical_healthy?(output) do
+          :ok
+        else
+          deps.sleep.(1000)
+          poll_health(compose_file, polls_remaining - 1, deps)
+        end
+
+      {_output, _} ->
+        deps.sleep.(1000)
+        poll_health(compose_file, polls_remaining - 1, deps)
+    end
+  end
+
+  defp poll_health(_compose_file, 0, _deps) do
+    {:error, "Timeout waiting for postgres + redis to become healthy"}
+  end
+
+  # We require postgres + redis healthy. minio has no built-in healthcheck,
+  # so we don't gate on it.
+  defp all_critical_healthy?(json_lines) do
+    statuses =
+      json_lines
+      |> String.split("\n", trim: true)
+      |> Enum.flat_map(fn line ->
+        case Jason.decode(line) do
+          {:ok, %{"Service" => svc, "Health" => h}} -> [{svc, h}]
+          _ -> []
+        end
+      end)
+      |> Map.new()
+
+    Map.get(statuses, "postgres") == "healthy" and Map.get(statuses, "redis") == "healthy"
+  end
+
   # ---------- Defaults ----------
 
   defp default_deps do
@@ -202,7 +262,8 @@ defmodule Boxland.TUI.Install do
       file_exists: &File.exists?/1,
       mkdir_p: &File.mkdir_p/1,
       chmod: &File.chmod/2,
-      release_migrate: &Boxland.Release.migrate/0
+      release_migrate: &Boxland.Release.migrate/0,
+      sleep: &:timer.sleep/1
     }
   end
 end

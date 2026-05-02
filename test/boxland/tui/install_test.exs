@@ -235,4 +235,62 @@ defmodule Boxland.TUI.InstallTest do
       refute content =~ "stale"
     end
   end
+
+  describe "stage_8_services/1" do
+    test "ok when compose up succeeds and services healthy" do
+      tmp = Path.join(System.tmp_dir!(), "boxland-test-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(tmp)
+      on_exit(fn -> File.rm_rf!(tmp) end)
+
+      deps = %{
+        data_dir: fn -> tmp end,
+        run_cmd: fn
+          "docker", ["compose", "-f", _, "up", "-d"], _ -> {"Started", 0}
+          "docker", ["compose", "-f", _, "ps", "--format", "json"], _ ->
+            {~s({"Service":"postgres","Health":"healthy"}\n{"Service":"redis","Health":"healthy"}\n{"Service":"minio","Health":""}), 0}
+        end,
+        sleep: fn _ -> :ok end
+      }
+      # mkdir the services subdir
+      File.mkdir_p!(Path.join(tmp, "services"))
+      File.write!(Path.join(tmp, "services/docker-compose.yml"), "")
+
+      assert :ok = Install.stage_8_services(deps)
+    end
+
+    test "errors when docker compose up fails" do
+      tmp = Path.join(System.tmp_dir!(), "boxland-test-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(Path.join(tmp, "services"))
+      File.write!(Path.join(tmp, "services/docker-compose.yml"), "")
+      on_exit(fn -> File.rm_rf!(tmp) end)
+
+      deps = %{
+        data_dir: fn -> tmp end,
+        run_cmd: fn "docker", ["compose", "-f", _, "up", "-d"], _ -> {"port already in use", 1} end,
+        sleep: fn _ -> :ok end
+      }
+      assert {:error, %{stage: :services, reason: reason}} = Install.stage_8_services(deps)
+      assert reason =~ "port already in use"
+    end
+
+    test "errors when health poll times out" do
+      tmp = Path.join(System.tmp_dir!(), "boxland-test-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(Path.join(tmp, "services"))
+      File.write!(Path.join(tmp, "services/docker-compose.yml"), "")
+      on_exit(fn -> File.rm_rf!(tmp) end)
+
+      deps = %{
+        data_dir: fn -> tmp end,
+        run_cmd: fn
+          "docker", ["compose", "-f", _, "up", "-d"], _ -> {"Started", 0}
+          "docker", ["compose", "-f", _, "ps", "--format", "json"], _ ->
+            {~s({"Service":"postgres","Health":"starting"}), 0}
+        end,
+        sleep: fn _ -> :ok end,
+        max_health_polls: 3   # short cycle for tests
+      }
+      assert {:error, %{stage: :services, reason: reason}} = Install.stage_8_services(deps)
+      assert reason =~ "Timeout"
+    end
+  end
 end
