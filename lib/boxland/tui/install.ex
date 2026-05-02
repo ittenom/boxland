@@ -50,6 +50,46 @@ defmodule Boxland.TUI.Install do
 
   defp detect_pm(_, _), do: nil
 
+  # ---------- Stage 2: OS packages ----------
+
+  def stage_2_os_packages(report, deps \\ default_deps())
+
+  def stage_2_os_packages(%{installed: %{libvips: true}}, _deps), do: :ok
+
+  def stage_2_os_packages(%{installed: %{libvips: false}, package_manager: :brew}, deps) do
+    case deps.run_cmd.("brew", ["install", "vips"], stderr_to_stdout: true) do
+      {_, 0} -> :ok
+      {output, code} ->
+        {:error, %{
+          stage: :os_packages,
+          reason: "brew install vips failed (exit #{code}): #{output}",
+          suggestion: nil
+        }}
+    end
+  end
+
+  def stage_2_os_packages(%{installed: %{libvips: false}, package_manager: pm}, _deps)
+      when pm in [:apt, :dnf, :yum] do
+    cmd = case pm do
+      :apt -> "sudo apt install libvips42"
+      :dnf -> "sudo dnf install vips"
+      :yum -> "sudo yum install vips"
+    end
+    {:error, %{
+      stage: :os_packages,
+      reason: "libvips missing; install requires sudo and isn't escalated automatically",
+      suggestion: "Run: #{cmd}, then re-run Boxland Install."
+    }}
+  end
+
+  def stage_2_os_packages(%{installed: %{libvips: false}, package_manager: nil}, _deps) do
+    {:error, %{
+      stage: :os_packages,
+      reason: "libvips missing and no supported package manager detected",
+      suggestion: "Install libvips manually for your platform, then re-run Boxland Install."
+    }}
+  end
+
   # ---------- Defaults ----------
 
   defp default_deps do
