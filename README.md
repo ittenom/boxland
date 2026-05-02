@@ -59,3 +59,70 @@ test/                — ExUnit + LiveView tests
 ## Production deploy
 
 Pushed to `main` → Railway picks up the change → Docker build → BEAM release → auto-migrate on boot → healthcheck on `/healthz`.
+
+## Docker distribution
+
+Boxland ships as a Docker image plus a tiny launcher shell script.
+Docker is already a Boxland prerequisite (the Install workflow uses
+docker-compose to bring up Postgres + Redis + MinIO), so no additional
+runtime dependency is added.
+
+### Build locally
+
+```bash
+just build-image              # builds boxland:dev-test
+```
+
+The Dockerfile is multi-stage; first build downloads ~500MB of base images
+and takes ~3-5 min. Subsequent builds use cache and complete in ~30s.
+
+### Install (developer / first-run)
+
+After building locally:
+
+```bash
+just install-launcher         # writes /usr/local/bin/boxland (sudo)
+boxland                       # opens the TUI in a Docker container
+```
+
+The launcher (~20-line shell script at `bin/boxland`) takes care of:
+- Creating the `boxland-net` Docker network
+- Mounting `~/.boxland/` as a persistent data volume
+- Mounting the Docker socket so Boxland's Install workflow can manage
+  the dep services (postgres/redis/minio) on the host's Docker daemon
+- Forwarding container port 4000 → host so http://localhost:4000 works
+
+### Install (end-user — when an image registry is set up)
+
+Future state once `boxland/boxland:VERSION` is published:
+
+```bash
+# Pull the image:
+docker pull boxland/boxland:0.1.0
+
+# Install the launcher (one-line curl install, future):
+curl -fsSL https://boxland.app/install | sh
+
+# Run:
+boxland
+```
+
+For v1, end-user distribution is not yet wired up — push to a registry +
+publish the install script land in a follow-up "Distribution" surface spec.
+
+### Subcommands
+
+```bash
+boxland install               # non-interactive install (CI / scripts)
+boxland run                   # foreground server (no TUI)
+boxland --version
+```
+
+### Why Docker instead of a single static binary?
+
+We considered Burrito (single-binary packager). Burrito's strict pin on
+Zig 0.15.2 conflicts with current Homebrew Zig and creates ongoing
+maintenance friction. Since Boxland already requires Docker for its
+runtime dependencies, packaging Boxland itself in Docker is consistent
+and removes a whole class of toolchain pain. See the TUI surface spec
+for the full rationale.

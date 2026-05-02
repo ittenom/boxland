@@ -41,3 +41,16 @@ ci:
   mix credo --strict
   mix proto.gen --check
   mix test
+
+# Build the Boxland Docker image
+build-image:
+  docker build -t boxland:dev-test .
+
+# Tag and push the image to a registry (set BOXLAND_IMAGE_TAG first)
+push-image tag:
+  docker tag boxland:dev-test {{tag}}
+  docker push {{tag}}
+
+# Install the launcher script to /usr/local/bin (requires sudo)
+install-launcher:
+  sudo install -m 755 bin/boxland /usr/local/bin/boxland
