@@ -11,6 +11,7 @@ defmodule Boxland.TUI.Views.MenuViewTest do
       version: "0.1.0",
       data_dir: "~/.boxland"
     }
+
     tree = MenuView.render(state)
     # Smoke check — tree is a non-empty container
     assert is_map(tree) or is_list(tree)
@@ -25,6 +26,7 @@ defmodule Boxland.TUI.Views.MenuViewTest do
       version: "0.1.0",
       data_dir: "~/.boxland"
     }
+
     tree = MenuView.render(state)
     # Find the selected item; should have a marker bar `▎`
     flat = MenuView.flatten_for_test(tree)

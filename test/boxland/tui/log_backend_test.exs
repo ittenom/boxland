@@ -1,5 +1,6 @@
 defmodule Boxland.TUI.LogBackendTest do
-  use ExUnit.Case, async: false   # shared GenServer
+  # shared GenServer
+  use ExUnit.Case, async: false
 
   alias Boxland.TUI.LogBackend
 
@@ -50,21 +51,25 @@ defmodule Boxland.TUI.LogBackendTest do
   end
 
   test "subscriber pid death auto-cleans subscription" do
-    {pid, ref} = spawn_monitor(fn ->
-      LogBackend.subscribe(self())
-      receive do
-        :stop -> :ok
-      after
-        100 -> :ok
-      end
-    end)
+    {pid, ref} =
+      spawn_monitor(fn ->
+        LogBackend.subscribe(self())
 
-    Process.sleep(20)  # let subscribe complete
+        receive do
+          :stop -> :ok
+        after
+          100 -> :ok
+        end
+      end)
+
+    # let subscribe complete
+    Process.sleep(20)
     Process.exit(pid, :kill)
     assert_receive {:DOWN, ^ref, :process, ^pid, _}, 200
 
     # The LogBackend's subscribers map should now have 0 entries.
-    Process.sleep(20)  # allow LogBackend to handle the :DOWN
+    # allow LogBackend to handle the :DOWN
+    Process.sleep(20)
     assert LogBackend.subscriber_count() == 0
   end
 

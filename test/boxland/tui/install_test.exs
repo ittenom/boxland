@@ -13,6 +13,7 @@ defmodule Boxland.TUI.InstallTest do
           _ -> :error
         end
       }
+
       assert {:ok, report} = Install.stage_1_preflight(deps)
       assert report.os == {:darwin, :aarch64}
       assert report.package_manager == :brew
@@ -29,6 +30,7 @@ defmodule Boxland.TUI.InstallTest do
           _ -> :error
         end
       }
+
       assert {:ok, report} = Install.stage_1_preflight(deps)
       assert report.os == {:linux, :x86_64}
       assert report.package_manager == :apt
@@ -40,6 +42,7 @@ defmodule Boxland.TUI.InstallTest do
         os: fn -> {:linux, :x86_64} end,
         which: fn _ -> :error end
       }
+
       assert {:ok, report} = Install.stage_1_preflight(deps)
       assert report.package_manager == nil
     end
@@ -54,10 +57,14 @@ defmodule Boxland.TUI.InstallTest do
 
     test "runs brew install vips when missing on Mac" do
       report = %{installed: %{libvips: false}, package_manager: :brew}
-      deps = %{run_cmd: fn cmd, args, _opts ->
-        send(self(), {:cmd, cmd, args})
-        {"==> Pouring vips...", 0}
-      end}
+
+      deps = %{
+        run_cmd: fn cmd, args, _opts ->
+          send(self(), {:cmd, cmd, args})
+          {"==> Pouring vips...", 0}
+        end
+      }
+
       assert :ok = Install.stage_2_os_packages(report, deps)
       assert_received {:cmd, "brew", ["install", "vips"]}
     end
@@ -65,8 +72,10 @@ defmodule Boxland.TUI.InstallTest do
     test "errors with suggestion on apt without sudo (we don't escalate)" do
       report = %{installed: %{libvips: false}, package_manager: :apt}
       deps = %{run_cmd: fn _, _, _ -> raise "should not run" end}
+
       assert {:error, %{stage: :os_packages, suggestion: suggestion}} =
-        Install.stage_2_os_packages(report, deps)
+               Install.stage_2_os_packages(report, deps)
+
       assert suggestion =~ "sudo apt"
     end
 
@@ -79,8 +88,10 @@ defmodule Boxland.TUI.InstallTest do
     test "errors when brew install fails" do
       report = %{installed: %{libvips: false}, package_manager: :brew}
       deps = %{run_cmd: fn _, _, _ -> {"could not download bottle", 1} end}
+
       assert {:error, %{stage: :os_packages, reason: reason}} =
-        Install.stage_2_os_packages(report, deps)
+               Install.stage_2_os_packages(report, deps)
+
       assert reason =~ "brew install vips failed"
     end
   end
@@ -99,7 +110,10 @@ defmodule Boxland.TUI.InstallTest do
 
     test "errors when daemon not running" do
       deps = %{run_cmd: fn "docker", _, _ -> {"Cannot connect to the Docker daemon", 1} end}
-      assert {:error, %{stage: :docker_check, reason: reason}} = Install.stage_3_docker_check(deps)
+
+      assert {:error, %{stage: :docker_check, reason: reason}} =
+               Install.stage_3_docker_check(deps)
+
       assert reason =~ "Cannot connect"
     end
   end
@@ -117,6 +131,7 @@ defmodule Boxland.TUI.InstallTest do
         mkdir_p: &File.mkdir_p/1,
         chmod: &File.chmod/2
       }
+
       assert :ok = Install.stage_4_data_directory(deps)
       assert File.dir?(Path.join(tmp, "services/pg_data"))
       assert File.dir?(Path.join(tmp, "services/minio_data"))
@@ -151,6 +166,7 @@ defmodule Boxland.TUI.InstallTest do
         file_write: &File.write/2,
         chmod: &File.chmod/2
       }
+
       assert :ok = Install.stage_5_secrets(deps)
       content = File.read!(Path.join(tmp, "secrets.exs"))
       assert content =~ "secret_key_base:"
@@ -159,12 +175,14 @@ defmodule Boxland.TUI.InstallTest do
 
     test "preserves existing secrets.exs", %{tmp: tmp} do
       File.write!(Path.join(tmp, "secrets.exs"), "# preserved")
+
       deps = %{
         data_dir: fn -> tmp end,
         file_exists: &File.exists?/1,
         file_write: fn _, _ -> raise "should not write" end,
         chmod: &File.chmod/2
       }
+
       assert :ok = Install.stage_5_secrets(deps)
       assert File.read!(Path.join(tmp, "secrets.exs")) == "# preserved"
     end
@@ -176,6 +194,7 @@ defmodule Boxland.TUI.InstallTest do
         file_write: &File.write/2,
         chmod: &File.chmod/2
       }
+
       assert :ok = Install.stage_5_secrets(deps)
       mode = File.stat!(Path.join(tmp, "secrets.exs")).mode |> rem(0o1000)
       assert mode == 0o600
@@ -196,6 +215,7 @@ defmodule Boxland.TUI.InstallTest do
         file_exists: &File.exists?/1,
         file_write: &File.write/2
       }
+
       assert :ok = Install.stage_6_config(deps)
       content = File.read!(Path.join(tmp, "config.exs"))
       assert content =~ "config :boxland, Boxland.Repo"
@@ -204,11 +224,13 @@ defmodule Boxland.TUI.InstallTest do
 
     test "preserves existing config.exs", %{tmp: tmp} do
       File.write!(Path.join(tmp, "config.exs"), "# preserved")
+
       deps = %{
         data_dir: fn -> tmp end,
         file_exists: &File.exists?/1,
         file_write: fn _, _ -> raise "should not write" end
       }
+
       assert :ok = Install.stage_6_config(deps)
       assert File.read!(Path.join(tmp, "config.exs")) == "# preserved"
     end
@@ -224,10 +246,12 @@ defmodule Boxland.TUI.InstallTest do
 
     test "always overwrites docker-compose.yml (deterministic from template)", %{tmp: tmp} do
       File.write!(Path.join(tmp, "services/docker-compose.yml"), "# stale")
+
       deps = %{
         data_dir: fn -> tmp end,
         file_write: &File.write/2
       }
+
       assert :ok = Install.stage_7_compose(deps)
       content = File.read!(Path.join(tmp, "services/docker-compose.yml"))
       assert content =~ "image: postgres:16"
@@ -245,12 +269,16 @@ defmodule Boxland.TUI.InstallTest do
       deps = %{
         data_dir: fn -> tmp end,
         run_cmd: fn
-          "docker", ["compose", "-f", _, "up", "-d"], _ -> {"Started", 0}
+          "docker", ["compose", "-f", _, "up", "-d"], _ ->
+            {"Started", 0}
+
           "docker", ["compose", "-f", _, "ps", "--format", "json"], _ ->
-            {~s({"Service":"postgres","Health":"healthy"}\n{"Service":"redis","Health":"healthy"}\n{"Service":"minio","Health":""}), 0}
+            {~s({"Service":"postgres","Health":"healthy"}\n{"Service":"redis","Health":"healthy"}\n{"Service":"minio","Health":""}),
+             0}
         end,
         sleep: fn _ -> :ok end
       }
+
       # mkdir the services subdir
       File.mkdir_p!(Path.join(tmp, "services"))
       File.write!(Path.join(tmp, "services/docker-compose.yml"), "")
@@ -266,9 +294,12 @@ defmodule Boxland.TUI.InstallTest do
 
       deps = %{
         data_dir: fn -> tmp end,
-        run_cmd: fn "docker", ["compose", "-f", _, "up", "-d"], _ -> {"port already in use", 1} end,
+        run_cmd: fn "docker", ["compose", "-f", _, "up", "-d"], _ ->
+          {"port already in use", 1}
+        end,
         sleep: fn _ -> :ok end
       }
+
       assert {:error, %{stage: :services, reason: reason}} = Install.stage_8_services(deps)
       assert reason =~ "port already in use"
     end
@@ -282,13 +313,17 @@ defmodule Boxland.TUI.InstallTest do
       deps = %{
         data_dir: fn -> tmp end,
         run_cmd: fn
-          "docker", ["compose", "-f", _, "up", "-d"], _ -> {"Started", 0}
+          "docker", ["compose", "-f", _, "up", "-d"], _ ->
+            {"Started", 0}
+
           "docker", ["compose", "-f", _, "ps", "--format", "json"], _ ->
             {~s({"Service":"postgres","Health":"starting"}), 0}
         end,
         sleep: fn _ -> :ok end,
-        max_health_polls: 3   # short cycle for tests
+        # short cycle for tests
+        max_health_polls: 3
       }
+
       assert {:error, %{stage: :services, reason: reason}} = Install.stage_8_services(deps)
       assert reason =~ "Timeout"
     end
@@ -296,7 +331,13 @@ defmodule Boxland.TUI.InstallTest do
 
   describe "stage_9_migrate/1" do
     test "calls release_migrate dep and returns ok" do
-      deps = %{release_migrate: fn -> send(self(), :migrated); :ok end}
+      deps = %{
+        release_migrate: fn ->
+          send(self(), :migrated)
+          :ok
+        end
+      }
+
       assert :ok = Install.stage_9_migrate(deps)
       assert_received :migrated
     end
@@ -323,6 +364,7 @@ defmodule Boxland.TUI.InstallTest do
         version: fn -> "0.1.0" end,
         file_write: &File.write/2
       }
+
       assert :ok = Install.write_marker(deps)
       content = File.read!(Path.join(tmp, "installed"))
       [ts, version] = String.split(String.trim(content), "\n")
@@ -344,10 +386,15 @@ defmodule Boxland.TUI.InstallTest do
         os: fn -> {:darwin, :aarch64} end,
         which: fn _ -> {:ok, "/usr/local/bin/x"} end,
         run_cmd: fn
-          "docker", ["info"], _ -> {"OK", 0}
-          "docker", ["compose", "-f", _, "up", "-d"], _ -> {"Started", 0}
+          "docker", ["info"], _ ->
+            {"OK", 0}
+
+          "docker", ["compose", "-f", _, "up", "-d"], _ ->
+            {"Started", 0}
+
           "docker", ["compose", "-f", _, "ps", "--format", "json"], _ ->
-            {~s({"Service":"postgres","Health":"healthy"}\n{"Service":"redis","Health":"healthy"}), 0}
+            {~s({"Service":"postgres","Health":"healthy"}\n{"Service":"redis","Health":"healthy"}),
+             0}
         end,
         data_dir: fn -> tmp end,
         file_exists: &File.exists?/1,
@@ -359,6 +406,7 @@ defmodule Boxland.TUI.InstallTest do
         now: fn -> ~U[2026-05-01 12:00:00Z] end,
         version: fn -> "0.1.0" end
       }
+
       assert {:ok, _report} = Install.run(deps)
       assert File.exists?(Path.join(tmp, "installed"))
       assert File.exists?(Path.join(tmp, "config.exs"))
@@ -371,7 +419,8 @@ defmodule Boxland.TUI.InstallTest do
         os: fn -> {:darwin, :aarch64} end,
         which: fn _ -> {:ok, "/usr/local/bin/x"} end,
         run_cmd: fn
-          "docker", ["info"], _ -> {"daemon down", 1}    # stage 3 fails
+          # stage 3 fails
+          "docker", ["info"], _ -> {"daemon down", 1}
           _, _, _ -> raise "should not reach"
         end,
         data_dir: fn -> tmp end,
@@ -384,6 +433,7 @@ defmodule Boxland.TUI.InstallTest do
         now: fn -> ~U[2026-05-01 12:00:00Z] end,
         version: fn -> "0.1.0" end
       }
+
       assert {:error, %{stage: :docker_check}} = Install.run(deps)
       refute File.exists?(Path.join(tmp, "installed"))
     end
@@ -393,10 +443,15 @@ defmodule Boxland.TUI.InstallTest do
         os: fn -> {:darwin, :aarch64} end,
         which: fn _ -> {:ok, "/usr/local/bin/x"} end,
         run_cmd: fn
-          "docker", ["info"], _ -> {"OK", 0}
-          "docker", ["compose", "-f", _, "up", "-d"], _ -> {"Started", 0}
+          "docker", ["info"], _ ->
+            {"OK", 0}
+
+          "docker", ["compose", "-f", _, "up", "-d"], _ ->
+            {"Started", 0}
+
           "docker", ["compose", "-f", _, "ps", "--format", "json"], _ ->
-            {~s({"Service":"postgres","Health":"healthy"}\n{"Service":"redis","Health":"healthy"}), 0}
+            {~s({"Service":"postgres","Health":"healthy"}\n{"Service":"redis","Health":"healthy"}),
+             0}
         end,
         data_dir: fn -> tmp end,
         file_exists: &File.exists?/1,
@@ -408,6 +463,7 @@ defmodule Boxland.TUI.InstallTest do
         now: fn -> ~U[2026-05-01 12:00:00Z] end,
         version: fn -> "0.1.0" end
       }
+
       assert {:ok, _} = Install.run(deps)
       assert {:ok, _} = Install.run(deps)
     end

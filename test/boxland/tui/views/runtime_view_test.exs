@@ -9,6 +9,7 @@ defmodule Boxland.TUI.Views.RuntimeViewTest do
       log_lines: ["23:45:12.834 [info]  hello"],
       status: :running
     }
+
     tree = RuntimeView.render(state)
     flat = RuntimeView.flatten_for_test(tree)
     assert Enum.any?(flat, &String.contains?(&1, "Server running 0:32"))
@@ -24,6 +25,7 @@ defmodule Boxland.TUI.Views.RuntimeViewTest do
       log_lines: [],
       status: :stopping
     }
+
     tree = RuntimeView.render(state)
     flat = RuntimeView.flatten_for_test(tree)
     assert Enum.any?(flat, &String.contains?(&1, "Stopping"))

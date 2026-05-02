@@ -35,11 +35,13 @@ defmodule Boxland.TUI.MenuTest do
     end
 
     test "upgrade pending: Re-check Install gets featured priority over Run Server" do
-      items = Menu.items(
-        installed_at: ~U[2026-05-01 12:00:00Z],
-        server_status: :stopped,
-        upgrade_pending: true
-      )
+      items =
+        Menu.items(
+          installed_at: ~U[2026-05-01 12:00:00Z],
+          server_status: :stopped,
+          upgrade_pending: true
+        )
+
       assert Enum.at(items, 0).id == :recheck_install
       assert Enum.at(items, 0).style == :featured
       assert Enum.at(items, 1).id == :run_server
@@ -52,13 +54,15 @@ defmodule Boxland.TUI.MenuTest do
       items = Menu.items(installed_at: nil, server_status: :stopped)
       # Index 0 = Install (featured), 1 = Run Server (disabled), 2 = Quit
       assert Menu.next_selectable(items, 0, :down) == 2
-      assert Menu.next_selectable(items, 2, :down) == 0  # wraps
+      # wraps
+      assert Menu.next_selectable(items, 2, :down) == 0
     end
 
     test "skips disabled items moving up" do
       items = Menu.items(installed_at: nil, server_status: :stopped)
       assert Menu.next_selectable(items, 2, :up) == 0
-      assert Menu.next_selectable(items, 0, :up) == 2  # wraps
+      # wraps
+      assert Menu.next_selectable(items, 0, :up) == 2
     end
   end
 

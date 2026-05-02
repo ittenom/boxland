@@ -4,7 +4,9 @@ defmodule Boxland.TUI.ThemeTest do
 
   test "colors/0 returns a map with all required tokens" do
     c = Theme.colors()
-    for token <- ~w(accent_warm accent_warm_end accent_cool success warning error text text_muted text_subtle border)a do
+
+    for token <-
+          ~w(accent_warm accent_warm_end accent_cool success warning error text text_muted text_subtle border)a do
       assert Map.has_key?(c, token), "missing color token: #{token}"
       {r, g, b} = c[token]
       assert is_integer(r) and r in 0..255
