@@ -42,7 +42,8 @@ defmodule BoxlandWeb.AssetLive do
       consume_uploaded_entries(socket, :tileset, fn %{path: path}, entry ->
         with {:ok, {width, height}} <- Library.parse_png_dimensions(path),
              :ok <- validate_tileset_dimensions(width, height),
-             {:ok, attrs} <- persist_upload(path, entry, name, width, height),
+             {:ok, tile_indexes} <- Library.visible_tile_indexes(path, width, height),
+             {:ok, attrs} <- persist_upload(path, entry, name, width, height, tile_indexes),
              {:ok, asset} <- Library.create_tileset(designer.id, attrs) do
           {:ok, asset}
         else
@@ -57,7 +58,8 @@ defmodule BoxlandWeb.AssetLive do
          socket
          |> put_flash(:info, "Tileset uploaded.")
          |> assign(:assets, Library.list_assets(designer.id))
-         |> assign(:selected_asset, asset)}
+         |> assign(:selected_asset, asset)
+         |> assign(:selected_tile, first_tile_index(asset))}
 
       _ ->
         {:noreply,
@@ -75,7 +77,7 @@ defmodule BoxlandWeb.AssetLive do
 
   def handle_event("select_asset", %{"id" => id}, socket) do
     asset = Library.get_asset!(socket.assigns.current_designer.id, id)
-    {:noreply, assign(socket, selected_asset: asset, selected_tile: 0)}
+    {:noreply, assign(socket, selected_asset: asset, selected_tile: first_tile_index(asset))}
   end
 
   def handle_event("select_tile", %{"tile" => tile}, socket) do
@@ -206,7 +208,7 @@ defmodule BoxlandWeb.AssetLive do
       <div class="grid gap-6 xl:grid-cols-[1fr_24rem]">
         <div class="grid grid-cols-4 gap-3 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10">
           <div
-            :for={index <- 0..(@asset.metadata["tile_count"] - 1)}
+            :for={index <- tile_indexes(@asset)}
             class={[
               "card p-2",
               @selected_tile == index && "bg-primary/10 ring-2 ring-primary",
@@ -305,7 +307,7 @@ defmodule BoxlandWeb.AssetLive do
     """
   end
 
-  defp persist_upload(path, entry, name, width, height) do
+  defp persist_upload(path, entry, name, width, height, tile_indexes \\ nil) do
     uploads_dir = Application.app_dir(:boxland, "priv/static/uploads")
     File.mkdir_p!(uploads_dir)
 
@@ -322,7 +324,10 @@ defmodule BoxlandWeb.AssetLive do
        byte_size: entry.client_size,
        mime_type: entry.client_type,
        width: width,
-       height: height
+       height: height,
+       tile_indexes:
+         tile_indexes ||
+           Enum.to_list(0..(div(width, Library.tile_size()) * div(height, Library.tile_size()) - 1))
      }}
   end
 
@@ -379,6 +384,12 @@ defmodule BoxlandWeb.AssetLive do
 
     "background-image: url('#{asset.content_url}'); background-position: -#{x}px -#{y}px;"
   end
+
+  defp tile_indexes(asset) do
+    Map.get(asset.metadata, "tile_indexes", Enum.to_list(0..(asset.metadata["tile_count"] - 1)))
+  end
+
+  defp first_tile_index(asset), do: asset |> tile_indexes() |> List.first() || 0
 
   defp mask_pixels(asset, tile_index) do
     asset

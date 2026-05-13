@@ -69,10 +69,24 @@ defmodule BoxlandWeb.MapmakerLive do
     {:noreply, assign(socket, :selected_tile, String.to_integer(tile))}
   end
 
+  def handle_event("copy_selection", _params, socket) do
+    {:noreply, clone_selection(socket)}
+  end
+
+  def handle_event("paste_selection", _params, socket) do
+    {:noreply, assign(socket, :tool, "clone")}
+  end
+
   def handle_event("cell", %{"x" => x, "y" => y}, socket) do
     x = String.to_integer(x)
     y = String.to_integer(y)
     apply_tool(socket, x, y)
+  end
+
+  def handle_event("paint_cell", %{"x" => x, "y" => y}, socket) do
+    x = String.to_integer(x)
+    y = String.to_integer(y)
+    paint_tile(socket, x, y)
   end
 
   def render(assigns) do
@@ -101,17 +115,27 @@ defmodule BoxlandWeb.MapmakerLive do
             active={@tool == "select_area"}
           />
           <.tool_button
-            icon="hero-document-duplicate"
-            label="C"
-            tool="clone"
-            active={@tool == "clone"}
-          />
-          <.tool_button
             icon="hero-cursor-arrow-rays"
             label="V"
             tool="select"
             active={@tool == "select"}
           />
+          <button
+            id="map-copy-button"
+            phx-click="copy_selection"
+            class={["btn btn-sm", @tool == "clone" && "btn-primary"]}
+            title="Copy selection"
+          >
+            <.icon name="hero-clipboard-document" class="size-4" /> Copy
+          </button>
+          <button
+            id="map-paste-button"
+            phx-click="paste_selection"
+            class={["btn btn-sm", @tool == "clone" && "btn-primary"]}
+            title="Paste copied selection"
+          >
+            <.icon name="hero-clipboard-document-check" class="size-4" /> Paste
+          </button>
           <button
             id="map-undo-button"
             phx-click="hotkey"
@@ -150,21 +174,29 @@ defmodule BoxlandWeb.MapmakerLive do
             />
           </aside>
 
-          <div class="overflow-auto rounded-box bg-base-200 p-4">
+          <div
+            id="mapmaker-canvas"
+            phx-hook="MapmakerCanvas"
+            data-tool={@tool}
+            class="overflow-auto rounded-box bg-base-200 p-2"
+          >
             <div
-              class="grid w-fit gap-px"
+              class="grid w-fit gap-0"
               style={"grid-template-columns: repeat(#{@map.width}, 32px);"}
             >
               <button
                 :for={{x, y} <- cells(@map.width, @map.height)}
                 id={"map-cell-#{x}-#{y}"}
+                data-map-cell
+                data-x={x}
+                data-y={y}
                 phx-click="cell"
                 phx-value-x={x}
                 phx-value-y={y}
                 class={[
-                  "h-8 w-8 border bg-base-100 bg-no-repeat",
+                  "h-8 w-8 touch-none border border-base-300/60 bg-base-100 bg-no-repeat transition-[filter] hover:brightness-105",
                   selected_cell?(@selection, x, y) && "border-primary ring-1 ring-primary",
-                  !selected_cell?(@selection, x, y) && "border-base-300"
+                  !selected_cell?(@selection, x, y) && "border-base-300/60"
                 ]}
                 style={cell_style(@tilesets, @layer.tiles, x, y)}
               />
@@ -209,7 +241,7 @@ defmodule BoxlandWeb.MapmakerLive do
     ~H"""
     <div class="grid grid-cols-6 gap-1">
       <button
-        :for={index <- 0..(@asset.metadata["tile_count"] - 1)}
+        :for={index <- tile_indexes(@asset)}
         id={"tile-palette-#{index}"}
         phx-click="select_tile"
         phx-value-tile={index}
@@ -223,6 +255,32 @@ defmodule BoxlandWeb.MapmakerLive do
     </div>
     """
   end
+
+  defp paint_tile(%{assigns: %{tool: "place", selected_asset_id: asset_id}} = socket, x, y)
+       when not is_nil(asset_id) do
+    tiles = socket.assigns.layer.tiles
+
+    new_tiles =
+      Maps.put_tile(tiles, x, y, %{
+        asset_id: asset_id,
+        tile_index: socket.assigns.selected_tile,
+        rotation: 0
+      })
+
+    if new_tiles == tiles do
+      {:noreply, socket}
+    else
+      {:ok, layer} = Maps.update_layer_tiles(socket.assigns.layer, new_tiles)
+
+      {:noreply,
+       socket
+       |> assign(:layer, layer)
+       |> assign(:undo_stack, [tiles | socket.assigns.undo_stack])
+       |> assign(:redo_stack, [])}
+    end
+  end
+
+  defp paint_tile(socket, _x, _y), do: {:noreply, socket}
 
   defp apply_tool(socket, x, y) do
     tiles = socket.assigns.layer.tiles
@@ -380,6 +438,10 @@ defmodule BoxlandWeb.MapmakerLive do
     y = div(index, columns) * 32
 
     "background-image: url('#{asset.content_url}'); background-position: -#{x}px -#{y}px;"
+  end
+
+  defp tile_indexes(asset) do
+    Map.get(asset.metadata, "tile_indexes", Enum.to_list(0..(asset.metadata["tile_count"] - 1)))
   end
 
   defp truthy?(value), do: value in [true, "true"]

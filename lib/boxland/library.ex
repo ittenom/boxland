@@ -113,6 +113,40 @@ defmodule Boxland.Library do
     end
   end
 
+  def visible_tile_indexes(path, width, height) do
+    columns = div(width, @tile_size)
+    rows = div(height, @tile_size)
+    all_indexes = Enum.to_list(0..(rows * columns - 1))
+
+    case png_alpha_rows(path) do
+      {:ok, alpha_rows} ->
+        visible =
+          alpha_rows
+          |> Enum.with_index()
+          |> Enum.reduce(MapSet.new(), fn {row, y}, indexes ->
+            row
+            |> Enum.with_index()
+            |> Enum.reduce(indexes, fn {alpha, x}, acc ->
+              if alpha > 0 do
+                MapSet.put(acc, div(y, @tile_size) * columns + div(x, @tile_size))
+              else
+                acc
+              end
+            end)
+          end)
+          |> MapSet.to_list()
+          |> Enum.sort()
+
+        {:ok, visible}
+
+      :opaque ->
+        {:ok, all_indexes}
+
+      {:error, _reason} ->
+        {:ok, all_indexes}
+    end
+  end
+
   defp parse_png_header(
          <<137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, "IHDR", width::32, height::32,
            _rest::binary>>
@@ -126,6 +160,8 @@ defmodule Boxland.Library do
   defp tileset_metadata(attrs) do
     rows = div(attrs.height, @tile_size)
     columns = div(attrs.width, @tile_size)
+    tile_count = rows * columns
+    tile_indexes = Map.get(attrs, :tile_indexes, Enum.to_list(0..(tile_count - 1)))
 
     cond do
       rem(attrs.width, @tile_size) != 0 or rem(attrs.height, @tile_size) != 0 ->
@@ -142,9 +178,139 @@ defmodule Boxland.Library do
            "height" => attrs.height,
            "rows" => rows,
            "columns" => columns,
-           "tile_count" => rows * columns,
+           "tile_count" => tile_count,
+           "tile_indexes" => tile_indexes,
            "collisions" => %{}
          }}
+    end
+  end
+
+  defp png_alpha_rows(path) do
+    with {:ok, bytes} <- File.read(path),
+         {:ok, png} <- parse_png_chunks(bytes),
+         {:alpha, channels, bits_per_channel} <- png_alpha_channels(png),
+         {:ok, raw} <- inflate_png_data(png.idat),
+         {:ok, rows} <- unfilter_png_rows(raw, png.width, channels, bits_per_channel) do
+      {:ok, Enum.map(rows, &alpha_values(&1, channels))}
+    end
+  end
+
+  defp parse_png_chunks(<<137, 80, 78, 71, 13, 10, 26, 10, chunks::binary>>) do
+    parse_png_chunks(chunks, %{width: nil, height: nil, color_type: nil, bit_depth: nil, idat: []})
+  end
+
+  defp parse_png_chunks(_bytes), do: {:error, :not_png}
+
+  defp parse_png_chunks(<<>>, png), do: finalize_png_chunks(png)
+
+  defp parse_png_chunks(
+         <<length::32, type::binary-size(4), data::binary-size(length), _crc::32, rest::binary>>,
+         png
+       ) do
+    png =
+      case type do
+        "IHDR" ->
+          <<width::32, height::32, bit_depth::8, color_type::8, _rest::binary>> = data
+          %{png | width: width, height: height, bit_depth: bit_depth, color_type: color_type}
+
+        "IDAT" ->
+          %{png | idat: [data | png.idat]}
+
+        _ ->
+          png
+      end
+
+    if type == "IEND", do: finalize_png_chunks(png), else: parse_png_chunks(rest, png)
+  end
+
+  defp parse_png_chunks(_chunks, _png), do: {:error, :malformed_png}
+
+  defp finalize_png_chunks(%{width: width, height: height, idat: idat} = png)
+       when is_integer(width) and is_integer(height) and idat != [] do
+    {:ok, %{png | idat: IO.iodata_to_binary(Enum.reverse(idat))}}
+  end
+
+  defp finalize_png_chunks(_png), do: {:error, :missing_png_data}
+
+  defp png_alpha_channels(%{color_type: 6, bit_depth: 8}), do: {:alpha, 4, 8}
+  defp png_alpha_channels(%{color_type: 4, bit_depth: 8}), do: {:alpha, 2, 8}
+  defp png_alpha_channels(%{color_type: type}) when type in [0, 2, 3], do: :opaque
+  defp png_alpha_channels(_png), do: {:error, :unsupported_png_color}
+
+  defp inflate_png_data(idat) do
+    {:ok, :zlib.uncompress(idat)}
+  rescue
+    _ -> {:error, :bad_png_data}
+  end
+
+  defp unfilter_png_rows(raw, width, channels, 8) do
+    bytes_per_pixel = channels
+    row_length = width * channels
+    unfilter_png_rows(raw, row_length, bytes_per_pixel, [], <<0::size(row_length * 8)>>)
+  end
+
+  defp unfilter_png_rows(_raw, _width, _channels, _bits), do: {:error, :unsupported_png_depth}
+
+  defp unfilter_png_rows(<<>>, _row_length, _bpp, rows, _previous), do: {:ok, Enum.reverse(rows)}
+
+  defp unfilter_png_rows(
+         <<filter::8, row::binary-size(row_length), rest::binary>>,
+         row_length,
+         bpp,
+         rows,
+         previous
+       ) do
+    unfiltered = unfilter_png_row(filter, row, previous, bpp)
+    unfilter_png_rows(rest, row_length, bpp, [unfiltered | rows], unfiltered)
+  end
+
+  defp unfilter_png_rows(_raw, _row_length, _bpp, _rows, _previous),
+    do: {:error, :malformed_scanlines}
+
+  defp unfilter_png_row(0, row, _previous, _bpp), do: row
+
+  defp unfilter_png_row(filter, row, previous, bpp) when filter in 1..4 do
+    row_bytes = :binary.bin_to_list(row)
+    previous_bytes = :binary.bin_to_list(previous)
+
+    row_bytes
+    |> Enum.with_index()
+    |> Enum.reduce([], fn {byte, index}, acc ->
+      left = if index >= bpp, do: Enum.at(acc, bpp - 1), else: 0
+      up = Enum.at(previous_bytes, index)
+      upper_left = if index >= bpp, do: Enum.at(previous_bytes, index - bpp), else: 0
+
+      predictor =
+        case filter do
+          1 -> left
+          2 -> up
+          3 -> div(left + up, 2)
+          4 -> paeth(left, up, upper_left)
+        end
+
+      [rem(byte + predictor, 256) | acc]
+    end)
+    |> Enum.reverse()
+    |> :binary.list_to_bin()
+  end
+
+  defp alpha_values(row, channels) do
+    row
+    |> :binary.bin_to_list()
+    |> Enum.chunk_every(channels)
+    |> Enum.map(&Enum.at(&1, channels - 1))
+  end
+
+  defp paeth(left, up, upper_left) do
+    estimate = left + up - upper_left
+    left_distance = abs(estimate - left)
+    up_distance = abs(estimate - up)
+    upper_left_distance = abs(estimate - upper_left)
+
+    cond do
+      left_distance <= up_distance and left_distance <= upper_left_distance -> left
+      up_distance <= upper_left_distance -> up
+      true -> upper_left
     end
   end
 
