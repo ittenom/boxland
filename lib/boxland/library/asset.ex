@@ -7,7 +7,7 @@ defmodule Boxland.Library.Asset do
   use Ecto.Schema
   import Ecto.Changeset
 
-  @valid_kinds ~w(sprite spritesheet audio)
+  @valid_kinds ~w(tileset sprite spritesheet audio)
 
   schema "assets" do
     field :kind, :string

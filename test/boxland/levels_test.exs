@@ -2,7 +2,7 @@ defmodule Boxland.LevelsTest do
   use Boxland.DataCase, async: true
 
   alias Boxland.Worlds.World
-  alias Boxland.Levels.{Level, LevelEntity}
+  alias Boxland.Levels.{Level, LevelEntity, PublishedLevelVersion}
   alias Boxland.Maps.Map
   alias Boxland.Entities.EntityType
   alias Boxland.Auth.Designer
@@ -86,6 +86,38 @@ defmodule Boxland.LevelsTest do
       attrs = %{level_id: lvl.id, entity_type_id: et.id, pos_x: 0, pos_y: 0, z_index_override: 50}
       changeset = LevelEntity.changeset(%LevelEntity{}, attrs)
       assert changeset.valid?
+    end
+  end
+
+  describe "publishing" do
+    setup %{designer: d, map: m} do
+      {:ok, level} =
+        %Level{}
+        |> Level.changeset(%{
+          owner_id: d.id,
+          slug: "publishable",
+          name: "Publishable",
+          map_id: m.id
+        })
+        |> Boxland.Repo.insert()
+
+      {:ok, level: level}
+    end
+
+    test "requires a spawn point", %{designer: d, level: level} do
+      assert {:error, "Add a spawn point before publishing."} =
+               Boxland.Levels.publish_level(d.id, level.id)
+    end
+
+    test "creates immutable version snapshots", %{designer: d, level: level} do
+      assert {:ok, _spawn} = Boxland.Levels.create_preset_entity(d.id, level.id, "spawn", 0, 0)
+
+      assert {:ok, version} = Boxland.Levels.publish_level(d.id, level.id)
+      assert version.version == 1
+      assert version.snapshot["level"]["slug"] == "publishable"
+      assert [%{"preset" => "spawn"}] = version.snapshot["entities"]
+
+      assert %PublishedLevelVersion{} = Boxland.Levels.latest_published_version(level.id)
     end
   end
 end

@@ -1,13 +1,19 @@
 defmodule BoxlandWeb.Router do
   use BoxlandWeb, :router
+  import BoxlandWeb.DesignerAuth
 
   pipeline :browser do
     plug :accepts, ["html"]
     plug :fetch_session
+    plug :fetch_current_designer
     plug :fetch_live_flash
     plug :put_root_layout, html: {BoxlandWeb.Layouts, :root}
     plug :protect_from_forgery
     plug :put_secure_browser_headers
+  end
+
+  pipeline :designer do
+    plug :require_designer
   end
 
   pipeline :api do
@@ -18,11 +24,36 @@ defmodule BoxlandWeb.Router do
     pipe_through :browser
 
     get "/", PageController, :home
+    live "/register", DesignerRegisterLive
+    live "/login", DesignerLoginLive
+    post "/login", DesignerSessionController, :create
+    delete "/logout", DesignerSessionController, :delete
+  end
+
+  scope "/app", BoxlandWeb do
+    pipe_through [:browser, :designer]
+
+    live_session :designer_required,
+      on_mount: [{BoxlandWeb.DesignerAuth, :require_designer}] do
+      live "/", DashboardLive
+      live "/assets", AssetLive
+      live "/maps", MapIndexLive
+      live "/maps/:id", MapmakerLive
+      live "/levels", LevelIndexLive
+      live "/levels/:id", LevelEditorLive
+      live "/levels/:id/sandbox", SandboxLive
+    end
   end
 
   scope "/", BoxlandWeb do
     get "/healthz", HealthController, :healthz
     get "/readyz", HealthController, :readyz
+  end
+
+  scope "/", BoxlandWeb do
+    pipe_through :browser
+
+    live "/play/:id", PublishedLevelLive
   end
 
   # Other scopes may use custom stacks.

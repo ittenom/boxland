@@ -92,4 +92,20 @@ defmodule Boxland.Library.AssetTest do
     changeset = Asset.changeset(%Asset{}, attrs)
     assert changeset.valid?
   end
+
+  test "tileset asset kind is valid", %{designer: d} do
+    attrs = %{
+      owner_id: d.id,
+      kind: "tileset",
+      name: "terrain",
+      sha256: :crypto.hash(:sha256, "tileset"),
+      content_url: "/uploads/tileset.png",
+      byte_size: 1024,
+      mime_type: "image/png",
+      metadata: %{"tile_size" => 32, "columns" => 2, "rows" => 2, "tile_count" => 4}
+    }
+
+    changeset = Asset.changeset(%Asset{}, attrs)
+    assert changeset.valid?
+  end
 end
