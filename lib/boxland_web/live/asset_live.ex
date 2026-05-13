@@ -21,7 +21,9 @@ defmodule BoxlandWeb.AssetLive do
             "height" => "32",
             "points" => "0,0 31,0 31,31 0,31",
             "colors" => "#000000"
-          }, as: :collision)
+          },
+          as: :collision
+        )
       )
       |> assign(:form, to_form(%{}, as: :asset))
       |> allow_upload(:tileset, accept: ~w(.png), max_entries: 1, max_file_size: 8_000_000)

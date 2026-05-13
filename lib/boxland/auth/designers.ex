@@ -18,7 +18,9 @@ defmodule Boxland.Auth.Designers do
     with :ok <- validate_password(attrs),
          :ok <- validate_email_domain(attrs) do
       attrs =
-        Map.put(attrs, :password_hash, Password.hash(attrs[:password] || attrs["password"]))
+        attrs
+        |> normalize_param_keys()
+        |> Map.put("password_hash", Password.hash(attr(attrs, :password)))
 
       %Designer{}
       |> Designer.changeset(attrs)
@@ -150,6 +152,13 @@ defmodule Boxland.Auth.Designers do
 
   defp attr(attrs, key) when is_map(attrs),
     do: Map.get(attrs, key) || Map.get(attrs, Atom.to_string(key))
+
+  defp normalize_param_keys(attrs) when is_map(attrs) do
+    Map.new(attrs, fn
+      {key, value} when is_atom(key) -> {Atom.to_string(key), value}
+      {key, value} -> {key, value}
+    end)
+  end
 
   defp normalize_domain(domain) when is_binary(domain) do
     domain =

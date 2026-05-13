@@ -1,13 +1,12 @@
 <Layouts.app flash={@flash}>
-  <section class="grid min-h-[60vh] items-center gap-10 lg:grid-cols-[1fr_24rem]">
-    <div class="space-y-6">
-      <p class="text-sm font-semibold text-primary">Boxland Designer</p>
-      <h1 class="max-w-3xl text-5xl font-semibold tracking-tight">
-        Build tile maps, turn them into levels, and publish playable worlds.
+  <section class="grid min-h-[60vh] items-center gap-10 lg:grid-cols-[minmax(0,1fr)_24rem]">
+    <div class="space-y-5">
+      <span class="boxland-dot-logo text-primary" role="img" aria-label="Boxland"></span>
+      <h1 class="max-w-2xl text-5xl font-semibold tracking-tight sm:text-6xl">
+        Interactive worlds, tile by tile
       </h1>
-      <p class="max-w-2xl text-lg leading-8 text-base-content/70">
-        Upload a 32px tileset, paint a map in Mapmaker, add interactive presets in Level Editor,
-        test in Sandbox, then publish an immutable live version.
+      <p class="max-w-md text-lg leading-7 text-base-content/70">
+        Paint 32px tile maps, add rules, test, and publish.
       </p>
       <div class="flex flex-wrap gap-3">
         <.link href={~p"/register"} class="btn btn-primary">Start designing</.link>
@@ -15,12 +14,12 @@
       </div>
     </div>
 
-    <div class="rounded-box bg-base-200 p-4">
+    <div class="rounded-box border border-secondary/30 bg-base-200 p-4 shadow-xl shadow-base-300/20">
       <div class="grid grid-cols-8 gap-1">
         <div
           :for={idx <- 0..63}
           class={[
-            "aspect-square rounded-sm",
+            "aspect-square rounded-sm transition hover:scale-95",
             rem(idx + div(idx, 8), 4) == 0 && "bg-primary",
             rem(idx + div(idx, 8), 4) == 1 && "bg-secondary",
             rem(idx + div(idx, 8), 4) == 2 && "bg-accent",

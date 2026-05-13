@@ -10,7 +10,7 @@ defmodule BoxlandWeb.DesignerLoginLive do
     <Layouts.app flash={@flash}>
       <section class="mx-auto max-w-md">
         <div class="mb-8">
-          <p class="text-sm font-semibold text-primary">Boxland Designer</p>
+          <span class="boxland-dot-logo text-primary" role="img" aria-label="Boxland"></span>
           <h1 class="mt-2 text-3xl font-semibold tracking-tight">Sign in</h1>
         </div>
 

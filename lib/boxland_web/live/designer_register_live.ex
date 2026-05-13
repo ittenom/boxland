@@ -16,7 +16,7 @@ defmodule BoxlandWeb.DesignerRegisterLive do
          |> push_navigate(to: ~p"/login")}
 
       {:error, changeset} ->
-        {:noreply, assign(socket, form: to_form(changeset, as: :designer))}
+        {:noreply, assign(socket, form: to_form(%{changeset | action: :insert}, as: :designer))}
     end
   end
 
@@ -25,7 +25,7 @@ defmodule BoxlandWeb.DesignerRegisterLive do
     <Layouts.app flash={@flash}>
       <section class="mx-auto max-w-md">
         <div class="mb-8">
-          <p class="text-sm font-semibold text-primary">Boxland Designer</p>
+          <span class="boxland-dot-logo text-primary" role="img" aria-label="Boxland"></span>
           <h1 class="mt-2 text-3xl font-semibold tracking-tight">Create your account</h1>
         </div>
 
