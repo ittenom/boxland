@@ -1,9 +1,11 @@
 ARG ELIXIR_VERSION=1.19.5
 ARG OTP_VERSION=28.5
 ARG DEBIAN_VERSION=bookworm-20260421-slim
+ARG BOXLAND_WITH_TUI=false
 
 # === BUILDER ===
 FROM hexpm/elixir:${ELIXIR_VERSION}-erlang-${OTP_VERSION}-debian-${DEBIAN_VERSION} AS builder
+ARG BOXLAND_WITH_TUI
 
 RUN apt-get update -y && apt-get install -y \
       build-essential git nodejs npm libvips-dev protobuf-compiler \
@@ -11,7 +13,7 @@ RUN apt-get update -y && apt-get install -y \
 
 WORKDIR /app
 RUN mix local.hex --force && mix local.rebar --force
-ENV MIX_ENV=prod
+ENV MIX_ENV=prod BOXLAND_WITH_TUI=${BOXLAND_WITH_TUI}
 
 COPY mix.exs mix.lock ./
 RUN mix deps.get --only prod
@@ -20,10 +22,11 @@ RUN mix deps.compile
 
 COPY priv priv
 COPY lib lib
+COPY assets/package.json assets/package-lock.json assets/
+RUN cd assets && npm ci
+
 COPY assets assets
 COPY schemas schemas
-
-RUN cd assets && npm install --production=false && cd ..
 
 RUN mix compile
 RUN mix assets.deploy
@@ -33,6 +36,7 @@ RUN mix release
 
 # === RUNTIME ===
 FROM debian:${DEBIAN_VERSION} AS runtime
+ARG BOXLAND_WITH_TUI
 
 RUN apt-get update -y && apt-get install -y \
       libstdc++6 openssl libncurses5 locales ca-certificates libvips \
@@ -46,9 +50,7 @@ RUN useradd --system --create-home --uid 1000 boxland
 USER boxland
 
 COPY --from=builder --chown=boxland /app/_build/prod/rel/boxland ./
-ENV HOME=/app PORT=4000 PHX_SERVER=true RUN_MIGRATIONS_ON_BOOT=false
+ENV HOME=/app PORT=4000 PHX_SERVER=true RUN_MIGRATIONS_ON_BOOT=false BOXLAND_WITH_TUI=${BOXLAND_WITH_TUI}
 
 EXPOSE 4000
-# Default CMD opens the TUI (argv-less = TUI per Boxland.Application's dispatch).
-# Use `docker run boxland install` etc. for non-interactive subcommands.
 CMD ["bin/boxland", "start"]

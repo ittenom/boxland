@@ -17,7 +17,7 @@ dockerfilePath = "./Dockerfile"
 
 [deploy]
 preDeployCommand = "bin/boxland eval 'Boxland.Release.migrate()'"
-startCommand = "bin/boxland run"
+startCommand = "bin/boxland start"
 healthcheckPath = "/healthz"
 healthcheckTimeout = 30
 restartPolicyType = "ON_FAILURE"
@@ -28,8 +28,23 @@ That means Railway will:
 
 1. Build the app with the repo `Dockerfile`.
 2. Run database migrations before the deployment goes live.
-3. Start the Phoenix server with `bin/boxland run`.
+3. Start the release with `bin/boxland start`.
 4. Wait for `/healthz` to return `200`.
+
+The Docker build is optimized for Railway by default:
+
+- `assets/package.json` and `assets/package-lock.json` are copied before the
+  rest of `assets/`, so `npm ci` can stay cached when only frontend source files
+  change.
+- `BOXLAND_WITH_TUI=false` is the default Docker build arg, so Railway does not
+  fetch or compile the terminal UI dependency.
+
+To build a local Docker image that includes the terminal UI, override the build
+arg:
+
+```bash
+docker build --build-arg BOXLAND_WITH_TUI=true -t boxland:dev-test .
+```
 
 ## Create The Railway Project
 

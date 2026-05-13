@@ -35,7 +35,7 @@ defmodule Boxland.Application do
   end
 
   defp attach_logger_handler do
-    if not (Code.ensure_loaded?(Mix) and Mix.env() == :test) do
+    if not (Code.ensure_loaded?(Mix) and Mix.env() == :test) and not railway?() do
       _ = :logger.add_handler(:boxland_tui, Boxland.TUI.LoggerHandler, %{})
     end
 
@@ -51,7 +51,15 @@ defmodule Boxland.Application do
   end
 
   defp do_dispatch_argv do
-    case System.argv() do
+    if server_on_boot?() do
+      Boxland.CLI.Run.start()
+    else
+      dispatch_command(System.argv())
+    end
+  end
+
+  defp dispatch_command(argv) do
+    case argv do
       ["install" | argv] ->
         System.halt(Boxland.CLI.Install.main(argv))
 
@@ -72,9 +80,19 @@ defmodule Boxland.Application do
     end
   end
 
+  defp server_on_boot? do
+    System.get_env("BOXLAND_SERVER_ON_BOOT") in ~w(true 1) or railway?() or not tui_available?()
+  end
+
+  defp railway?, do: is_binary(System.get_env("RAILWAY_ENVIRONMENT"))
+
+  defp tui_available? do
+    Code.ensure_loaded?(TermUI.Runtime) and Code.ensure_loaded?(Boxland.TUI.App)
+  end
+
   defp spawn_tui do
     spawn(fn ->
-      _ = TermUI.Runtime.run(root: Boxland.TUI.App)
+      _ = apply(TermUI.Runtime, :run, [[root: Boxland.TUI.App]])
       System.halt(0)
     end)
 
