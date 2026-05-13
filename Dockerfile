@@ -46,7 +46,7 @@ RUN useradd --system --create-home --uid 1000 boxland
 USER boxland
 
 COPY --from=builder --chown=boxland /app/_build/prod/rel/boxland ./
-ENV HOME=/app PORT=4000 PHX_SERVER=true RUN_MIGRATIONS_ON_BOOT=true
+ENV HOME=/app PORT=4000 PHX_SERVER=true RUN_MIGRATIONS_ON_BOOT=false
 
 EXPOSE 4000
 # Default CMD opens the TUI (argv-less = TUI per Boxland.Application's dispatch).

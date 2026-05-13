@@ -1,8 +1,20 @@
 defmodule Boxland.Auth.DesignersTest do
-  use Boxland.DataCase, async: true
+  use Boxland.DataCase, async: false
   alias Boxland.Auth.Designers
 
   describe "register_designer/1" do
+    setup do
+      previous_domain = Application.get_env(:boxland, :designer_email_domain)
+
+      on_exit(fn ->
+        if is_nil(previous_domain) do
+          Application.delete_env(:boxland, :designer_email_domain)
+        else
+          Application.put_env(:boxland, :designer_email_domain, previous_domain)
+        end
+      end)
+    end
+
     test "creates a designer with a hashed password" do
       assert {:ok, designer} =
                Designers.register_designer(%{
@@ -25,6 +37,28 @@ defmodule Boxland.Auth.DesignersTest do
                })
 
       refute changeset.valid?
+    end
+
+    test "allows only the configured designer email domain when set" do
+      Application.put_env(:boxland, :designer_email_domain, "example.com")
+
+      assert {:ok, designer} =
+               Designers.register_designer(%{
+                 "email" => "NEW@EXAMPLE.COM",
+                 "password" => "supersecret123",
+                 "display_name" => "New"
+               })
+
+      assert designer.email == "new@example.com"
+
+      assert {:error, changeset} =
+               Designers.register_designer(%{
+                 email: "n@other.com",
+                 password: "supersecret123",
+                 display_name: "New"
+               })
+
+      assert "must use an email address from example.com" in errors_on(changeset).email
     end
   end
 

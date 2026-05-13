@@ -15,17 +15,16 @@ defmodule Boxland.Auth.Designers do
 
   @doc "Register a new designer. Hashes the plaintext password with Argon2."
   def register_designer(attrs) do
-    case validate_password(attrs) do
-      :ok ->
-        attrs =
-          Map.put(attrs, :password_hash, Password.hash(attrs[:password] || attrs["password"]))
+    with :ok <- validate_password(attrs),
+         :ok <- validate_email_domain(attrs) do
+      attrs =
+        Map.put(attrs, :password_hash, Password.hash(attrs[:password] || attrs["password"]))
 
-        %Designer{}
-        |> Designer.changeset(attrs)
-        |> Repo.insert()
-
-      {:error, changeset} ->
-        {:error, changeset}
+      %Designer{}
+      |> Designer.changeset(attrs)
+      |> Repo.insert()
+    else
+      {:error, changeset} -> {:error, changeset}
     end
   end
 
@@ -114,4 +113,62 @@ defmodule Boxland.Auth.Designers do
 
     {:error, changeset}
   end
+
+  defp validate_email_domain(attrs) do
+    allowed_domain =
+      :boxland
+      |> Application.get_env(:designer_email_domain)
+      |> normalize_domain()
+
+    email_domain =
+      attrs
+      |> attr(:email)
+      |> email_domain()
+
+    cond do
+      is_nil(allowed_domain) ->
+        :ok
+
+      is_nil(email_domain) ->
+        :ok
+
+      email_domain == allowed_domain ->
+        :ok
+
+      true ->
+        changeset =
+          %Designer{}
+          |> Ecto.Changeset.change()
+          |> Ecto.Changeset.add_error(
+            :email,
+            "must use an email address from #{allowed_domain}"
+          )
+
+        {:error, changeset}
+    end
+  end
+
+  defp attr(attrs, key) when is_map(attrs),
+    do: Map.get(attrs, key) || Map.get(attrs, Atom.to_string(key))
+
+  defp normalize_domain(domain) when is_binary(domain) do
+    domain =
+      domain
+      |> String.trim()
+      |> String.trim_leading("@")
+      |> String.downcase()
+
+    if domain == "", do: nil, else: domain
+  end
+
+  defp normalize_domain(_domain), do: nil
+
+  defp email_domain(email) when is_binary(email) do
+    case String.split(email, "@", parts: 2) do
+      [_local, domain] -> normalize_domain(domain)
+      _ -> nil
+    end
+  end
+
+  defp email_domain(_email), do: nil
 end

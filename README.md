@@ -1,128 +1,144 @@
-# Boxland (Elixir)
+# Boxland Railway Setup
 
-A 2D MMORPG engine and design suite. This is the Elixir/Phoenix LiveView/Pixi rewrite of Boxland.
+Boxland is a Phoenix application packaged for Railway with the root
+`Dockerfile` and `railway.toml`.
 
-For the architecture and design rationale, see:
-- `docs/superpowers/specs/2026-04-30-elixir-phoenix-pixi-foundation-design.md` (foundation spec)
-- The Go reference repo at `/Users/cmonetti/boxland/` (legacy implementation, do not edit)
+This guide covers setting up a Railway project that can later be converted into
+a reusable Railway Template.
 
-## Quick start (development)
+## What Railway Uses From This Repo
 
-Prerequisites:
-- Elixir 1.17+ / OTP 27+
-- Docker (for Postgres, Redis, MinIO)
-- libvips (`brew install vips` on Mac)
-- Node.js 20+ (for esbuild + ts-proto)
-- `protoc` (`brew install protobuf` on Mac)
-- `just` (`brew install just`)
+`railway.toml` defines the web service deployment behavior:
 
-Bring up local services and run the dev server:
+```toml
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "./Dockerfile"
+
+[deploy]
+preDeployCommand = "bin/boxland eval 'Boxland.Release.migrate()'"
+startCommand = "bin/boxland run"
+healthcheckPath = "/healthz"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+```
+
+That means Railway will:
+
+1. Build the app with the repo `Dockerfile`.
+2. Run database migrations before the deployment goes live.
+3. Start the Phoenix server with `bin/boxland run`.
+4. Wait for `/healthz` to return `200`.
+
+## Create The Railway Project
+
+1. Open Railway and create a new project.
+2. Add a PostgreSQL database service.
+3. Add a web service from this GitHub repository.
+4. Confirm the web service is using the repo root as its source.
+5. Let Railway use the checked-in `railway.toml` for build and deploy settings.
+
+## Configure Web Service Variables
+
+Open the web service's `Variables` tab and add:
+
+```bash
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+ECTO_IPV6=true
+LANG=en_US.UTF-8
+LC_CTYPE=en_US.UTF-8
+SECRET_KEY_BASE=<generated secret>
+```
+
+Generate `SECRET_KEY_BASE` locally with:
+
+```bash
+mix phx.gen.secret
+```
+
+If your Postgres service has a different name in Railway, update the reference
+namespace. For example, if the service is named `Database`, use:
+
+```bash
+DATABASE_URL=${{Database.DATABASE_URL}}
+```
+
+## Optional Variables
+
+Restrict designer account creation to one email domain:
+
+```bash
+DESIGNER_EMAIL_DOMAIN=example.com
+```
+
+Leave `DESIGNER_EMAIL_DOMAIN` unset or blank to allow any valid email domain.
+
+Override the public Phoenix host:
+
+```bash
+PHX_HOST=boxland.example.com
+```
+
+If `PHX_HOST` is unset, the app uses Railway's `RAILWAY_PUBLIC_DOMAIN`.
+
+## Deploy
+
+1. Review and deploy the staged Railway changes.
+2. Watch the web service deployment logs.
+3. Confirm the pre-deploy migration command succeeds.
+4. Confirm the deployment becomes active after `/healthz` passes.
+5. Open the generated Railway domain for the web service.
+
+## Troubleshooting
+
+If the app cannot connect to Postgres:
+
+- Confirm `DATABASE_URL` references the correct Railway Postgres service name.
+- Confirm `ECTO_IPV6=true` is set on the web service.
+- Redeploy the web service after saving variable changes.
+
+If Phoenix fails at startup:
+
+- Confirm `SECRET_KEY_BASE` is set.
+- Confirm `PHX_HOST` is either unset or set to the exact public host.
+- Check that Railway assigned a public domain to the web service.
+
+If migrations fail:
+
+- Check the pre-deploy logs for the web service.
+- Confirm the Postgres service is deployed and healthy.
+- Confirm the web service can read `DATABASE_URL`.
+
+## Create A Railway Template
+
+After the Railway project deploys successfully:
+
+1. Open the Railway project settings.
+2. Use Railway's "Generate Template from Project" flow.
+3. Confirm the template includes:
+   - The Boxland web service from this repo.
+   - The PostgreSQL service.
+   - The web service variables listed above.
+   - The checked-in `railway.toml` deployment settings.
+4. Mark `DESIGNER_EMAIL_DOMAIN` as optional so template users can decide
+   whether to restrict designer signups.
+5. Deploy the generated template once into a fresh project to verify the full
+   one-click flow.
+
+## Local Reference
+
+For local development, this repo expects Docker-backed services:
 
 ```bash
 cp .env.dev.example .env.dev
-# Generate a secret: mix phx.gen.secret
-# Edit .env.dev to set SECRET_KEY_BASE
 set -a && source .env.dev && set +a
 
-just dev-up           # docker compose up -d (postgres + redis + minio)
+just dev-up
 mix deps.get
 mix ecto.create
 mix ecto.migrate
-just serve            # iex -S mix phx.server
+just serve
 ```
 
-Visit http://localhost:4000.
-
-## Common commands
-
-```bash
-just                  # list all available recipes
-just test             # run the test suite
-just db-reset         # drop, create, and migrate the dev DB
-just proto-gen        # regenerate Protobuf modules
-just ci               # format check + credo + proto check + tests
-```
-
-## Project layout
-
-```
-lib/boxland/         — domain contexts (auth, library, maps, entities, levels, worlds, game, scripting)
-lib/boxland_web/     — web layer (live, channels, components, controllers, proto)
-lib/boxland_logic/   — built-in Lua action catalog
-priv/repo/migrations — Ecto migration files
-schemas/             — *.proto wire schemas (single source of truth)
-assets/js/           — esbuild-bundled TypeScript (LiveView socket, hooks, Pixi modules)
-assets/css/          — Tailwind sources
-test/                — ExUnit + LiveView tests
-```
-
-## Production deploy
-
-Pushed to `main` → Railway picks up the change → Docker build → BEAM release → auto-migrate on boot → healthcheck on `/healthz`.
-
-## Docker distribution
-
-Boxland ships as a Docker image plus a tiny launcher shell script.
-Docker is already a Boxland prerequisite (the Install workflow uses
-docker-compose to bring up Postgres + Redis + MinIO), so no additional
-runtime dependency is added.
-
-### Build locally
-
-```bash
-just build-image              # builds boxland:dev-test
-```
-
-The Dockerfile is multi-stage; first build downloads ~500MB of base images
-and takes ~3-5 min. Subsequent builds use cache and complete in ~30s.
-
-### Install (developer / first-run)
-
-After building locally:
-
-```bash
-just install-launcher         # writes /usr/local/bin/boxland (sudo)
-boxland                       # opens the TUI in a Docker container
-```
-
-The launcher (~20-line shell script at `bin/boxland`) takes care of:
-- Creating the `boxland-net` Docker network
-- Mounting `~/.boxland/` as a persistent data volume
-- Mounting the Docker socket so Boxland's Install workflow can manage
-  the dep services (postgres/redis/minio) on the host's Docker daemon
-- Forwarding container port 4000 → host so http://localhost:4000 works
-
-### Install (end-user — when an image registry is set up)
-
-Future state once `boxland/boxland:VERSION` is published:
-
-```bash
-# Pull the image:
-docker pull boxland/boxland:0.1.0
-
-# Install the launcher (one-line curl install, future):
-curl -fsSL https://boxland.app/install | sh
-
-# Run:
-boxland
-```
-
-For v1, end-user distribution is not yet wired up — push to a registry +
-publish the install script land in a follow-up "Distribution" surface spec.
-
-### Subcommands
-
-```bash
-boxland install               # non-interactive install (CI / scripts)
-boxland run                   # foreground server (no TUI)
-boxland --version
-```
-
-### Why Docker instead of a single static binary?
-
-We considered Burrito (single-binary packager). Burrito's strict pin on
-Zig 0.15.2 conflicts with current Homebrew Zig and creates ongoing
-maintenance friction. Since Boxland already requires Docker for its
-runtime dependencies, packaging Boxland itself in Docker is consistent
-and removes a whole class of toolchain pain. See the TUI surface spec
-for the full rationale.
+Visit `http://localhost:4000`.

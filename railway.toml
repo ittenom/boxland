@@ -3,7 +3,8 @@ builder = "DOCKERFILE"
 dockerfilePath = "./Dockerfile"
 
 [deploy]
-startCommand = "bin/boxland start"
+preDeployCommand = "bin/boxland eval 'Boxland.Release.migrate()'"
+startCommand = "bin/boxland run"
 healthcheckPath = "/healthz"
 healthcheckTimeout = 30
 restartPolicyType = "ON_FAILURE"
