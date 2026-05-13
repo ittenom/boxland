@@ -69,6 +69,10 @@ defmodule BoxlandWeb.AssetLive do
     end
   end
 
+  def handle_event("validate_upload", %{"asset" => asset_params}, socket) do
+    {:noreply, assign(socket, :form, to_form(asset_params, as: :asset))}
+  end
+
   def handle_event("select_asset", %{"id" => id}, socket) do
     asset = Library.get_asset!(socket.assigns.current_designer.id, id)
     {:noreply, assign(socket, selected_asset: asset, selected_tile: 0)}
@@ -132,7 +136,13 @@ defmodule BoxlandWeb.AssetLive do
           <.link navigate={~p"/app"} class="btn btn-ghost">Dashboard</.link>
         </div>
 
-        <.form for={@form} id="tileset-upload-form" phx-submit="upload" class="card bg-base-200">
+        <.form
+          for={@form}
+          id="tileset-upload-form"
+          phx-change="validate_upload"
+          phx-submit="upload"
+          class="card bg-base-200"
+        >
           <div class="card-body gap-4">
             <.input field={@form[:name]} type="text" label="Tileset name" required />
             <.live_file_input upload={@uploads.tileset} class="file-input file-input-bordered w-full" />
