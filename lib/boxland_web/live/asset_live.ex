@@ -26,7 +26,11 @@ defmodule BoxlandWeb.AssetLive do
         )
       )
       |> assign(:form, to_form(%{}, as: :asset))
-      |> allow_upload(:tileset, accept: ~w(.png), max_entries: 1, max_file_size: 8_000_000)
+      |> allow_upload(:tileset,
+        accept: ~w(.png image/png),
+        max_entries: 1,
+        max_file_size: 8_000_000
+      )
 
     {:ok, socket}
   end
@@ -34,18 +38,20 @@ defmodule BoxlandWeb.AssetLive do
   def handle_event("upload", %{"asset" => %{"name" => name}}, socket) do
     designer = socket.assigns.current_designer
 
-    results =
+    {assets, errors} =
       consume_uploaded_entries(socket, :tileset, fn %{path: path}, entry ->
         with {:ok, {width, height}} <- Library.parse_png_dimensions(path),
+             :ok <- validate_tileset_dimensions(width, height),
              {:ok, attrs} <- persist_upload(path, entry, name, width, height),
              {:ok, asset} <- Library.create_tileset(designer.id, attrs) do
           {:ok, asset}
         else
-          {:error, reason} -> {:postpone, reason}
+          {:error, reason} -> {:ok, {:error, upload_error(reason)}}
         end
       end)
+      |> Enum.split_with(&match?(%Boxland.Library.Asset{}, &1))
 
-    case results do
+    case assets do
       [asset | _] ->
         {:noreply,
          socket
@@ -55,7 +61,11 @@ defmodule BoxlandWeb.AssetLive do
 
       _ ->
         {:noreply,
-         put_flash(socket, :error, "Upload a valid PNG tileset with dimensions divisible by 32.")}
+         put_flash(
+           socket,
+           :error,
+           upload_result_error(socket, errors)
+         )}
     end
   end
 
@@ -126,6 +136,9 @@ defmodule BoxlandWeb.AssetLive do
           <div class="card-body gap-4">
             <.input field={@form[:name]} type="text" label="Tileset name" required />
             <.live_file_input upload={@uploads.tileset} class="file-input file-input-bordered w-full" />
+            <p :for={error <- upload_errors(@uploads.tileset)} class="text-sm text-error">
+              {upload_error_text(error)}
+            </p>
             <p class="text-sm text-base-content/60">
               PNG only. Width and height must be divisible by 32.
             </p>
@@ -302,6 +315,52 @@ defmodule BoxlandWeb.AssetLive do
        height: height
      }}
   end
+
+  defp validate_tileset_dimensions(width, height) do
+    cond do
+      rem(width, Library.tile_size()) != 0 or rem(height, Library.tile_size()) != 0 ->
+        {:error, "image dimensions must be divisible by #{Library.tile_size()}px"}
+
+      width == 0 or height == 0 ->
+        {:error, "image must contain at least one tile"}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp upload_error(%Ecto.Changeset{} = changeset) do
+    changeset.errors
+    |> Enum.map(fn {field, {message, opts}} ->
+      label = field |> Atom.to_string() |> String.replace("_", " ")
+      "#{label} #{BoxlandWeb.CoreComponents.translate_error({message, opts})}"
+    end)
+    |> Enum.join(", ")
+    |> case do
+      "" -> "Could not save tileset."
+      message -> "Could not save tileset: #{message}."
+    end
+  end
+
+  defp upload_error(reason) when is_binary(reason), do: "Could not upload tileset: #{reason}."
+  defp upload_error(reason), do: "Could not upload tileset: #{inspect(reason)}."
+
+  defp upload_result_error(_socket, [{:error, message} | _]), do: message
+
+  defp upload_result_error(socket, _errors) do
+    socket.assigns.uploads.tileset
+    |> upload_errors()
+    |> List.first()
+    |> case do
+      nil -> "Choose a PNG tileset before uploading."
+      error -> upload_error_text(error)
+    end
+  end
+
+  defp upload_error_text(:too_large), do: "Tileset must be 8 MB or smaller."
+  defp upload_error_text(:too_many_files), do: "Upload one tileset at a time."
+  defp upload_error_text(:not_accepted), do: "Choose a PNG image."
+  defp upload_error_text(error), do: "Upload failed: #{inspect(error)}."
 
   defp tile_style(asset, index) do
     columns = asset.metadata["columns"]

@@ -103,15 +103,25 @@ defmodule Boxland.Library do
   end
 
   def parse_png_dimensions(path) do
-    with {:ok,
-          <<137, 80, 78, 71, 13, 10, 26, 10, _len::32, "IHDR", width::32, height::32,
-            _rest::binary>>} <- File.read(path) do
+    with {:ok, bytes} <- File.read(path),
+         {:ok, width, height} <- parse_png_header(bytes) do
       {:ok, {width, height}}
     else
-      {:ok, _} -> {:error, "must be a PNG image"}
       {:error, reason} -> {:error, "could not read image: #{inspect(reason)}"}
+      :not_png -> {:error, "file is not a PNG image"}
+      :missing_ihdr -> {:error, "PNG is missing its IHDR header"}
     end
   end
+
+  defp parse_png_header(
+         <<137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, "IHDR", width::32, height::32,
+           _rest::binary>>
+       ) do
+    {:ok, width, height}
+  end
+
+  defp parse_png_header(<<137, 80, 78, 71, 13, 10, 26, 10, _rest::binary>>), do: :missing_ihdr
+  defp parse_png_header(_bytes), do: :not_png
 
   defp tileset_metadata(attrs) do
     rows = div(attrs.height, @tile_size)
