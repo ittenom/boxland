@@ -25,6 +25,7 @@ defmodule BoxlandWeb.Router do
 
     get "/", PageController, :home
     live "/register", DesignerRegisterLive
+    post "/register", DesignerRegistrationController, :create
     live "/login", DesignerLoginLive
     post "/login", DesignerSessionController, :create
     delete "/logout", DesignerSessionController, :delete

@@ -1,23 +1,8 @@
 defmodule BoxlandWeb.DesignerRegisterLive do
   use BoxlandWeb, :live_view
 
-  alias Boxland.Auth.Designers
-
   def mount(_params, _session, socket) do
     {:ok, assign(socket, form: to_form(%{}, as: :designer))}
-  end
-
-  def handle_event("register", %{"designer" => params}, socket) do
-    case Designers.register_designer(params) do
-      {:ok, _designer} ->
-        {:noreply,
-         socket
-         |> put_flash(:info, "Account created. Sign in to continue.")
-         |> push_navigate(to: ~p"/login")}
-
-      {:error, changeset} ->
-        {:noreply, assign(socket, form: to_form(%{changeset | action: :insert}, as: :designer))}
-    end
   end
 
   def render(assigns) do
@@ -29,7 +14,13 @@ defmodule BoxlandWeb.DesignerRegisterLive do
           <h1 class="mt-2 text-3xl font-semibold tracking-tight">Create your account</h1>
         </div>
 
-        <.form for={@form} id="designer-register-form" phx-submit="register" class="space-y-4">
+        <.form
+          for={@form}
+          id="designer-register-form"
+          action={~p"/register"}
+          method="post"
+          class="space-y-4"
+        >
           <.input field={@form[:email]} type="email" label="Email" required />
           <.input field={@form[:display_name]} type="text" label="Display name" required />
           <.input field={@form[:password]} type="password" label="Password" required />
