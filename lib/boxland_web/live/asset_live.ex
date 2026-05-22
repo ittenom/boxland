@@ -837,15 +837,7 @@ defmodule BoxlandWeb.AssetLive do
   defp upload_error_text(error), do: "Upload failed: #{inspect(error)}."
 
   defp tile_card_style(asset, index) do
-    columns = asset.metadata["columns"]
-    rows = asset.metadata["rows"]
-    x = rem(index, columns)
-    y = div(index, columns)
-
-    "background-image: url('#{asset.content_url}');" <>
-      "background-position: -#{x * 100}% -#{y * 100}%;" <>
-      "background-size: #{columns * 100}% #{rows * 100}%;" <>
-      "image-rendering: pixelated;"
+    sprite_style(asset, index)
   end
 
   defp preview_style(asset, index) do
@@ -862,20 +854,31 @@ defmodule BoxlandWeb.AssetLive do
 
   defp thumbnail_style(asset) do
     case first_tile_index(asset) do
-      nil ->
-        ""
-
-      index ->
-        columns = asset.metadata["columns"] || 1
-        rows = asset.metadata["rows"] || 1
-        x = rem(index, columns)
-        y = div(index, columns)
-
-        "background-image: url('#{asset.content_url}');" <>
-          "background-position: -#{x * 100}% -#{y * 100}%;" <>
-          "background-size: #{columns * 100}% #{rows * 100}%;" <>
-          "image-rendering: pixelated;"
+      nil -> ""
+      index -> sprite_style(asset, index)
     end
+  end
+
+  # CSS sprite positioning where the container is one tile wide and the image
+  # is scaled to (cols * container_size). Percentage-based background-position
+  # divides by (cols - 1) because CSS interprets % as a fraction of the unused
+  # space (image size - container size), not container size.
+  defp sprite_style(asset, index) do
+    columns = asset.metadata["columns"] || 1
+    rows = asset.metadata["rows"] || 1
+    x = rem(index, columns)
+    y = div(index, columns)
+    pos_x = if columns > 1, do: x / (columns - 1) * 100, else: 0
+    pos_y = if rows > 1, do: y / (rows - 1) * 100, else: 0
+
+    "background-image: url('#{asset.content_url}');" <>
+      "background-position: #{format_percent(pos_x)}% #{format_percent(pos_y)}%;" <>
+      "background-size: #{columns * 100}% #{rows * 100}%;" <>
+      "image-rendering: pixelated;"
+  end
+
+  defp format_percent(value) do
+    :erlang.float_to_binary(value * 1.0, decimals: 4)
   end
 
   defp tile_indexes(asset) do
