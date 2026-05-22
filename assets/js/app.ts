@@ -194,10 +194,129 @@ const MapmakerCanvas = {
   },
 }
 
+type TileMaskPainterHook = {
+  el: HTMLElement;
+  pushEvent(event: string, payload: Record<string, unknown>): void;
+  painting: boolean;
+  paintValue: boolean;
+  seen: Set<string>;
+  pending: Array<[number, number]>;
+  flushTimer: number | null;
+  pointerDown: (event: PointerEvent) => void;
+  pointerMove: (event: PointerEvent) => void;
+  pointerUp: (event: PointerEvent) => void;
+  cellFromEvent(event: PointerEvent): HTMLElement | null;
+  touchCell(cell: HTMLElement): void;
+  scheduleFlush(): void;
+  flush(): void;
+}
+
+const TileMaskPainter = {
+  mounted(this: TileMaskPainterHook) {
+    this.painting = false
+    this.paintValue = true
+    this.seen = new Set<string>()
+    this.pending = []
+    this.flushTimer = null
+
+    this.pointerDown = event => {
+      if (event.button !== 0) return
+      const cell = this.cellFromEvent(event)
+      if (!cell) return
+
+      event.preventDefault()
+      this.painting = true
+      this.paintValue = cell.dataset["solid"] !== "1"
+      this.seen.clear()
+      this.pending = []
+      this.el.setPointerCapture(event.pointerId)
+      this.touchCell(cell)
+    }
+
+    this.pointerMove = event => {
+      if (!this.painting) return
+      const cell = this.cellFromEvent(event)
+      if (cell) {
+        event.preventDefault()
+        this.touchCell(cell)
+      }
+    }
+
+    this.pointerUp = event => {
+      if (!this.painting) return
+      event.preventDefault()
+      if (this.el.hasPointerCapture(event.pointerId)) {
+        this.el.releasePointerCapture(event.pointerId)
+      }
+      this.painting = false
+      this.flush()
+    }
+
+    this.cellFromEvent = event => {
+      const target = document.elementFromPoint(event.clientX, event.clientY)
+      if (!(target instanceof Element)) return null
+      const cell = target.closest<HTMLElement>("[data-mask-cell]")
+      if (!cell || !this.el.contains(cell)) return null
+      return cell
+    }
+
+    this.touchCell = cell => {
+      const x = cell.dataset["x"]
+      const y = cell.dataset["y"]
+      if (x === undefined || y === undefined) return
+      const key = `${x},${y}`
+      if (this.seen.has(key)) return
+      this.seen.add(key)
+
+      cell.dataset["solid"] = this.paintValue ? "1" : "0"
+      cell.classList.toggle("bg-error/55", this.paintValue)
+      cell.classList.toggle("bg-transparent", !this.paintValue)
+
+      this.pending.push([parseInt(x, 10), parseInt(y, 10)])
+      this.scheduleFlush()
+    }
+
+    this.scheduleFlush = () => {
+      if (this.flushTimer !== null) return
+      this.flushTimer = window.setTimeout(() => {
+        this.flushTimer = null
+        this.flush()
+      }, 60)
+    }
+
+    this.flush = () => {
+      if (this.flushTimer !== null) {
+        window.clearTimeout(this.flushTimer)
+        this.flushTimer = null
+      }
+      if (this.pending.length === 0) return
+      const pixels = this.pending
+      this.pending = []
+      this.pushEvent("paint_pixels", {pixels, value: this.paintValue})
+    }
+
+    this.el.addEventListener("pointerdown", this.pointerDown)
+    this.el.addEventListener("pointermove", this.pointerMove)
+    this.el.addEventListener("pointerup", this.pointerUp)
+    this.el.addEventListener("pointercancel", this.pointerUp)
+  },
+
+  destroyed(this: TileMaskPainterHook) {
+    if (this.flushTimer !== null) {
+      window.clearTimeout(this.flushTimer)
+      this.flushTimer = null
+    }
+    this.el.removeEventListener("pointerdown", this.pointerDown)
+    this.el.removeEventListener("pointermove", this.pointerMove)
+    this.el.removeEventListener("pointerup", this.pointerUp)
+    this.el.removeEventListener("pointercancel", this.pointerUp)
+  },
+}
+
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, MapmakerCanvas},
+  hooks: {...colocatedHooks, MapmakerCanvas, TileMaskPainter},
 })
 
 // Show progress bar on live navigation and form submits

@@ -57,6 +57,64 @@ defmodule Boxland.Library.CollisionMask do
     |> Map.put("bits", bits(updated))
   end
 
+  def set_pixels(mask, pixels, value) when is_list(pixels) and is_boolean(value) do
+    list = to_booleans(mask)
+
+    coords =
+      pixels
+      |> Enum.map(&normalize_coord/1)
+      |> Enum.reject(&is_nil/1)
+      |> MapSet.new()
+
+    updated =
+      list
+      |> Enum.with_index()
+      |> Enum.map(fn {existing, index} ->
+        x = rem(index, @size)
+        y = div(index, @size)
+        if MapSet.member?(coords, {x, y}), do: value, else: existing
+      end)
+
+    mask
+    |> Map.put("mode", "manual")
+    |> Map.put("bits", bits(updated))
+  end
+
+  def invert(mask) do
+    inverted = mask |> to_booleans() |> Enum.map(&(not &1))
+
+    mask
+    |> Map.put("mode", "manual")
+    |> Map.put("bits", bits(inverted))
+  end
+
+  defp normalize_coord({x, y}) when is_integer(x) and is_integer(y), do: clamp_coord(x, y)
+  defp normalize_coord([x, y]) when is_integer(x) and is_integer(y), do: clamp_coord(x, y)
+
+  defp normalize_coord(%{"x" => x, "y" => y}) do
+    with {:ok, xi} <- to_int(x), {:ok, yi} <- to_int(y) do
+      clamp_coord(xi, yi)
+    else
+      _ -> nil
+    end
+  end
+
+  defp normalize_coord(_), do: nil
+
+  defp clamp_coord(x, y) when x in 0..(@size - 1)//1 and y in 0..(@size - 1)//1, do: {x, y}
+  defp clamp_coord(_, _), do: nil
+
+  defp to_int(value) when is_integer(value), do: {:ok, value}
+
+  defp to_int(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {int, _} -> {:ok, int}
+      :error -> :error
+    end
+  end
+
+  defp to_int(_), do: :error
+
   def to_booleans(%{"bits" => bit_string}) when is_binary(bit_string) do
     bit_string
     |> String.graphemes()

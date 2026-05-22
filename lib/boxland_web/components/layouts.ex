@@ -31,6 +31,11 @@ defmodule BoxlandWeb.Layouts do
     default: nil,
     doc: "the current [scope](https://hexdocs.pm/phoenix/scopes.html)"
 
+  attr :width, :string,
+    default: "default",
+    values: ~w(default wide full),
+    doc: "content width preset"
+
   slot :inner_block, required: true
 
   def app(assigns) do
@@ -59,8 +64,8 @@ defmodule BoxlandWeb.Layouts do
       </div>
     </header>
 
-    <main class="px-4 py-16 sm:px-6 lg:px-8">
-      <div class="mx-auto max-w-6xl space-y-4">
+    <main class={["px-4 sm:px-6 lg:px-8", main_padding(@width)]}>
+      <div class={[content_width(@width), "space-y-4"]}>
         {render_slot(@inner_block)}
       </div>
     </main>
@@ -68,6 +73,13 @@ defmodule BoxlandWeb.Layouts do
     <.flash_group flash={@flash} />
     """
   end
+
+  defp content_width("wide"), do: "mx-auto w-full max-w-screen-2xl"
+  defp content_width("full"), do: "w-full"
+  defp content_width(_), do: "mx-auto max-w-6xl"
+
+  defp main_padding("default"), do: "py-16"
+  defp main_padding(_), do: "py-8"
 
   @doc """
   Shows the flash group with standard titles and content.

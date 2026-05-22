@@ -102,6 +102,41 @@ defmodule Boxland.Library do
     )
   end
 
+  def paint_collision_pixels(%Asset{} = asset, tile_index, pixels, value)
+      when is_list(pixels) and is_boolean(value) do
+    put_tile_collision(
+      asset,
+      tile_index,
+      CollisionMask.set_pixels(tile_collision(asset, tile_index), pixels, value)
+    )
+  end
+
+  def fill_collision_mask(%Asset{} = asset, tile_index) do
+    put_tile_collision(asset, tile_index, CollisionMask.full())
+  end
+
+  def clear_collision_mask(%Asset{} = asset, tile_index) do
+    put_tile_collision(asset, tile_index, CollisionMask.none())
+  end
+
+  def invert_collision_mask(%Asset{} = asset, tile_index) do
+    put_tile_collision(
+      asset,
+      tile_index,
+      CollisionMask.invert(tile_collision(asset, tile_index))
+    )
+  end
+
+  def rename_asset(%Asset{} = asset, name) when is_binary(name) do
+    asset
+    |> Asset.changeset(%{name: String.trim(name)})
+    |> Repo.update()
+  end
+
+  def delete_asset(%Asset{} = asset) do
+    Repo.delete(asset)
+  end
+
   def parse_png_dimensions(path) do
     with {:ok, bytes} <- File.read(path),
          {:ok, width, height} <- parse_png_header(bytes) do
