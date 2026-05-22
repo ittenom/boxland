@@ -307,28 +307,28 @@ defmodule BoxlandWeb.AssetLive do
     """
   end
 
-  defp persist_upload(path, entry, name, width, height, tile_indexes \\ nil) do
-    uploads_dir = Application.app_dir(:boxland, "priv/static/uploads")
-    File.mkdir_p!(uploads_dir)
+  defp persist_upload(path, entry, name, width, height, tile_indexes) do
+    body = File.read!(path)
+    hash = :crypto.hash(:sha256, body)
+    key = "uploads/#{Base.url_encode64(hash, padding: false)}#{Path.extname(entry.client_name)}"
 
-    hash = :crypto.hash(:sha256, File.read!(path))
-    filename = "#{Base.url_encode64(hash, padding: false)}#{Path.extname(entry.client_name)}"
-    dest = Path.join(uploads_dir, filename)
-    File.cp!(path, dest)
-
-    {:ok,
-     %{
-       name: if(name == "", do: Path.rootname(entry.client_name), else: name),
-       sha256: hash,
-       content_url: "/uploads/#{filename}",
-       byte_size: entry.client_size,
-       mime_type: entry.client_type,
-       width: width,
-       height: height,
-       tile_indexes:
-         tile_indexes ||
-           Enum.to_list(0..(div(width, Library.tile_size()) * div(height, Library.tile_size()) - 1))
-     }}
+    with {:ok, content_url} <- Boxland.Storage.put_object(key, body, entry.client_type) do
+      {:ok,
+       %{
+         name: if(name == "", do: Path.rootname(entry.client_name), else: name),
+         sha256: hash,
+         content_url: content_url,
+         byte_size: entry.client_size,
+         mime_type: entry.client_type,
+         width: width,
+         height: height,
+         tile_indexes:
+           tile_indexes ||
+             Enum.to_list(
+               0..(div(width, Library.tile_size()) * div(height, Library.tile_size()) - 1)
+             )
+       }}
+    end
   end
 
   defp validate_tileset_dimensions(width, height) do

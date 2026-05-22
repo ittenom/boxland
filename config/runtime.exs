@@ -8,6 +8,27 @@ if designer_email_domain = System.get_env("DESIGNER_EMAIL_DOMAIN") do
   config :boxland, :designer_email_domain, designer_email_domain
 end
 
+# Object storage (Cloudflare R2 via S3 API). Applied in any env when env vars are set.
+if cdn_base_url = System.get_env("CDN_BASE_URL") do
+  config :boxland, :cdn_base_url, cdn_base_url
+end
+
+if s3_host = System.get_env("S3_HOST") do
+  config :ex_aws, :s3,
+    host: s3_host,
+    bucket: System.get_env("S3_BUCKET"),
+    scheme: System.get_env("S3_SCHEME") || "https://",
+    region: System.get_env("S3_REGION") || "auto"
+end
+
+if s3_access_key_id = System.get_env("S3_ACCESS_KEY_ID") do
+  config :ex_aws, access_key_id: s3_access_key_id
+end
+
+if s3_secret_access_key = System.get_env("S3_SECRET_ACCESS_KEY") do
+  config :ex_aws, secret_access_key: s3_secret_access_key
+end
+
 if config_env() == :prod do
   user_config_path = Path.expand("~/.boxland/config.exs")
 
@@ -45,25 +66,6 @@ if config_env() == :prod do
 
     if redis_url = System.get_env("REDIS_URL") do
       config :boxland, :redis_url, redis_url
-    end
-
-    if cdn_base_url = System.get_env("CDN_BASE_URL") do
-      config :boxland, :cdn_base_url, cdn_base_url
-    end
-
-    if s3_host = System.get_env("S3_HOST") do
-      config :ex_aws, :s3,
-        host: s3_host,
-        bucket: System.get_env("S3_BUCKET"),
-        scheme: System.get_env("S3_SCHEME") || "https://"
-    end
-
-    if s3_access_key_id = System.get_env("S3_ACCESS_KEY_ID") do
-      config :ex_aws, access_key_id: s3_access_key_id
-    end
-
-    if s3_secret_access_key = System.get_env("S3_SECRET_ACCESS_KEY") do
-      config :ex_aws, secret_access_key: s3_secret_access_key
     end
 
     if is_nil(database_url) do
