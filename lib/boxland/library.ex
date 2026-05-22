@@ -251,21 +251,19 @@ defmodule Boxland.Library do
 
   defp unfilter_png_rows(_raw, _width, _channels, _bits), do: {:error, :unsupported_png_depth}
 
-  defp unfilter_png_rows(<<>>, _row_length, _bpp, rows, _previous), do: {:ok, Enum.reverse(rows)}
+  defp unfilter_png_rows(raw, row_length, bpp, rows, previous) do
+    case raw do
+      <<>> ->
+        {:ok, Enum.reverse(rows)}
 
-  defp unfilter_png_rows(
-         <<filter::8, row::binary-size(row_length), rest::binary>>,
-         row_length,
-         bpp,
-         rows,
-         previous
-       ) do
-    unfiltered = unfilter_png_row(filter, row, previous, bpp)
-    unfilter_png_rows(rest, row_length, bpp, [unfiltered | rows], unfiltered)
+      <<filter::8, row::binary-size(row_length), rest::binary>> ->
+        unfiltered = unfilter_png_row(filter, row, previous, bpp)
+        unfilter_png_rows(rest, row_length, bpp, [unfiltered | rows], unfiltered)
+
+      _ ->
+        {:error, :malformed_scanlines}
+    end
   end
-
-  defp unfilter_png_rows(_raw, _row_length, _bpp, _rows, _previous),
-    do: {:error, :malformed_scanlines}
 
   defp unfilter_png_row(0, row, _previous, _bpp), do: row
 
