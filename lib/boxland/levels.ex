@@ -41,8 +41,9 @@ defmodule Boxland.Levels do
 
   def change_level(%Level{} = level, attrs \\ %{}), do: Level.changeset(level, attrs)
 
-  def create_preset_entity(owner_id, level_id, preset_slug, x, y, overrides \\ %{}) do
+  def create_preset_entity(owner_id, level_id, preset_slug, x, y, overrides \\ %{}, opts \\ []) do
     entity_type = ensure_preset_entity_type!(owner_id, preset_slug)
+    z_override = Keyword.get(opts, :z_index_override)
 
     %LevelEntity{}
     |> LevelEntity.changeset(%{
@@ -50,6 +51,7 @@ defmodule Boxland.Levels do
       entity_type_id: entity_type.id,
       pos_x: x,
       pos_y: y,
+      z_index_override: z_override,
       instance_overrides: overrides,
       script_state: %{}
     })
@@ -161,10 +163,16 @@ defmodule Boxland.Levels do
         "width" => map.width,
         "height" => map.height,
         "layers" =>
-          Enum.map(map.layers, fn layer ->
+          map.layers
+          |> Enum.sort_by(fn l -> {l.z_index, l.id} end)
+          |> Enum.map(fn layer ->
             %{
+              "id" => layer.id,
               "name" => layer.name,
               "z_index" => layer.z_index,
+              "visible" => layer.visible,
+              "locked" => layer.locked,
+              "opacity" => layer.opacity,
               "tiles" => layer.tiles
             }
           end)
@@ -177,6 +185,7 @@ defmodule Boxland.Levels do
             "preset" => preset_slug(entity),
             "pos_x" => entity.pos_x,
             "pos_y" => entity.pos_y,
+            "z_index" => entity.z_index_override || entity.entity_type.default_z_index,
             "instance_overrides" => entity.instance_overrides
           }
         end)

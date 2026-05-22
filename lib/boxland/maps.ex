@@ -16,7 +16,7 @@ defmodule Boxland.Maps do
   def get_map!(owner_id, id) do
     Map
     |> where([m], m.owner_id == ^owner_id and m.id == ^id)
-    |> preload(:layers)
+    |> preload(layers: ^layer_order())
     |> Repo.one!()
   end
 
@@ -37,8 +37,101 @@ defmodule Boxland.Maps do
 
   def change_map(%Map{} = map, attrs \\ %{}), do: Map.changeset(map, attrs)
 
-  def primary_layer(%Map{layers: layers}) do
+  @doc "Lowest-z layer, used as the default selected layer."
+  def primary_layer(%Map{layers: layers}) when is_list(layers) do
     Enum.min_by(layers, & &1.z_index, fn -> nil end)
+  end
+
+  def list_layers(map_id) do
+    Layer
+    |> where([l], l.map_id == ^map_id)
+    |> order_by([l], asc: l.z_index, asc: l.id)
+    |> Repo.all()
+  end
+
+  def get_layer!(layer_id), do: Repo.get!(Layer, layer_id)
+
+  def get_layer_for_map!(map_id, layer_id) do
+    Layer
+    |> where([l], l.map_id == ^map_id and l.id == ^layer_id)
+    |> Repo.one!()
+  end
+
+  def create_layer(%Map{id: map_id}, attrs \\ %{}) do
+    name = Elixir.Map.get(attrs, :name) || Elixir.Map.get(attrs, "name") || next_layer_name(map_id)
+    z_index = Elixir.Map.get(attrs, :z_index) || Elixir.Map.get(attrs, "z_index") || next_z_index(map_id)
+
+    %Layer{}
+    |> Layer.changeset(%{map_id: map_id, name: name, z_index: z_index, tiles: %{}})
+    |> Repo.insert()
+  end
+
+  def duplicate_layer(%Layer{} = source) do
+    name = next_layer_name(source.map_id, base: "#{source.name} copy")
+
+    %Layer{}
+    |> Layer.changeset(%{
+      map_id: source.map_id,
+      name: name,
+      z_index: next_z_index(source.map_id),
+      tiles: source.tiles,
+      visible: source.visible,
+      locked: source.locked,
+      opacity: source.opacity
+    })
+    |> Repo.insert()
+  end
+
+  def delete_layer(%Layer{} = layer) do
+    case Repo.aggregate(from(l in Layer, where: l.map_id == ^layer.map_id), :count, :id) do
+      n when n <= 1 -> {:error, :last_layer}
+      _ -> Repo.delete(layer)
+    end
+  end
+
+  def rename_layer(%Layer{} = layer, name) do
+    layer
+    |> Layer.changeset(%{name: name})
+    |> Repo.update()
+  end
+
+  def toggle_layer_visibility(%Layer{} = layer) do
+    layer
+    |> Layer.changeset(%{visible: !layer.visible})
+    |> Repo.update()
+  end
+
+  def toggle_layer_lock(%Layer{} = layer) do
+    layer
+    |> Layer.changeset(%{locked: !layer.locked})
+    |> Repo.update()
+  end
+
+  def set_layer_opacity(%Layer{} = layer, opacity) when is_integer(opacity) do
+    layer
+    |> Layer.changeset(%{opacity: opacity})
+    |> Repo.update()
+  end
+
+  @doc """
+  Reorder layers. Accepts a list of layer ids from highest-z (top of stack)
+  to lowest-z (bottom of stack) — the natural order of an Illustrator-style
+  layers panel.
+  """
+  def reorder_layers(map_id, ordered_ids_top_to_bottom) when is_list(ordered_ids_top_to_bottom) do
+    count = length(ordered_ids_top_to_bottom)
+
+    Repo.transaction(fn ->
+      ordered_ids_top_to_bottom
+      |> Enum.with_index()
+      |> Enum.each(fn {id, idx} ->
+        z = count - idx - 1
+
+        Layer
+        |> where([l], l.id == ^id and l.map_id == ^map_id)
+        |> Repo.update_all(set: [z_index: z, updated_at: DateTime.utc_now()])
+      end)
+    end)
   end
 
   def update_layer_tiles(%Layer{} = layer, tiles) when is_map(tiles) do
@@ -64,4 +157,36 @@ defmodule Boxland.Maps do
       "rotation" => tile.rotation
     }
   end
+
+  defp next_z_index(map_id) do
+    Layer
+    |> where([l], l.map_id == ^map_id)
+    |> select([l], max(l.z_index))
+    |> Repo.one()
+    |> case do
+      nil -> 0
+      max -> max + 1
+    end
+  end
+
+  defp next_layer_name(map_id, opts \\ []) do
+    base = Keyword.get(opts, :base, "layer")
+
+    existing =
+      Layer
+      |> where([l], l.map_id == ^map_id)
+      |> select([l], l.name)
+      |> Repo.all()
+      |> MapSet.new()
+
+    if not MapSet.member?(existing, base) do
+      base
+    else
+      Stream.iterate(2, &(&1 + 1))
+      |> Enum.find(fn n -> not MapSet.member?(existing, "#{base} #{n}") end)
+      |> then(&"#{base} #{&1}")
+    end
+  end
+
+  defp layer_order, do: from(l in Layer, order_by: [asc: l.z_index, asc: l.id])
 end
