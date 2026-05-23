@@ -140,6 +140,61 @@ defmodule Boxland.Maps do
     |> Repo.update()
   end
 
+  @doc "Remove every tile at the given (x,y) cells on this layer."
+  def delete_tiles_in_cells(%Layer{} = layer, cells) when is_list(cells) do
+    new_tiles =
+      Enum.reduce(cells, layer.tiles, fn {x, y}, acc -> Elixir.Map.delete(acc, key(x, y)) end)
+
+    update_layer_tiles(layer, new_tiles)
+  end
+
+  @doc "Increment rotation by 90° on each existing tile in the given cells."
+  def rotate_tiles_in_cells(%Layer{} = layer, cells) when is_list(cells) do
+    new_tiles =
+      Enum.reduce(cells, layer.tiles, fn {x, y}, acc ->
+        case Elixir.Map.fetch(acc, key(x, y)) do
+          {:ok, tile} ->
+            Elixir.Map.put(
+              acc,
+              key(x, y),
+              Elixir.Map.update(tile, "rotation", 90, &rem(&1 + 90, 360))
+            )
+
+          :error ->
+            acc
+        end
+      end)
+
+    update_layer_tiles(layer, new_tiles)
+  end
+
+  @doc """
+  Move every existing tile in `cells` from `from` to `to`. Atomic; returns
+  `{:ok, {updated_from, updated_to}}`.
+  """
+  def move_tiles_between_layers(%Layer{} = from, %Layer{} = to, cells) when is_list(cells) do
+    {moved, remaining} =
+      Enum.reduce(cells, {%{}, from.tiles}, fn {x, y}, {moved, remaining} ->
+        k = key(x, y)
+
+        case Elixir.Map.fetch(remaining, k) do
+          {:ok, tile} -> {Elixir.Map.put(moved, k, tile), Elixir.Map.delete(remaining, k)}
+          :error -> {moved, remaining}
+        end
+      end)
+
+    new_to_tiles = Elixir.Map.merge(to.tiles, moved)
+
+    Repo.transaction(fn ->
+      with {:ok, updated_from} <- update_layer_tiles(from, remaining),
+           {:ok, updated_to} <- update_layer_tiles(to, new_to_tiles) do
+        {updated_from, updated_to}
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+  end
+
   def put_tile(tiles, x, y, tile) do
     Elixir.Map.put(tiles, key(x, y), stringify_tile(tile))
   end

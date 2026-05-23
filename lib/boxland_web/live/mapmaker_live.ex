@@ -30,6 +30,9 @@ defmodule BoxlandWeb.MapmakerLive do
     {:noreply, assign(socket, :tool, tool)}
   end
 
+  def handle_event("undo", _params, socket), do: undo(socket)
+  def handle_event("redo", _params, socket), do: redo(socket)
+
   def handle_event("hotkey", %{"key" => key} = params, socket) do
     cond do
       key in ["p", "P"] ->
@@ -49,6 +52,9 @@ defmodule BoxlandWeb.MapmakerLive do
 
       key in ["v", "V"] ->
         {:noreply, assign(socket, :tool, "select")}
+
+      key == "Escape" ->
+        {:noreply, assign(socket, :selection, nil)}
 
       key in ["z", "Z"] and truthy?(params["metaKey"] || params["ctrlKey"]) and
           truthy?(params["shiftKey"]) ->
@@ -88,6 +94,45 @@ defmodule BoxlandWeb.MapmakerLive do
     x = String.to_integer(x)
     y = String.to_integer(y)
     paint_tile(socket, x, y)
+  end
+
+  def handle_event("select_area_drag", %{"x1" => x1, "y1" => y1, "x2" => x2, "y2" => y2}, socket) do
+    selection = %{
+      x1: to_int(x1),
+      y1: to_int(y1),
+      x2: to_int(x2),
+      y2: to_int(y2)
+    }
+
+    {:noreply, assign(socket, :selection, selection)}
+  end
+
+  def handle_event("clear_selection", _params, socket) do
+    {:noreply, assign(socket, :selection, nil)}
+  end
+
+  def handle_event("selection_copy", _params, socket) do
+    {:noreply, clone_selection(socket)}
+  end
+
+  def handle_event("selection_delete", _params, socket) do
+    apply_to_selection(socket, fn layer, cells ->
+      Maps.delete_tiles_in_cells(layer, cells)
+    end)
+  end
+
+  def handle_event("selection_rotate", _params, socket) do
+    apply_to_selection(socket, fn layer, cells ->
+      Maps.rotate_tiles_in_cells(layer, cells)
+    end)
+  end
+
+  def handle_event("selection_move_up", _params, socket) do
+    move_selection(socket, :up)
+  end
+
+  def handle_event("selection_move_down", _params, socket) do
+    move_selection(socket, :down)
   end
 
   # === Layer events ===
@@ -228,23 +273,10 @@ defmodule BoxlandWeb.MapmakerLive do
           >
             <.icon name="hero-clipboard-document-check" class="size-4" /> Paste
           </button>
-          <button
-            id="map-undo-button"
-            phx-click="hotkey"
-            phx-value-key="z"
-            phx-value-ctrlKey="true"
-            class="btn btn-sm"
-          >
+          <button id="map-undo-button" phx-click="undo" class="btn btn-sm" title="Undo (⌘Z)">
             <.icon name="hero-arrow-uturn-left" class="size-4" />
           </button>
-          <button
-            id="map-redo-button"
-            phx-click="hotkey"
-            phx-value-key="z"
-            phx-value-ctrlKey="true"
-            phx-value-shiftKey="true"
-            class="btn btn-sm"
-          >
+          <button id="map-redo-button" phx-click="redo" class="btn btn-sm" title="Redo (⇧⌘Z)">
             <.icon name="hero-arrow-uturn-right" class="size-4" />
           </button>
         </div>
@@ -297,6 +329,13 @@ defmodule BoxlandWeb.MapmakerLive do
                   style={layer_cell_style(@tilesets, layer, x, y)}
                 />
               </button>
+
+              <.selection_menu
+                :if={@selection && @tool in ["select", "select_area"]}
+                selection={@selection}
+                map={@map}
+                selected_layer={active_layer(@map, @selected_layer_id)}
+              />
             </div>
           </div>
 
@@ -355,6 +394,84 @@ defmodule BoxlandWeb.MapmakerLive do
         ]}
         style={tile_style(@asset, index)}
       />
+    </div>
+    """
+  end
+
+  attr :selection, :map, required: true
+  attr :map, :map, required: true
+  attr :selected_layer, :any, required: true
+
+  defp selection_menu(assigns) do
+    can_up = assigns.selected_layer && neighbor_layer(assigns.map, assigns.selected_layer, :up) != nil
+    can_down = assigns.selected_layer && neighbor_layer(assigns.map, assigns.selected_layer, :down) != nil
+    w = assigns.selection.x2 - assigns.selection.x1 + 1
+    h = assigns.selection.y2 - assigns.selection.y1 + 1
+
+    assigns = assign(assigns, can_up: can_up, can_down: can_down, dims: "#{w}×#{h}")
+
+    ~H"""
+    <div
+      id="selection-menu"
+      class="absolute z-10 flex items-center gap-0.5 rounded-full border border-base-300 bg-base-100 px-1 py-0.5 shadow-md"
+      style={"top: #{(@selection.y2 + 1) * 32 + 6}px; left: #{@selection.x1 * 32}px;"}
+    >
+      <span class="px-2 font-mono text-[10px] text-base-content/60">
+        {@dims}
+      </span>
+      <button
+        type="button"
+        id="selection-move-up"
+        phx-click="selection_move_up"
+        disabled={!@can_up}
+        class="btn btn-ghost btn-xs px-1"
+        title="Move to layer above"
+        aria-label="Move tiles to layer above"
+      >
+        <.icon name="hero-arrow-up" class="size-3.5" />
+      </button>
+      <button
+        type="button"
+        id="selection-move-down"
+        phx-click="selection_move_down"
+        disabled={!@can_down}
+        class="btn btn-ghost btn-xs px-1"
+        title="Move to layer below"
+        aria-label="Move tiles to layer below"
+      >
+        <.icon name="hero-arrow-down" class="size-3.5" />
+      </button>
+      <span class="mx-0.5 h-4 w-px bg-base-300" />
+      <button
+        type="button"
+        id="selection-copy"
+        phx-click="selection_copy"
+        class="btn btn-ghost btn-xs px-1"
+        title="Copy tiles"
+        aria-label="Copy tiles"
+      >
+        <.icon name="hero-clipboard-document" class="size-3.5" />
+      </button>
+      <button
+        type="button"
+        id="selection-rotate"
+        phx-click="selection_rotate"
+        class="btn btn-ghost btn-xs px-1"
+        title="Rotate tiles 90°"
+        aria-label="Rotate tiles"
+      >
+        <.icon name="hero-arrow-path" class="size-3.5" />
+      </button>
+      <button
+        type="button"
+        id="selection-delete"
+        phx-click="selection_delete"
+        class="btn btn-ghost btn-xs px-1 text-error"
+        title="Delete tiles"
+        aria-label="Delete tiles"
+      >
+        <.icon name="hero-trash" class="size-3.5" />
+      </button>
     </div>
     """
   end
@@ -456,7 +573,11 @@ defmodule BoxlandWeb.MapmakerLive do
             </span>
           </div>
 
-          <div class="flex items-center gap-1">
+          <form
+            phx-change="set_opacity"
+            phx-value-id={layer.id}
+            class="flex items-center gap-1"
+          >
             <.icon name="hero-adjustments-horizontal" class="size-3 text-base-content/50" />
             <input
               type="range"
@@ -464,17 +585,15 @@ defmodule BoxlandWeb.MapmakerLive do
               max="100"
               step="5"
               value={layer.opacity}
-              phx-change="set_opacity"
-              phx-value-id={layer.id}
-              phx-debounce="150"
               name="opacity"
+              phx-debounce="150"
               class="range range-xs flex-1"
               aria-label="Layer opacity"
             />
             <span class="w-8 text-right font-mono text-[10px] text-base-content/50">
               {layer.opacity}%
             </span>
-          </div>
+          </form>
 
           <div class="flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100">
             <button
@@ -692,6 +811,94 @@ defmodule BoxlandWeb.MapmakerLive do
     end
   end
 
+  defp apply_to_selection(socket, fun) do
+    selection = socket.assigns.selection
+    layer = active_layer(socket.assigns.map, socket.assigns.selected_layer_id)
+
+    cond do
+      is_nil(selection) ->
+        {:noreply, socket}
+
+      is_nil(layer) ->
+        {:noreply, socket}
+
+      not layer_editable?(layer) ->
+        {:noreply, put_flash(socket, :error, "Layer is locked or hidden.")}
+
+      true ->
+        previous = layer.tiles
+        {:ok, updated} = fun.(layer, selection_cells(selection))
+
+        if updated.tiles == previous do
+          {:noreply, socket}
+        else
+          {:noreply,
+           socket
+           |> replace_layer(updated)
+           |> assign(:undo_stack, [{layer.id, previous} | socket.assigns.undo_stack])
+           |> assign(:redo_stack, [])}
+        end
+    end
+  end
+
+  defp move_selection(socket, direction) do
+    selection = socket.assigns.selection
+    from_layer = active_layer(socket.assigns.map, socket.assigns.selected_layer_id)
+
+    with %{} <- selection,
+         %{} = from <- from_layer,
+         true <- layer_editable?(from),
+         %{} = to <- neighbor_layer(socket.assigns.map, from, direction),
+         true <- layer_editable?(to) do
+      previous_from = from.tiles
+      previous_to = to.tiles
+      cells = selection_cells(selection)
+
+      case Maps.move_tiles_between_layers(from, to, cells) do
+        {:ok, {updated_from, updated_to}} ->
+          if updated_from.tiles == previous_from and updated_to.tiles == previous_to do
+            {:noreply, socket}
+          else
+            {:noreply,
+             socket
+             |> replace_layer(updated_from)
+             |> replace_layer(updated_to)
+             |> assign(:selected_layer_id, updated_to.id)
+             |> assign(:undo_stack, [
+               {from.id, previous_from},
+               {to.id, previous_to}
+               | socket.assigns.undo_stack
+             ])
+             |> assign(:redo_stack, [])}
+          end
+
+        {:error, _} ->
+          {:noreply, put_flash(socket, :error, "Could not move tiles.")}
+      end
+    else
+      _ ->
+        message =
+          case direction do
+            :up -> "No layer above to move tiles into."
+            :down -> "No layer below to move tiles into."
+          end
+
+        {:noreply, put_flash(socket, :error, message)}
+    end
+  end
+
+  defp neighbor_layer(map, %{z_index: z}, :up) do
+    map.layers
+    |> Enum.filter(&(&1.z_index > z))
+    |> Enum.min_by(& &1.z_index, fn -> nil end)
+  end
+
+  defp neighbor_layer(map, %{z_index: z}, :down) do
+    map.layers
+    |> Enum.filter(&(&1.z_index < z))
+    |> Enum.max_by(& &1.z_index, fn -> nil end)
+  end
+
   defp move_layer(socket, layer_id, direction) do
     layers = display_layers(socket.assigns.map)
     index = Enum.find_index(layers, &(&1.id == layer_id))
@@ -790,6 +997,9 @@ defmodule BoxlandWeb.MapmakerLive do
   end
 
   defp truthy?(value), do: value in [true, "true"]
+
+  defp to_int(v) when is_integer(v), do: v
+  defp to_int(v) when is_binary(v), do: String.to_integer(v)
 
   defp refresh_map(socket, opts \\ []) do
     designer = socket.assigns.current_designer

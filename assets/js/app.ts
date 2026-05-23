@@ -38,10 +38,13 @@ const csrfToken = csrfMeta ? csrfMeta.getAttribute("content") : null
 
 type MapmakerCanvasHook = {
   el: HTMLElement;
-  pushEvent(event: string, payload: Record<string, string>): void;
+  pushEvent(event: string, payload: Record<string, unknown>): void;
   spaceDown: boolean;
   painting: boolean;
   panning: boolean;
+  selecting: boolean;
+  selectStart: {x: number; y: number} | null;
+  lastSelectKey: string | null;
   moved: boolean;
   lastCell: string | null;
   panStartX: number;
@@ -55,6 +58,7 @@ type MapmakerCanvasHook = {
   pointerUp: (event: PointerEvent) => void;
   click: (event: MouseEvent) => void;
   emitPaint(cell: HTMLElement): void;
+  emitSelect(cell: HTMLElement): void;
   cellFromEvent(event: Event): HTMLElement | null;
 }
 
@@ -63,6 +67,9 @@ const MapmakerCanvas = {
     this.spaceDown = false
     this.painting = false
     this.panning = false
+    this.selecting = false
+    this.selectStart = null
+    this.lastSelectKey = null
     this.moved = false
     this.lastCell = null
     this.panStartX = 0
@@ -105,6 +112,17 @@ const MapmakerCanvas = {
         this.lastCell = null
         this.el.setPointerCapture(event.pointerId)
         this.emitPaint(cell)
+        return
+      }
+
+      if (event.button === 0 && this.el.dataset["tool"] === "select_area" && cell) {
+        event.preventDefault()
+        this.selecting = true
+        this.moved = true
+        this.selectStart = {x: Number(cell.dataset["x"]), y: Number(cell.dataset["y"])}
+        this.lastSelectKey = null
+        this.el.setPointerCapture(event.pointerId)
+        this.emitSelect(cell)
       }
     }
 
@@ -125,11 +143,20 @@ const MapmakerCanvas = {
           event.preventDefault()
           this.emitPaint(cell)
         }
+        return
+      }
+
+      if (this.selecting) {
+        const cell = this.cellFromEvent(event)
+        if (cell) {
+          event.preventDefault()
+          this.emitSelect(cell)
+        }
       }
     }
 
     this.pointerUp = event => {
-      if (this.panning || this.painting) {
+      if (this.panning || this.painting || this.selecting) {
         event.preventDefault()
         if (this.el.hasPointerCapture(event.pointerId)) {
           this.el.releasePointerCapture(event.pointerId)
@@ -138,6 +165,9 @@ const MapmakerCanvas = {
 
       this.panning = false
       this.painting = false
+      this.selecting = false
+      this.selectStart = null
+      this.lastSelectKey = null
       this.lastCell = null
     }
 
@@ -163,6 +193,24 @@ const MapmakerCanvas = {
 
       this.lastCell = key
       this.pushEvent("paint_cell", {x, y})
+    }
+
+    this.emitSelect = cell => {
+      if (!this.selectStart) return
+
+      const x = Number(cell.dataset["x"])
+      const y = Number(cell.dataset["y"])
+      if (Number.isNaN(x) || Number.isNaN(y)) return
+
+      const key = `${x},${y}`
+      if (key === this.lastSelectKey) return
+      this.lastSelectKey = key
+
+      const x1 = Math.min(this.selectStart.x, x)
+      const y1 = Math.min(this.selectStart.y, y)
+      const x2 = Math.max(this.selectStart.x, x)
+      const y2 = Math.max(this.selectStart.y, y)
+      this.pushEvent("select_area_drag", {x1, y1, x2, y2})
     }
 
     this.cellFromEvent = event => {
