@@ -121,3 +121,12 @@
   -webkit-mask: url("/images/boxland-dots.svg") center / contain no-repeat;
   mask: url("/images/boxland-dots.svg") center / contain no-repeat;
 }
+
+/* Selected-entity fill pulse — used in the Level Editor canvas. */
+@keyframes boxland-entity-pulse {
+  0%, 100% { opacity: 0.2; }
+  50%      { opacity: 0.5; }
+}
+.entity-pulse {
+  animation: boxland-entity-pulse 1.6s ease-in-out infinite;
+}

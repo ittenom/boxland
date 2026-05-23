@@ -414,6 +414,57 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
     assert html =~ ~r{id="layer-row-#{upper.id}"[^>]*ring-accent}
   end
 
+  test "promoted group entity covers every group cell and pulses when selected", %{
+    conn: conn,
+    map: map,
+    level: level
+  } do
+    [layer] = Maps.list_layers(map.id)
+    gid = "Mixed_Case-1"
+
+    {:ok, _} =
+      Maps.update_layer_tiles(layer, %{
+        "1,1" => %{"asset_id" => 1, "tile_index" => 0, "rotation" => 0, "group_id" => gid},
+        "2,1" => %{"asset_id" => 1, "tile_index" => 0, "rotation" => 0, "group_id" => gid},
+        "3,1" => %{"asset_id" => 1, "tile_index" => 0, "rotation" => 0, "group_id" => gid}
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+    # Select group, promote, then verify the per-cell coverage.
+    render_click(view, "cell", %{"x" => "1", "y" => "1"})
+    render_click(view, "promote_selection")
+
+    html = render(view)
+
+    # All three group cells carry an entity overlay tagged with the entity id.
+    for x <- 1..3 do
+      assert html =~ ~r{level-entity-\d+-cell-#{x}-1}
+    end
+
+    # The selection just became {:entity, id} so every cell of that entity
+    # gets the pulse class.
+    matches = Regex.scan(~r{level-entity-(\d+)-cell-\d+-1[^"]*"[^>]*entity-pulse}, html)
+    # Should match all three cells of the same entity id.
+    assert length(matches) == 3
+    [[_, id1], [_, id2], [_, id3]] = matches
+    assert id1 == id2 and id2 == id3
+  end
+
+  test "unselected entity cells do not pulse", %{conn: conn, level: level} do
+    {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+    render_click(view, "preset", %{"preset" => "sign"})
+    render_click(view, "cell", %{"x" => "0", "y" => "0"})
+
+    # Click an empty cell to clear selection.
+    render_click(view, "tool", %{"tool" => "select"})
+    render_click(view, "cell", %{"x" => "5", "y" => "5"})
+
+    html = render(view)
+    # The placed entity still exists, but no pulse class on its cell.
+    assert html =~ ~r{level-entity-\d+-cell-0-0}
+    refute html =~ ~r{level-entity-\d+-cell-0-0[^"]*"[^>]*entity-pulse}
+  end
+
   test "highlights only the affected layer when a bare tile is selected", %{
     conn: conn,
     map: map,

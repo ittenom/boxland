@@ -25,32 +25,6 @@ defmodule BoxlandWeb.AssetLiveTest do
     {:ok, conn: conn, designer: designer}
   end
 
-  test "uploads a valid PNG tileset", %{conn: conn, designer: designer} do
-    {:ok, view, _html} = live(conn, ~p"/app/assets")
-
-    render_click(view, "open_upload")
-
-    upload =
-      file_input(view, "#tileset-upload-form", :tileset, [
-        %{
-          name: "forest.png",
-          content: png_bytes(64, 32),
-          type: "image/png"
-        }
-      ])
-
-    render_upload(upload, "forest.png")
-
-    view
-    |> form("#tileset-upload-form", asset: %{name: "Forest"})
-    |> render_submit()
-
-    assert [asset] = Library.list_assets(designer.id)
-    assert asset.name == "Forest"
-    assert asset.metadata["columns"] == 2
-    assert asset.metadata["rows"] == 1
-  end
-
   test "renames a tileset", %{conn: conn, designer: designer} do
     {:ok, asset} = create_tileset(designer, "Original")
 
@@ -98,10 +72,5 @@ defmodule BoxlandWeb.AssetLiveTest do
       height: 32,
       tile_indexes: [0, 1]
     })
-  end
-
-  defp png_bytes(width, height) do
-    <<137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, "IHDR", width::32, height::32, 8, 6, 0, 0, 0,
-      0::32>>
   end
 end

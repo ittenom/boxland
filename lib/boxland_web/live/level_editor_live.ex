@@ -863,6 +863,7 @@ defmodule BoxlandWeb.LevelEditorLive do
     selection_entity = selected_entity_for_render(assigns)
     selection_highlight = selection_cells(assigns.selection, assigns.level)
     affected_layers = affected_layer_ids(assigns.selection, assigns.level)
+    entity_cell_index = build_entity_cell_index(assigns.level)
 
     assigns =
       assigns
@@ -870,6 +871,7 @@ defmodule BoxlandWeb.LevelEditorLive do
       |> assign(:selected, selection_entity)
       |> assign(:selection_highlight, selection_highlight)
       |> assign(:affected_layer_ids, affected_layers)
+      |> assign(:entity_cell_index, entity_cell_index)
 
     ~H"""
     <Layouts.app flash={@flash} current_scope={%{designer: @current_designer}}>
@@ -919,6 +921,7 @@ defmodule BoxlandWeb.LevelEditorLive do
             tilesets={@tilesets}
             selected_entity_id={selected_entity_id_for_canvas(@selection)}
             highlight_cells={@selection_highlight}
+            entity_cell_index={@entity_cell_index}
           />
 
           <div class="space-y-3">
@@ -998,6 +1001,46 @@ defmodule BoxlandWeb.LevelEditorLive do
   end
 
   defp affected_layer_ids({:tile, layer_id, _x, _y}, _level), do: MapSet.new([layer_id])
+
+  # Build %{{x, y} => [%{entity:, anchor?:}]} mapping every cell touched by
+  # any entity. Anchor cell carries the entity's label.
+  defp build_entity_cell_index(level) do
+    Enum.reduce(level.entities, %{}, fn entity, acc ->
+      anchor = {div(entity.pos_x, @cell_px), div(entity.pos_y, @cell_px)}
+
+      entity
+      |> entity_occupied_cells(level)
+      |> Enum.reduce(acc, fn cell, inner ->
+        Elixir.Map.update(inner, cell, [%{entity: entity, anchor?: cell == anchor}], fn list ->
+          [%{entity: entity, anchor?: cell == anchor} | list]
+        end)
+      end)
+    end)
+  end
+
+  defp entity_occupied_cells(%LevelEntity{group_id: gid} = entity, level) when is_binary(gid) do
+    cells =
+      for layer <- level.map.layers,
+          {k, tile} <- layer.tiles,
+          tile["group_id"] == gid do
+        Maps.parse_key(k)
+      end
+
+    case cells do
+      [] -> single_cell_footprint(entity)
+      _ -> cells
+    end
+  end
+
+  defp entity_occupied_cells(entity, _level), do: single_cell_footprint(entity)
+
+  defp single_cell_footprint(entity) do
+    ax = div(entity.pos_x, @cell_px)
+    ay = div(entity.pos_y, @cell_px)
+    {w, h} = entity_footprint(entity)
+
+    for dy <- 0..(h - 1), dx <- 0..(w - 1), do: {ax + dx, ay + dy}
+  end
 
   # === Components ===
 
@@ -1342,6 +1385,7 @@ defmodule BoxlandWeb.LevelEditorLive do
   attr :tilesets, :list
   attr :selected_entity_id, :any
   attr :highlight_cells, :any, default: nil
+  attr :entity_cell_index, :map, default: %{}
 
   defp canvas(assigns) do
     ~H"""
@@ -1369,24 +1413,31 @@ defmodule BoxlandWeb.LevelEditorLive do
             class="pointer-events-none absolute inset-0 bg-no-repeat"
             style={layer_cell_style(@tilesets, layer, x, y)}
           />
-        </button>
 
-        <div
-          :for={entity <- @level.entities}
-          id={"level-entity-#{entity.id}"}
-          class={[
-            "pointer-events-none absolute z-10 flex items-center justify-center border text-[10px] font-bold",
-            entity_color_class(entity),
-            entity.id == @selected_entity_id && "ring-2 ring-accent"
-          ]}
-          style={entity_position_style(entity)}
-          aria-label={"entity #{entity.id}"}
-        >
-          {entity_label(entity)}
-        </div>
+          <span
+            :for={covering <- Elixir.Map.get(@entity_cell_index, {x, y}, [])}
+            id={"level-entity-#{covering.entity.id}-cell-#{x}-#{y}"}
+            class={[
+              "pointer-events-none absolute inset-0 flex items-center justify-center text-[10px] font-bold opacity-40",
+              entity_cell_color_class(covering.entity),
+              covering.entity.id == @selected_entity_id && "entity-pulse"
+            ]}
+            aria-label={"entity #{covering.entity.id}"}
+          >
+            <span :if={covering.anchor?}>{entity_label(covering.entity)}</span>
+          </span>
+        </button>
       </div>
     </div>
     """
+  end
+
+  defp entity_cell_color_class(entity) do
+    case entity.entity_type.visual_ref do
+      %{"kind" => "invisible"} -> "bg-accent text-accent-content"
+      %{"kind" => "preset"} -> "bg-primary text-primary-content"
+      _ -> "bg-secondary text-secondary-content"
+    end
   end
 
   attr :selection, :any, default: nil
@@ -1654,29 +1705,6 @@ defmodule BoxlandWeb.LevelEditorLive do
   defp cell_highlighted?(%MapSet{} = set, x, y), do: MapSet.member?(set, {x, y})
 
   defp cell_highlighted?(_, _, _), do: false
-
-  defp entity_color_class(entity) do
-    case entity.entity_type.visual_ref do
-      %{"kind" => "invisible"} -> "bg-accent/40 border-accent/70 text-accent-content"
-      %{"kind" => "preset"} -> "bg-primary/80 border-primary text-primary-content"
-      _ -> "bg-secondary/70 border-secondary text-secondary-content"
-    end
-  end
-
-  defp entity_position_style(entity) do
-    {w, h} = entity_size_cells(entity)
-    px = entity.pos_x
-    py = entity.pos_y
-    "left: #{px}px; top: #{py}px; width: #{w * @cell_px - 2}px; height: #{h * @cell_px - 2}px;"
-  end
-
-  defp entity_size_cells(entity) do
-    base =
-      (entity.instance_overrides || %{})
-      |> Map.get("size", entity.entity_type.size || %{"w" => 1, "h" => 1})
-
-    {Map.get(base, "w", 1), Map.get(base, "h", 1)}
-  end
 
   defp entity_label(entity) do
     case entity.entity_type.visual_ref do
