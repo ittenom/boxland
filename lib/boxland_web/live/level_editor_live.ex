@@ -26,8 +26,17 @@ defmodule BoxlandWeb.LevelEditorLive do
      |> assign(:selected_group_id, nil)
      |> assign(:invisible_size, %{"w" => 1, "h" => 1})
      |> assign(:place_z, default_place_z(level))
-     |> assign(:selected_entity_id, nil)
+     |> assign(:selected_layer_id, default_selected_layer_id(level))
+     |> assign(:renaming_layer_id, nil)
+     |> assign(:selection, nil)
      |> assign(:publish_error, nil)}
+  end
+
+  defp default_selected_layer_id(level) do
+    case visible_layers(level.map) do
+      [] -> nil
+      [layer | _] -> layer.id
+    end
   end
 
   # === Tool events ===
@@ -109,11 +118,11 @@ defmodule BoxlandWeb.LevelEditorLive do
   end
 
   def handle_event("select_entity", %{"id" => id}, socket) do
-    {:noreply, assign(socket, :selected_entity_id, String.to_integer(id))}
+    {:noreply, assign(socket, :selection, {:entity, String.to_integer(id)})}
   end
 
   def handle_event("clear_selection", _params, socket) do
-    {:noreply, assign(socket, :selected_entity_id, nil)}
+    {:noreply, assign(socket, :selection, nil)}
   end
 
   def handle_event("delete_entity", %{"id" => id}, socket) do
@@ -124,7 +133,157 @@ defmodule BoxlandWeb.LevelEditorLive do
     {:noreply,
      socket
      |> refresh_level()
-     |> assign(:selected_entity_id, nil)}
+     |> assign(:selection, nil)}
+  end
+
+  def handle_event("promote_selection", _params, socket) do
+    designer = socket.assigns.current_designer
+    level = socket.assigns.level
+
+    case socket.assigns.selection do
+      {:group, gid} ->
+        case ensure_group_entity(designer, level, gid) do
+          {:ok, entity} ->
+            {:noreply,
+             socket
+             |> refresh_level()
+             |> assign(:selection, {:entity, entity.id})}
+
+          {:error, _} ->
+            {:noreply, put_flash(socket, :error, "Could not promote group.")}
+        end
+
+      {:tile, layer_id, x, y} ->
+        case promote_tile(designer, level, layer_id, x, y) do
+          {:ok, entity} ->
+            {:noreply,
+             socket
+             |> refresh_level()
+             |> assign(:selection, {:entity, entity.id})}
+
+          {:error, _} ->
+            {:noreply, put_flash(socket, :error, "Could not promote tile.")}
+        end
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  # === Layer events ===
+
+  def handle_event("select_layer", %{"id" => id}, socket) do
+    lid = String.to_integer(id)
+    layer = Enum.find(socket.assigns.level.map.layers, &(&1.id == lid))
+
+    socket =
+      socket
+      |> assign(:selected_layer_id, lid)
+      |> then(fn s -> if layer, do: assign(s, :place_z, layer.z_index), else: s end)
+
+    {:noreply, socket}
+  end
+
+  def handle_event("add_layer", _params, socket) do
+    {:ok, layer} = Maps.create_layer(socket.assigns.level.map)
+
+    {:noreply,
+     socket
+     |> refresh_level()
+     |> assign(:selected_layer_id, layer.id)
+     |> assign(:place_z, layer.z_index)}
+  end
+
+  def handle_event("duplicate_layer", %{"id" => id}, socket) do
+    layer = Maps.get_layer_for_map!(socket.assigns.level.map.id, String.to_integer(id))
+    {:ok, dup} = Maps.duplicate_layer(layer)
+
+    {:noreply,
+     socket
+     |> refresh_level()
+     |> assign(:selected_layer_id, dup.id)
+     |> assign(:place_z, dup.z_index)}
+  end
+
+  def handle_event("delete_layer", %{"id" => id}, socket) do
+    layer_id = String.to_integer(id)
+    layer = Maps.get_layer_for_map!(socket.assigns.level.map.id, layer_id)
+
+    case Maps.delete_layer(layer) do
+      {:ok, _} ->
+        socket = refresh_level(socket)
+
+        new_selected =
+          if socket.assigns.selected_layer_id == layer_id,
+            do: default_selected_layer_id(socket.assigns.level),
+            else: socket.assigns.selected_layer_id
+
+        {:noreply,
+         socket
+         |> assign(:selected_layer_id, new_selected)
+         |> assign(:place_z, default_place_z(socket.assigns.level))}
+
+      {:error, :last_layer} ->
+        {:noreply, put_flash(socket, :error, "A map needs at least one layer.")}
+    end
+  end
+
+  def handle_event("rename_layer_start", %{"id" => id}, socket) do
+    {:noreply, assign(socket, :renaming_layer_id, String.to_integer(id))}
+  end
+
+  def handle_event("rename_layer_cancel", _params, socket) do
+    {:noreply, assign(socket, :renaming_layer_id, nil)}
+  end
+
+  def handle_event("rename_layer", %{"id" => id, "name" => name}, socket) do
+    name = String.trim(name)
+
+    if name == "" do
+      {:noreply, assign(socket, :renaming_layer_id, nil)}
+    else
+      layer = Maps.get_layer_for_map!(socket.assigns.level.map.id, String.to_integer(id))
+
+      case Maps.rename_layer(layer, name) do
+        {:ok, _} ->
+          {:noreply,
+           socket
+           |> assign(:renaming_layer_id, nil)
+           |> refresh_level()}
+
+        {:error, _} ->
+          {:noreply,
+           socket
+           |> put_flash(:error, "That name is already in use.")
+           |> assign(:renaming_layer_id, nil)}
+      end
+    end
+  end
+
+  def handle_event("toggle_visibility", %{"id" => id}, socket) do
+    layer = Maps.get_layer_for_map!(socket.assigns.level.map.id, String.to_integer(id))
+    {:ok, _} = Maps.toggle_layer_visibility(layer)
+    {:noreply, refresh_level(socket)}
+  end
+
+  def handle_event("toggle_lock", %{"id" => id}, socket) do
+    layer = Maps.get_layer_for_map!(socket.assigns.level.map.id, String.to_integer(id))
+    {:ok, _} = Maps.toggle_layer_lock(layer)
+    {:noreply, refresh_level(socket)}
+  end
+
+  def handle_event("set_opacity", %{"id" => id, "opacity" => opacity}, socket) do
+    layer = Maps.get_layer_for_map!(socket.assigns.level.map.id, String.to_integer(id))
+    {:ok, _} = Maps.set_layer_opacity(layer, String.to_integer(opacity))
+    {:noreply, refresh_level(socket)}
+  end
+
+  def handle_event("move_layer_up", %{"id" => id}, socket) do
+    move_layer(socket, String.to_integer(id), -1)
+  end
+
+  def handle_event("move_layer_down", %{"id" => id}, socket) do
+    move_layer(socket, String.to_integer(id), +1)
   end
 
   # === Inspector events ===
@@ -264,6 +423,30 @@ defmodule BoxlandWeb.LevelEditorLive do
     end
   end
 
+  # === Layer helpers ===
+
+  defp move_layer(socket, layer_id, direction) do
+    layers = display_layers(socket.assigns.level.map)
+    index = Enum.find_index(layers, &(&1.id == layer_id))
+    target = index && index + direction
+
+    if is_nil(index) or target < 0 or target >= length(layers) do
+      {:noreply, socket}
+    else
+      reordered =
+        layers
+        |> List.replace_at(index, Enum.at(layers, target))
+        |> List.replace_at(target, Enum.at(layers, index))
+
+      {:ok, _} = Maps.reorder_layers(socket.assigns.level.map.id, Enum.map(reordered, & &1.id))
+      {:noreply, refresh_level(socket)}
+    end
+  end
+
+  defp display_layers(map) do
+    Enum.sort_by(map.layers, fn l -> {-l.z_index, l.id} end)
+  end
+
   # === Cell-click dispatch helpers ===
 
   defp handle_cell_place(socket, x, y) do
@@ -275,7 +458,7 @@ defmodule BoxlandWeb.LevelEditorLive do
         {:noreply,
          socket
          |> refresh_level()
-         |> assign(:selected_entity_id, entity.id)}
+         |> assign(:selection, {:entity, entity.id})}
 
       {:error, reason} ->
         {:noreply, put_flash(socket, :error, format_place_error(reason))}
@@ -283,39 +466,17 @@ defmodule BoxlandWeb.LevelEditorLive do
   end
 
   defp handle_cell_select(socket, x, y) do
-    designer = socket.assigns.current_designer
     level = socket.assigns.level
+    selection = pick_selection(level, x, y)
+    {:noreply, assign(socket, :selection, selection)}
+  end
 
+  defp pick_selection(level, x, y) do
     cond do
-      (entity = topmost_entity_at(level, x, y)) ->
-        {:noreply, assign(socket, :selected_entity_id, entity.id)}
-
-      (gid = group_id_at(level.map, x, y)) ->
-        case ensure_group_entity(designer, level, gid) do
-          {:ok, entity} ->
-            {:noreply,
-             socket
-             |> refresh_level()
-             |> assign(:selected_entity_id, entity.id)}
-
-          {:error, _} ->
-            {:noreply, put_flash(socket, :error, "Could not bind group to entity.")}
-        end
-
-      (tile = tile_at_on_visible(level.map, x, y)) ->
-        case ensure_tile_entity(designer, level, tile, x, y) do
-          {:ok, entity} ->
-            {:noreply,
-             socket
-             |> refresh_level()
-             |> assign(:selected_entity_id, entity.id)}
-
-          {:error, _} ->
-            {:noreply, put_flash(socket, :error, "Could not bind tile to entity.")}
-        end
-
-      true ->
-        {:noreply, assign(socket, :selected_entity_id, nil)}
+      (entity = topmost_entity_at(level, x, y)) -> {:entity, entity.id}
+      (gid = group_id_at(level.map, x, y)) -> {:group, gid}
+      (tile = tile_at_on_visible(level.map, x, y)) -> {:tile, elem(tile, 0).id, x, y}
+      true -> nil
     end
   end
 
@@ -331,7 +492,7 @@ defmodule BoxlandWeb.LevelEditorLive do
         {:noreply,
          socket
          |> refresh_level()
-         |> assign(:selected_entity_id, nil)}
+         |> assign(:selection, nil)}
     end
   end
 
@@ -648,12 +809,26 @@ defmodule BoxlandWeb.LevelEditorLive do
     end
   end
 
-  defp maybe_clear_selection_for_tool(socket, "place"), do: assign(socket, :selected_entity_id, nil)
+  defp maybe_clear_selection_for_tool(socket, "place"), do: assign(socket, :selection, nil)
   defp maybe_clear_selection_for_tool(socket, _), do: socket
 
   defp selected_entity(socket) do
-    id = socket.assigns.selected_entity_id
-    if id, do: Enum.find(socket.assigns.level.entities, &(&1.id == id))
+    case socket.assigns.selection do
+      {:entity, id} -> Enum.find(socket.assigns.level.entities, &(&1.id == id))
+      _ -> nil
+    end
+  end
+
+  defp promote_tile(designer, level, layer_id, x, y) do
+    layer = Enum.find(level.map.layers, &(&1.id == layer_id))
+
+    case layer && Maps.tile_at(layer.tiles, x, y) do
+      %{"asset_id" => _, "tile_index" => _} = tile ->
+        ensure_tile_entity(designer, level, {layer, tile}, x, y)
+
+      _ ->
+        {:error, :not_found}
+    end
   end
 
   defp default_place_z(level) do
@@ -685,8 +860,16 @@ defmodule BoxlandWeb.LevelEditorLive do
 
   def render(assigns) do
     layers = visible_layers(assigns.level.map)
-    assigns = assign(assigns, :layers, layers)
-    assigns = assign(assigns, :selected, selected_entity_for_render(assigns))
+    selection_entity = selected_entity_for_render(assigns)
+    selection_highlight = selection_cells(assigns.selection, assigns.level)
+    affected_layers = affected_layer_ids(assigns.selection, assigns.level)
+
+    assigns =
+      assigns
+      |> assign(:layers, layers)
+      |> assign(:selected, selection_entity)
+      |> assign(:selection_highlight, selection_highlight)
+      |> assign(:affected_layer_ids, affected_layers)
 
     ~H"""
     <Layouts.app flash={@flash} current_scope={%{designer: @current_designer}}>
@@ -734,21 +917,87 @@ defmodule BoxlandWeb.LevelEditorLive do
             level={@level}
             layers={@layers}
             tilesets={@tilesets}
-            selected_entity_id={@selected_entity_id}
+            selected_entity_id={selected_entity_id_for_canvas(@selection)}
+            highlight_cells={@selection_highlight}
           />
 
-          <.inspector entity={@selected} />
+          <div class="space-y-3">
+            <.inspector selection={@selection} entity={@selected} />
+            <.layers_panel
+              layers={display_layers(@level.map)}
+              selected_layer_id={@selected_layer_id}
+              renaming_layer_id={@renaming_layer_id}
+              affected_layer_ids={@affected_layer_ids}
+            />
+          </div>
         </div>
       </section>
     </Layouts.app>
     """
   end
 
-  defp selected_entity_for_render(%{selected_entity_id: nil}), do: nil
+  defp selected_entity_id_for_canvas({:entity, id}), do: id
+  defp selected_entity_id_for_canvas(_), do: nil
 
-  defp selected_entity_for_render(%{level: level, selected_entity_id: id}) do
-    Enum.find(level.entities, &(&1.id == id))
+  defp selected_entity_for_render(%{selection: {:entity, id}, level: level}),
+    do: Enum.find(level.entities, &(&1.id == id))
+
+  defp selected_entity_for_render(_), do: nil
+
+  defp selection_cells(nil, _level), do: MapSet.new()
+
+  defp selection_cells({:entity, _id}, _level), do: MapSet.new()
+
+  defp selection_cells({:group, gid}, level) do
+    level.map.layers
+    |> Enum.flat_map(fn layer ->
+      layer.tiles
+      |> Enum.filter(fn {_k, t} -> t["group_id"] == gid end)
+      |> Enum.map(fn {k, _t} -> Maps.parse_key(k) end)
+    end)
+    |> MapSet.new()
   end
+
+  defp selection_cells({:tile, _layer_id, x, y}, _level), do: MapSet.new([{x, y}])
+
+  defp affected_layer_ids(nil, _level), do: MapSet.new()
+
+  defp affected_layer_ids({:entity, id}, level) do
+    case Enum.find(level.entities, &(&1.id == id)) do
+      nil ->
+        MapSet.new()
+
+      entity ->
+        cond do
+          # Group-bound entity: every layer holding one of its tiles.
+          entity.group_id ->
+            level.map.layers
+            |> Enum.filter(fn l ->
+              Enum.any?(l.tiles, fn {_k, t} -> t["group_id"] == entity.group_id end)
+            end)
+            |> Enum.map(& &1.id)
+            |> MapSet.new()
+
+          # Otherwise the layer whose z matches the entity's z.
+          true ->
+            z = entity.z_index_override || entity.entity_type.default_z_index
+
+            level.map.layers
+            |> Enum.filter(&(&1.z_index == z))
+            |> Enum.map(& &1.id)
+            |> MapSet.new()
+        end
+    end
+  end
+
+  defp affected_layer_ids({:group, gid}, level) do
+    level.map.layers
+    |> Enum.filter(fn l -> Enum.any?(l.tiles, fn {_k, t} -> t["group_id"] == gid end) end)
+    |> Enum.map(& &1.id)
+    |> MapSet.new()
+  end
+
+  defp affected_layer_ids({:tile, layer_id, _x, _y}, _level), do: MapSet.new([layer_id])
 
   # === Components ===
 
@@ -897,6 +1146,179 @@ defmodule BoxlandWeb.LevelEditorLive do
     """
   end
 
+  attr :layers, :list, required: true
+  attr :selected_layer_id, :any, required: true
+  attr :renaming_layer_id, :any, required: true
+  attr :affected_layer_ids, :any, required: true
+
+  defp layers_panel(assigns) do
+    ~H"""
+    <aside id="layers-panel" class="space-y-2 rounded-box bg-base-200 p-3">
+      <div class="flex items-center justify-between">
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-base-content/70">Layers</h2>
+        <button
+          id="add-layer-button"
+          phx-click="add_layer"
+          class="btn btn-xs btn-primary"
+          title="Add layer"
+        >
+          <.icon name="hero-plus" class="size-3" /> Add
+        </button>
+      </div>
+
+      <ul class="space-y-1" role="listbox" aria-label="Layers">
+        <li
+          :for={{layer, position} <- Enum.with_index(@layers)}
+          id={"layer-row-#{layer.id}"}
+          role="option"
+          aria-selected={to_string(layer.id == @selected_layer_id)}
+          phx-click="select_layer"
+          phx-value-id={layer.id}
+          class={[
+            "group flex flex-col gap-1 rounded-md border p-2 transition cursor-pointer",
+            layer.id == @selected_layer_id && "border-primary bg-primary/10",
+            layer.id != @selected_layer_id && "border-base-300 bg-base-100 hover:bg-base-100/70",
+            MapSet.member?(@affected_layer_ids, layer.id) && "ring-2 ring-accent/60"
+          ]}
+        >
+          <div class="flex items-center gap-1">
+            <button
+              type="button"
+              phx-click="toggle_visibility"
+              phx-value-id={layer.id}
+              class="btn btn-ghost btn-xs px-1"
+              title={if layer.visible, do: "Hide layer", else: "Show layer"}
+              aria-label={if layer.visible, do: "Hide layer", else: "Show layer"}
+            >
+              <.icon
+                name={if layer.visible, do: "hero-eye", else: "hero-eye-slash"}
+                class={["size-4", !layer.visible && "text-base-content/40"]}
+              />
+            </button>
+            <button
+              type="button"
+              phx-click="toggle_lock"
+              phx-value-id={layer.id}
+              class="btn btn-ghost btn-xs px-1"
+              title={if layer.locked, do: "Unlock layer", else: "Lock layer"}
+              aria-label={if layer.locked, do: "Unlock layer", else: "Lock layer"}
+            >
+              <.icon
+                name={if layer.locked, do: "hero-lock-closed", else: "hero-lock-open"}
+                class={["size-4", layer.locked && "text-warning"]}
+              />
+            </button>
+
+            <%= if @renaming_layer_id == layer.id do %>
+              <form
+                phx-submit="rename_layer"
+                phx-click-away="rename_layer_cancel"
+                phx-value-id={layer.id}
+                class="flex flex-1 items-center gap-1"
+              >
+                <input
+                  type="text"
+                  name="name"
+                  value={layer.name}
+                  autofocus
+                  phx-keydown="rename_layer_cancel"
+                  phx-key="Escape"
+                  class="input input-xs input-bordered flex-1"
+                />
+              </form>
+            <% else %>
+              <span
+                class={[
+                  "flex-1 truncate text-sm",
+                  !layer.visible && "text-base-content/40 line-through decoration-base-content/30"
+                ]}
+                phx-click="rename_layer_start"
+                phx-value-id={layer.id}
+                title="Rename"
+              >
+                {layer.name}
+              </span>
+            <% end %>
+
+            <span class="font-mono text-[10px] text-base-content/50" title="z-index">
+              z={layer.z_index}
+            </span>
+          </div>
+
+          <form
+            phx-change="set_opacity"
+            phx-value-id={layer.id}
+            class="flex items-center gap-1"
+          >
+            <.icon name="hero-adjustments-horizontal" class="size-3 text-base-content/50" />
+            <input
+              type="range"
+              min="0"
+              max="100"
+              step="5"
+              value={layer.opacity}
+              name="opacity"
+              phx-debounce="150"
+              class="range range-xs flex-1"
+              aria-label="Layer opacity"
+            />
+            <span class="w-8 text-right font-mono text-[10px] text-base-content/50">
+              {layer.opacity}%
+            </span>
+          </form>
+
+          <div class="flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100">
+            <button
+              type="button"
+              phx-click="move_layer_up"
+              phx-value-id={layer.id}
+              class="btn btn-ghost btn-xs px-1"
+              title="Move up (higher z)"
+              disabled={position == 0}
+              aria-label="Move layer up"
+            >
+              <.icon name="hero-chevron-up" class="size-3" />
+            </button>
+            <button
+              type="button"
+              phx-click="move_layer_down"
+              phx-value-id={layer.id}
+              class="btn btn-ghost btn-xs px-1"
+              title="Move down (lower z)"
+              disabled={position == length(@layers) - 1}
+              aria-label="Move layer down"
+            >
+              <.icon name="hero-chevron-down" class="size-3" />
+            </button>
+            <button
+              type="button"
+              phx-click="duplicate_layer"
+              phx-value-id={layer.id}
+              class="btn btn-ghost btn-xs px-1"
+              title="Duplicate"
+              aria-label="Duplicate layer"
+            >
+              <.icon name="hero-document-duplicate" class="size-3" />
+            </button>
+            <button
+              type="button"
+              phx-click="delete_layer"
+              phx-value-id={layer.id}
+              data-confirm={"Delete layer \"#{layer.name}\"?"}
+              class="btn btn-ghost btn-xs px-1 text-error"
+              title="Delete"
+              aria-label="Delete layer"
+              disabled={length(@layers) <= 1}
+            >
+              <.icon name="hero-trash" class="size-3" />
+            </button>
+          </div>
+        </li>
+      </ul>
+    </aside>
+    """
+  end
+
   attr :icon, :string, required: true
   attr :label, :string, required: true
   attr :tool, :string, required: true
@@ -919,13 +1341,13 @@ defmodule BoxlandWeb.LevelEditorLive do
   attr :layers, :list
   attr :tilesets, :list
   attr :selected_entity_id, :any
+  attr :highlight_cells, :any, default: nil
 
   defp canvas(assigns) do
     ~H"""
     <div
       id="level-canvas"
       class="overflow-auto rounded-box bg-base-200 p-4"
-      phx-click="clear_selection"
     >
       <div
         class="relative grid w-fit gap-px"
@@ -937,7 +1359,10 @@ defmodule BoxlandWeb.LevelEditorLive do
           phx-click="cell"
           phx-value-x={x}
           phx-value-y={y}
-          class="relative h-8 w-8 border border-base-300 bg-base-100"
+          class={[
+            "relative h-8 w-8 border border-base-300 bg-base-100",
+            cell_highlighted?(@highlight_cells, x, y) && "ring-2 ring-accent z-20"
+          ]}
         >
           <span
             :for={layer <- @layers}
@@ -964,13 +1389,56 @@ defmodule BoxlandWeb.LevelEditorLive do
     """
   end
 
+  attr :selection, :any, default: nil
   attr :entity, :any
 
   defp inspector(assigns) do
     ~H"""
     <aside id="level-inspector" class="space-y-3">
-      <div :if={is_nil(@entity)} class="rounded-box bg-base-200 p-3 text-xs text-base-content/60">
-        Click an entity on the canvas to inspect.
+      <div :if={is_nil(@selection)} class="rounded-box bg-base-200 p-3 text-xs text-base-content/60">
+        Click a tile, group, or entity on the canvas to inspect.
+      </div>
+
+      <div
+        :if={match?({:group, _}, @selection)}
+        id="inspector-group"
+        class="rounded-box bg-base-200 p-3 space-y-2 text-xs"
+      >
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-base-content/70">Group</h2>
+        <div class="font-mono text-[11px] text-base-content/70">
+          group_id: {elem(@selection, 1)}
+        </div>
+        <p class="text-base-content/60">
+          This group isn't an entity yet. Promote it to assign properties and actions.
+        </p>
+        <button
+          id="promote-selection"
+          phx-click="promote_selection"
+          class="btn btn-xs btn-primary w-full"
+        >
+          Promote to entity
+        </button>
+      </div>
+
+      <div
+        :if={match?({:tile, _, _, _}, @selection)}
+        id="inspector-tile"
+        class="rounded-box bg-base-200 p-3 space-y-2 text-xs"
+      >
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-base-content/70">Tile</h2>
+        <div class="font-mono text-[11px] text-base-content/70">
+          ({elem(@selection, 2)}, {elem(@selection, 3)})
+        </div>
+        <p class="text-base-content/60">
+          This tile isn't an entity yet. Promote it to assign properties and actions.
+        </p>
+        <button
+          id="promote-selection"
+          phx-click="promote_selection"
+          class="btn btn-xs btn-primary w-full"
+        >
+          Promote to entity
+        </button>
       </div>
 
       <div :if={@entity} class="space-y-3">
@@ -1180,6 +1648,12 @@ defmodule BoxlandWeb.LevelEditorLive do
   # === Render helpers ===
 
   defp cells(width, height), do: for(y <- 0..(height - 1), x <- 0..(width - 1), do: {x, y})
+
+  defp cell_highlighted?(nil, _x, _y), do: false
+
+  defp cell_highlighted?(%MapSet{} = set, x, y), do: MapSet.member?(set, {x, y})
+
+  defp cell_highlighted?(_, _, _), do: false
 
   defp entity_color_class(entity) do
     case entity.entity_type.visual_ref do

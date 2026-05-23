@@ -50,7 +50,7 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
     assert html =~ "level-palette"
     assert html =~ "level-canvas"
     assert html =~ "level-inspector"
-    assert html =~ "Click an entity on the canvas to inspect."
+    assert html =~ "Click a tile, group, or entity on the canvas to inspect."
   end
 
   test "preset palette places an entity", %{conn: conn, designer: d, level: level} do
@@ -211,7 +211,7 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
     refute html =~ ~r{id="level-tool-select"[^>]*btn-primary}
   end
 
-  test "select-tool click on a group cell binds-and-selects a group entity", %{
+  test "V click on a group cell selects (no entity created) and shows Promote", %{
     conn: conn,
     designer: d,
     map: map,
@@ -236,17 +236,22 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
       })
 
     {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
-    # Default tool is "select". Click a cell that's part of the group.
-    render_click(view, "cell", %{"x" => "3", "y" => "3"})
+    html = render_click(view, "cell", %{"x" => "3", "y" => "3"})
 
+    # No entity was created — V is select-only.
+    assert Levels.get_level!(d.id, level.id).entities == []
+    # The inspector shows the group panel with the Promote button.
+    assert html =~ "inspector-group"
+    assert html =~ "promote-selection"
+    assert html =~ "g-test"
+
+    # Promote creates the entity bound to that group.
+    render_click(view, "promote_selection")
     [e] = Levels.get_level!(d.id, level.id).entities
     assert e.group_id == "g-test"
-    # Second click anywhere on the group reuses the same entity (no duplicate).
-    render_click(view, "cell", %{"x" => "4", "y" => "3"})
-    assert length(Levels.get_level!(d.id, level.id).entities) == 1
   end
 
-  test "select-tool click on a bare tile cell binds-and-selects a tile entity", %{
+  test "V click on a bare tile cell selects (no entity) and Promote creates one", %{
     conn: conn,
     designer: d,
     map: map,
@@ -260,9 +265,15 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
       })
 
     {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
-    render_click(view, "cell", %{"x" => "5", "y" => "5"})
+    html = render_click(view, "cell", %{"x" => "5", "y" => "5"})
 
+    assert Levels.get_level!(d.id, level.id).entities == []
+    assert html =~ "inspector-tile"
+    assert html =~ "promote-selection"
+
+    render_click(view, "promote_selection")
     [e] = Levels.get_level!(d.id, level.id).entities
+
     assert e.entity_type.visual_ref == %{
              "kind" => "tile",
              "asset_id" => 7,
@@ -272,6 +283,12 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
 
     assert e.pos_x == 5 * 32
     assert e.pos_y == 5 * 32
+  end
+
+  test "V click on an empty cell clears selection", %{conn: conn, level: level} do
+    {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+    html = render_click(view, "cell", %{"x" => "0", "y" => "0"})
+    assert html =~ "Click a tile, group, or entity on the canvas to inspect."
   end
 
   test "delete tool removes the entity at the clicked cell", %{
@@ -289,5 +306,129 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
     render_click(view, "cell", %{"x" => "2", "y" => "2"})
 
     assert Levels.get_level!(d.id, level.id).entities == []
+  end
+
+  test "renders the layers panel with the primary layer", %{conn: conn, map: map, level: level} do
+    [primary] = Maps.list_layers(map.id)
+    {:ok, _view, html} = live(conn, ~p"/app/levels/#{level.id}")
+
+    assert html =~ "Layers"
+    assert html =~ ~s(id="layer-row-#{primary.id}")
+    assert html =~ primary.name
+  end
+
+  test "adding a new layer selects it and updates place_z", %{
+    conn: conn,
+    map: map,
+    level: level
+  } do
+    {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+    render_click(view, "add_layer")
+
+    layers = Maps.list_layers(map.id)
+    assert length(layers) == 2
+    [_primary, new] = Enum.sort_by(layers, & &1.z_index)
+    assert new.z_index == 1
+
+    html = render(view)
+    assert html =~ ~r{id="layer-row-#{new.id}"[^>]*border-primary}
+  end
+
+  test "select_layer marks the row as selected and updates place_z", %{
+    conn: conn,
+    map: map,
+    level: level
+  } do
+    {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+    render_click(view, "add_layer")
+    [primary, upper] = Maps.list_layers(map.id) |> Enum.sort_by(& &1.z_index)
+
+    render_click(view, "select_layer", %{"id" => to_string(primary.id)})
+    html = render(view)
+    assert html =~ ~r{id="layer-row-#{primary.id}"[^>]*border-primary}
+    refute html =~ ~r{id="layer-row-#{upper.id}"[^>]*border-primary}
+  end
+
+  test "toggles layer visibility and lock", %{conn: conn, map: map, level: level} do
+    {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+    [primary] = Maps.list_layers(map.id)
+    assert primary.visible
+    refute primary.locked
+
+    render_click(view, "toggle_visibility", %{"id" => to_string(primary.id)})
+    [primary] = Maps.list_layers(map.id)
+    refute primary.visible
+
+    render_click(view, "toggle_lock", %{"id" => to_string(primary.id)})
+    [primary] = Maps.list_layers(map.id)
+    assert primary.locked
+  end
+
+  test "refuses to delete the last layer", %{conn: conn, map: map, level: level} do
+    {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+    [primary] = Maps.list_layers(map.id)
+    html = render_click(view, "delete_layer", %{"id" => to_string(primary.id)})
+
+    assert html =~ "at least one layer"
+    assert length(Maps.list_layers(map.id)) == 1
+  end
+
+  test "highlights affected layers when a group is selected", %{
+    conn: conn,
+    map: map,
+    level: level
+  } do
+    {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+    render_click(view, "add_layer")
+    [ground, upper] = Maps.list_layers(map.id) |> Enum.sort_by(& &1.z_index)
+
+    # Put one tile of the group on each layer.
+    {:ok, _} =
+      Maps.update_layer_tiles(ground, %{
+        "1,1" => %{
+          "asset_id" => 1,
+          "tile_index" => 0,
+          "rotation" => 0,
+          "group_id" => "gx"
+        }
+      })
+
+    {:ok, _} =
+      Maps.update_layer_tiles(upper, %{
+        "2,1" => %{
+          "asset_id" => 1,
+          "tile_index" => 0,
+          "rotation" => 0,
+          "group_id" => "gx"
+        }
+      })
+
+    # Re-mount so the live view picks up the new tiles.
+    {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+    render_click(view, "cell", %{"x" => "1", "y" => "1"})
+
+    html = render(view)
+    assert html =~ ~r{id="layer-row-#{ground.id}"[^>]*ring-accent}
+    assert html =~ ~r{id="layer-row-#{upper.id}"[^>]*ring-accent}
+  end
+
+  test "highlights only the affected layer when a bare tile is selected", %{
+    conn: conn,
+    map: map,
+    level: level
+  } do
+    {:ok, _view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+    [ground] = Maps.list_layers(map.id)
+
+    {:ok, _} =
+      Maps.update_layer_tiles(ground, %{
+        "0,0" => %{"asset_id" => 4, "tile_index" => 1, "rotation" => 0}
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+    render_click(view, "cell", %{"x" => "0", "y" => "0"})
+
+    html = render(view)
+    assert html =~ ~r{id="layer-row-#{ground.id}"[^>]*ring-accent}
   end
 end
