@@ -96,14 +96,76 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
 
     render_change(view, "inspector_save", %{
       "_target" => ["tag"],
-      "tag" => "village-sign-1",
-      "pos_x" => "0",
-      "pos_y" => "0",
-      "z_index_override" => ""
+      "tag" => "village-sign-1"
     })
 
     e_after = Levels.get_entity(d.id, level.id, e.id)
     assert e_after.tag == "village-sign-1"
+  end
+
+  test "inspector position card shows cell units and moves the entity", %{
+    conn: conn,
+    designer: d,
+    level: level
+  } do
+    {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+    render_click(view, "preset", %{"preset" => "sign"})
+    render_click(view, "cell", %{"x" => "1", "y" => "1"})
+
+    [e] = Levels.get_level!(d.id, level.id).entities
+    render_click(view, "select_entity", %{"id" => to_string(e.id)})
+
+    html = render(view)
+    # Inputs are labelled by cell, not px, and reflect cell coords.
+    assert html =~ "Position (cell)"
+    assert html =~ ~s(id="entity-cell-x")
+    assert html =~ ~s(value="1")
+
+    render_change(view, "inspector_position", %{
+      "_target" => ["cell_x"],
+      "cell_x" => "4",
+      "cell_y" => "1",
+      "z_index_override" => "25"
+    })
+
+    e_after = Levels.get_entity(d.id, level.id, e.id)
+    assert e_after.pos_x == 4 * 32
+    assert e_after.pos_y == 1 * 32
+  end
+
+  test "inspector position card moves a bound group entity's tiles too", %{
+    conn: conn,
+    designer: d,
+    map: map,
+    level: level
+  } do
+    [layer] = Maps.list_layers(map.id)
+    gid = "GidXyZ_-1"
+
+    {:ok, _} =
+      Maps.update_layer_tiles(layer, %{
+        "0,0" => %{"asset_id" => 1, "tile_index" => 0, "rotation" => 0, "group_id" => gid},
+        "1,0" => %{"asset_id" => 1, "tile_index" => 1, "rotation" => 0, "group_id" => gid}
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+    render_click(view, "cell", %{"x" => "0", "y" => "0"})
+    render_click(view, "promote_selection")
+
+    [e] = Levels.get_level!(d.id, level.id).entities
+
+    render_change(view, "inspector_position", %{
+      "_target" => ["cell_x"],
+      "cell_x" => "2",
+      "cell_y" => "0",
+      "z_index_override" => to_string(e.z_index_override || e.entity_type.default_z_index)
+    })
+
+    [layer_after] = Maps.list_layers(map.id)
+    # Original positions cleared; tiles relocated by +2 on x.
+    assert Boxland.Maps.tile_at(layer_after.tiles, 0, 0) == nil
+    assert Boxland.Maps.tile_at(layer_after.tiles, 2, 0)["group_id"] == gid
+    assert Boxland.Maps.tile_at(layer_after.tiles, 3, 0)["group_id"] == gid
   end
 
   test "inspector adds and removes a declared property", %{
@@ -412,6 +474,60 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
     html = render(view)
     assert html =~ ~r{id="layer-row-#{ground.id}"[^>]*ring-accent}
     assert html =~ ~r{id="layer-row-#{upper.id}"[^>]*ring-accent}
+  end
+
+  test "waypoint markers render on canvas when the entity is selected", %{
+    conn: conn,
+    designer: d,
+    level: level
+  } do
+    {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+    render_click(view, "preset", %{"preset" => "sign"})
+    render_click(view, "cell", %{"x" => "1", "y" => "1"})
+
+    [e] = Levels.get_level!(d.id, level.id).entities
+    render_click(view, "select_entity", %{"id" => to_string(e.id)})
+    render_click(view, "waypoint_add")
+    render_change(view, "waypoint_set", %{"index" => "0", "field" => "x", "value" => "5"})
+    render_change(view, "waypoint_set", %{"index" => "0", "field" => "y", "value" => "4"})
+
+    html = render(view)
+    # Marker for waypoint 1 of the selected entity is on the canvas at (5, 4).
+    assert html =~ ~s(id="waypoint-marker-#{e.id}-1")
+
+    # Click an empty cell to clear selection — markers go away.
+    render_click(view, "cell", %{"x" => "7", "y" => "7"})
+    html2 = render(view)
+    refute html2 =~ ~s(id="waypoint-marker-#{e.id}-1")
+  end
+
+  test "inspector adds, edits, and removes waypoints", %{
+    conn: conn,
+    designer: d,
+    level: level
+  } do
+    {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+    render_click(view, "preset", %{"preset" => "sign"})
+    render_click(view, "cell", %{"x" => "2", "y" => "3"})
+
+    [e] = Levels.get_level!(d.id, level.id).entities
+    render_click(view, "select_entity", %{"id" => to_string(e.id)})
+
+    # Add a waypoint — default position is the entity's cell.
+    render_click(view, "waypoint_add")
+    e1 = Levels.get_entity(d.id, level.id, e.id)
+    assert [%{"x" => 2, "y" => 3}] = e1.waypoints
+
+    # Edit the y of waypoint 0.
+    render_change(view, "waypoint_set", %{"index" => "0", "field" => "y", "value" => "7"})
+    e2 = Levels.get_entity(d.id, level.id, e.id)
+    assert [%{"x" => 2, "y" => 7}] = e2.waypoints
+
+    # Add a second waypoint and remove the first.
+    render_click(view, "waypoint_add")
+    render_click(view, "waypoint_remove", %{"index" => "0"})
+    e3 = Levels.get_entity(d.id, level.id, e.id)
+    assert length(e3.waypoints) == 1
   end
 
   test "promoted group entity covers every group cell and pulses when selected", %{

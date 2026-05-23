@@ -24,6 +24,7 @@ defmodule Boxland.Levels.LevelEntity do
     field :tag, :string
     field :group_id, :string
     field :properties, :map, default: %{}
+    field :waypoints, {:array, :map}, default: []
     field :instance_overrides, :map, default: %{}
     field :script_state, :map, default: %{}
 
@@ -44,6 +45,7 @@ defmodule Boxland.Levels.LevelEntity do
       :tag,
       :group_id,
       :properties,
+      :waypoints,
       :instance_overrides,
       :script_state
     ])

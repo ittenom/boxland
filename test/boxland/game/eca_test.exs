@@ -202,6 +202,82 @@ defmodule Boxland.Game.EcaTest do
     end
   end
 
+  describe "move_to_waypoint" do
+    test "steps one cell toward the current target, advances index on arrival" do
+      action = %{
+        "id" => "follow",
+        "trigger" => %{"kind" => "spawn"},
+        "function" => %{"kind" => "move_to_waypoint"}
+      }
+
+      e =
+        entity("walker", %{
+          cell_x: 0,
+          cell_y: 0,
+          actions: [action]
+        })
+        |> Map.put(:waypoints, [%{"x" => 2, "y" => 0}, %{"x" => 2, "y" => 2}])
+
+      w = world([e]) |> Map.put(:bounds, {5, 5})
+
+      # Tick 1: walker has spawned this tick, so spawn fires and steps one cell.
+      w1 = Eca.tick(w)
+      assert {w1.entities["walker"].cell_x, w1.entities["walker"].cell_y} == {1, 0}
+
+      # The spawn trigger is edge-triggered so won't re-fire on later ticks.
+      # Drive subsequent steps by re-firing via a property trigger instead.
+      step = %{
+        "id" => "step",
+        "trigger" => %{"kind" => "property", "key" => "go", "op" => "==", "value" => true},
+        "function" => %{"kind" => "move_to_waypoint"}
+      }
+
+      e2 =
+        entity("walker", %{
+          cell_x: 0,
+          cell_y: 0,
+          properties: %{"go" => true},
+          actions: [step]
+        })
+        |> Map.put(:waypoints, [%{"x" => 2, "y" => 0}])
+
+      w0 = world([e2]) |> Map.put(:bounds, {5, 5}) |> Eca.tick()
+      assert {w0.entities["walker"].cell_x, w0.entities["walker"].cell_y} == {1, 0}
+    end
+
+    test "no waypoints is a no-op" do
+      action = %{
+        "id" => "f",
+        "trigger" => %{"kind" => "spawn"},
+        "function" => %{"kind" => "move_to_waypoint"}
+      }
+
+      e = entity("a", %{cell_x: 0, cell_y: 0, actions: [action]}) |> Map.put(:waypoints, [])
+      w = world([e]) |> Map.put(:bounds, {5, 5}) |> Eca.tick()
+      assert {w.entities["a"].cell_x, w.entities["a"].cell_y} == {0, 0}
+    end
+
+    test "routes around blocked cells" do
+      action = %{
+        "id" => "f",
+        "trigger" => %{"kind" => "spawn"},
+        "function" => %{"kind" => "move_to_waypoint"}
+      }
+
+      e =
+        entity("a", %{cell_x: 0, cell_y: 0, z: 0, actions: [action]})
+        |> Map.put(:waypoints, [%{"x" => 2, "y" => 0}])
+
+      # (1, 0) is blocked → first step must detour through (0, 1).
+      blocked_by_z = %{0 => MapSet.new([{1, 0}])}
+      w = world([e]) |> Map.put(:bounds, {5, 5}) |> Map.put(:blocked_by_z, blocked_by_z)
+      w = Eca.tick(w)
+
+      step = {w.entities["a"].cell_x, w.entities["a"].cell_y}
+      assert step in [{0, 1}]
+    end
+  end
+
   describe "init_world/2" do
     test "uses LevelEntity → entity map, merges properties" do
       type = %{

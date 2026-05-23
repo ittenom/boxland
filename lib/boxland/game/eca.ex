@@ -298,6 +298,29 @@ defmodule Boxland.Game.Eca do
     end)
   end
 
+  defp apply_function(world, self_entity, %{"kind" => "move_to_waypoint"}) do
+    entity = world.entities[self_entity.id]
+    waypoints = entity.waypoints || []
+
+    case waypoints do
+      [] ->
+        world
+
+      _ ->
+        idx = Elixir.Map.get(entity.properties || %{}, "_waypoint_index", 0)
+        target = Enum.at(waypoints, rem(idx, length(waypoints)))
+        tgt = {Elixir.Map.get(target, "x", 0), Elixir.Map.get(target, "y", 0)}
+        cur = {entity.cell_x, entity.cell_y}
+
+        if cur == tgt do
+          # Already on this waypoint — advance the index for the next tick.
+          bump_waypoint_index(world, entity, idx, length(waypoints))
+        else
+          step_along_path(world, entity, cur, tgt, idx, length(waypoints))
+        end
+    end
+  end
+
   defp apply_function(world, self_entity, %{"kind" => "modify_property"} = f) do
     targets = resolve_targets(world, self_entity, f["target"] || %{"kind" => "self"})
     key = f["key"]
@@ -312,6 +335,40 @@ defmodule Boxland.Game.Eca do
   end
 
   defp apply_function(world, _self_entity, _), do: world
+
+  defp bump_waypoint_index(world, entity, idx, len) do
+    new_idx = rem(idx + 1, len)
+
+    update_in(world, [:entities, entity.id, :properties], fn props ->
+      Elixir.Map.put(props || %{}, "_waypoint_index", new_idx)
+    end)
+  end
+
+  defp step_along_path(world, entity, cur, tgt, idx, len) do
+    bounds = world[:bounds] || {1_000_000, 1_000_000}
+    blocked_set = dig(world, [:blocked_by_z, entity.z]) || MapSet.new()
+
+    blocked? = fn cell ->
+      cell != cur and cell != tgt and MapSet.member?(blocked_set, cell)
+    end
+
+    case Boxland.Pathfinding.shortest_path(cur, tgt, bounds: bounds, blocked?: blocked?) do
+      {:ok, [_start, next | _]} ->
+        world =
+          world
+          |> put_in([:entities, entity.id, :cell_x], elem(next, 0))
+          |> put_in([:entities, entity.id, :cell_y], elem(next, 1))
+
+        if next == tgt do
+          bump_waypoint_index(world, entity, idx, len)
+        else
+          world
+        end
+
+      _ ->
+        world
+    end
+  end
 
   defp apply_op(_old, "set", v), do: v
   defp apply_op(old, "add", v) when is_number(old) and is_number(v), do: old + v
@@ -395,6 +452,7 @@ defmodule Boxland.Game.Eca do
            cell_y: div(e.pos_y, 32),
            z: e.z_index_override || type.default_z_index,
            properties: Boxland.Entities.merge_properties(type, e.properties),
+           waypoints: Elixir.Map.get(e, :waypoints, []) || [],
            alive: Elixir.Map.get(e.script_state || %{}, "alive", true),
            actions: type.actions || [],
            size: type.size || %{"w" => 1, "h" => 1}
@@ -408,6 +466,8 @@ defmodule Boxland.Game.Eca do
       entities: entity_maps,
       types: types,
       player: %{cell_x: px, cell_y: py, z: pz},
+      bounds: Keyword.get(opts, :bounds, {1_000_000, 1_000_000}),
+      blocked_by_z: Keyword.get(opts, :blocked_by_z, %{}),
       prev: %{},
       depth: 0,
       warnings: []

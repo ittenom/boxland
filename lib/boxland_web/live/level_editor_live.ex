@@ -289,17 +289,50 @@ defmodule BoxlandWeb.LevelEditorLive do
   # === Inspector events ===
 
   def handle_event("inspector_save", params, socket) do
-    designer = socket.assigns.current_designer
-    level = socket.assigns.level
+    case selected_entity(socket) do
+      nil ->
+        {:noreply, socket}
 
-    with %LevelEntity{} = entity <- selected_entity(socket),
-         {:ok, _} <- Levels.update_entity(entity, inspector_attrs(params)) do
-      {:noreply, refresh_level(socket)}
-    else
-      nil -> {:noreply, socket}
-      {:error, _cs} -> {:noreply, put_flash(socket, :error, "Could not save entity.")}
+      entity ->
+        case Levels.update_entity(entity, Map.take(params, ["tag"])) do
+          {:ok, _} -> {:noreply, refresh_level(socket)}
+          {:error, _} -> {:noreply, put_flash(socket, :error, "Could not save entity.")}
+        end
     end
-    |> tap(fn _ -> designer && level end)
+  end
+
+  def handle_event("inspector_position", params, socket) do
+    case selected_entity(socket) do
+      nil ->
+        {:noreply, socket}
+
+      entity ->
+        designer = socket.assigns.current_designer
+        level = socket.assigns.level
+
+        cur_x = div(entity.pos_x, 32)
+        cur_y = div(entity.pos_y, 32)
+        cur_z = entity.z_index_override || entity.entity_type.default_z_index
+
+        dx = safe_int(params["cell_x"], cur_x) - cur_x
+        dy = safe_int(params["cell_y"], cur_y) - cur_y
+        dz = safe_int(params["z_index_override"], cur_z) - cur_z
+
+        if dx == 0 and dy == 0 and dz == 0 do
+          {:noreply, socket}
+        else
+          case Levels.move_entity(designer.id, level.id, entity.id, dx, dy, dz) do
+            {:ok, _} ->
+              {:noreply, refresh_level(socket)}
+
+            {:error, :no_target_layer} ->
+              {:noreply, put_flash(socket, :error, "No layer at the target z.")}
+
+            {:error, _} ->
+              {:noreply, put_flash(socket, :error, "Could not move entity.")}
+          end
+        end
+    end
   end
 
   def handle_event(
@@ -390,6 +423,63 @@ defmodule BoxlandWeb.LevelEditorLive do
         else
           {:noreply, socket}
         end
+    end
+  end
+
+  # === Waypoint events ===
+
+  def handle_event("waypoint_add", _params, socket) do
+    case selected_entity(socket) do
+      nil ->
+        {:noreply, socket}
+
+      entity ->
+        cx = div(entity.pos_x, 32)
+        cy = div(entity.pos_y, 32)
+        wps = (entity.waypoints || []) ++ [%{"x" => cx, "y" => cy}]
+        {:ok, _} = Levels.update_entity(entity, %{"waypoints" => wps})
+        {:noreply, refresh_level(socket)}
+    end
+  end
+
+  def handle_event(
+        "waypoint_set",
+        %{"index" => index, "field" => field, "value" => value},
+        socket
+      )
+      when field in ["x", "y"] do
+    case selected_entity(socket) do
+      nil ->
+        {:noreply, socket}
+
+      entity ->
+        idx = String.to_integer(index)
+        wps = entity.waypoints || []
+
+        case Enum.at(wps, idx) do
+          nil ->
+            {:noreply, socket}
+
+          wp ->
+            new_wp = Map.put(wp, field, safe_int(value, 0))
+            new_wps = List.replace_at(wps, idx, new_wp)
+            {:ok, _} = Levels.update_entity(entity, %{"waypoints" => new_wps})
+            {:noreply, refresh_level(socket)}
+        end
+    end
+  end
+
+  def handle_event("waypoint_remove", %{"index" => index}, socket) do
+    case selected_entity(socket) do
+      nil ->
+        {:noreply, socket}
+
+      entity ->
+        idx = String.to_integer(index)
+        wps = entity.waypoints || []
+        new_wps = List.delete_at(wps, idx)
+        {:ok, _} = Levels.update_entity(entity, %{"waypoints" => new_wps})
+        {:noreply, refresh_level(socket)}
     end
   end
 
@@ -605,18 +695,6 @@ defmodule BoxlandWeb.LevelEditorLive do
 
   # === Inspector helpers ===
 
-  defp inspector_attrs(params) do
-    params
-    |> Map.take(["tag", "pos_x", "pos_y", "z_index_override"])
-    |> Map.new(fn
-      {"pos_x", v} -> {"pos_x", safe_int(v, 0)}
-      {"pos_y", v} -> {"pos_y", safe_int(v, 0)}
-      {"z_index_override", ""} -> {"z_index_override", nil}
-      {"z_index_override", v} -> {"z_index_override", safe_int(v, 0)}
-      {"tag", v} -> {"tag", v}
-      pair -> pair
-    end)
-  end
 
   defp coerce_property_value(%EntityType{properties: schema}, key, raw) do
     case Enum.find(schema, &(&1["key"] == key)) do
@@ -864,6 +942,7 @@ defmodule BoxlandWeb.LevelEditorLive do
     selection_highlight = selection_cells(assigns.selection, assigns.level)
     affected_layers = affected_layer_ids(assigns.selection, assigns.level)
     entity_cell_index = build_entity_cell_index(assigns.level)
+    waypoint_markers = build_waypoint_markers(selection_entity)
 
     assigns =
       assigns
@@ -872,6 +951,7 @@ defmodule BoxlandWeb.LevelEditorLive do
       |> assign(:selection_highlight, selection_highlight)
       |> assign(:affected_layer_ids, affected_layers)
       |> assign(:entity_cell_index, entity_cell_index)
+      |> assign(:waypoint_markers, waypoint_markers)
 
     ~H"""
     <Layouts.app flash={@flash} current_scope={%{designer: @current_designer}}>
@@ -922,6 +1002,7 @@ defmodule BoxlandWeb.LevelEditorLive do
             selected_entity_id={selected_entity_id_for_canvas(@selection)}
             highlight_cells={@selection_highlight}
             entity_cell_index={@entity_cell_index}
+            waypoint_markers={@waypoint_markers}
           />
 
           <div class="space-y-3">
@@ -1004,6 +1085,22 @@ defmodule BoxlandWeb.LevelEditorLive do
 
   # Build %{{x, y} => [%{entity:, anchor?:}]} mapping every cell touched by
   # any entity. Anchor cell carries the entity's label.
+  # Returns %{{x, y} => [%{index: int, entity_id: id}, ...]} for the
+  # currently-selected entity's waypoints. Empty when no entity is selected.
+  defp build_waypoint_markers(nil), do: %{}
+
+  defp build_waypoint_markers(entity) do
+    (entity.waypoints || [])
+    |> Enum.with_index(1)
+    |> Enum.reduce(%{}, fn {wp, idx}, acc ->
+      cell = {Elixir.Map.get(wp, "x", 0), Elixir.Map.get(wp, "y", 0)}
+
+      Elixir.Map.update(acc, cell, [%{index: idx, entity_id: entity.id}], fn list ->
+        [%{index: idx, entity_id: entity.id} | list]
+      end)
+    end)
+  end
+
   defp build_entity_cell_index(level) do
     Enum.reduce(level.entities, %{}, fn entity, acc ->
       anchor = {div(entity.pos_x, @cell_px), div(entity.pos_y, @cell_px)}
@@ -1386,6 +1483,7 @@ defmodule BoxlandWeb.LevelEditorLive do
   attr :selected_entity_id, :any
   attr :highlight_cells, :any, default: nil
   attr :entity_cell_index, :map, default: %{}
+  attr :waypoint_markers, :map, default: %{}
 
   defp canvas(assigns) do
     ~H"""
@@ -1425,6 +1523,16 @@ defmodule BoxlandWeb.LevelEditorLive do
             aria-label={"entity #{covering.entity.id}"}
           >
             <span :if={covering.anchor?}>{entity_label(covering.entity)}</span>
+          </span>
+
+          <span
+            :for={marker <- Elixir.Map.get(@waypoint_markers, {x, y}, [])}
+            id={"waypoint-marker-#{marker.entity_id}-#{marker.index}"}
+            class="pointer-events-none absolute right-0 top-0 z-30 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-warning text-[9px] font-bold text-warning-content shadow"
+            aria-label={"waypoint #{marker.index}"}
+            title={"waypoint #{marker.index}"}
+          >
+            {marker.index}
           </span>
         </button>
       </div>
@@ -1526,26 +1634,28 @@ defmodule BoxlandWeb.LevelEditorLive do
 
         <div class="rounded-box bg-base-200 p-3">
           <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-base-content/70">
-            Position
+            Position (cell)
           </h2>
-          <form phx-change="inspector_save" class="grid grid-cols-3 gap-2 text-xs">
+          <form phx-change="inspector_position" class="grid grid-cols-3 gap-2 text-xs">
             <label class="flex flex-col">
-              <span class="text-base-content/60">x (px)</span>
+              <span class="text-base-content/60">x</span>
               <input
-                id="entity-pos-x"
+                id="entity-cell-x"
                 type="number"
-                name="pos_x"
-                value={@entity.pos_x}
+                name="cell_x"
+                value={div(@entity.pos_x, 32)}
+                phx-debounce="300"
                 class="input input-xs input-bordered"
               />
             </label>
             <label class="flex flex-col">
-              <span class="text-base-content/60">y (px)</span>
+              <span class="text-base-content/60">y</span>
               <input
-                id="entity-pos-y"
+                id="entity-cell-y"
                 type="number"
-                name="pos_y"
-                value={@entity.pos_y}
+                name="cell_y"
+                value={div(@entity.pos_y, 32)}
+                phx-debounce="300"
                 class="input input-xs input-bordered"
               />
             </label>
@@ -1555,11 +1665,84 @@ defmodule BoxlandWeb.LevelEditorLive do
                 id="entity-z"
                 type="number"
                 name="z_index_override"
-                value={@entity.z_index_override || ""}
+                value={@entity.z_index_override || @entity.entity_type.default_z_index}
+                phx-debounce="300"
                 class="input input-xs input-bordered"
               />
             </label>
           </form>
+        </div>
+
+        <div class="rounded-box bg-base-200 p-3">
+          <div class="mb-2 flex items-center justify-between">
+            <h2 class="text-sm font-semibold uppercase tracking-wide text-base-content/70">
+              Waypoints
+            </h2>
+            <button
+              id="waypoint-add"
+              phx-click="waypoint_add"
+              class="btn btn-xs btn-primary"
+              title="Add waypoint at entity's current position"
+            >
+              <.icon name="hero-plus" class="size-3" />
+            </button>
+          </div>
+
+          <div :if={(@entity.waypoints || []) == []} class="text-xs text-base-content/60">
+            No waypoints yet. The entity will stay put.
+          </div>
+
+          <div
+            :for={{wp, idx} <- Enum.with_index(@entity.waypoints || [])}
+            id={"waypoint-row-#{idx}"}
+            class="mb-1 flex items-center gap-1 text-xs"
+          >
+            <span class="w-4 font-mono text-base-content/50">{idx + 1}.</span>
+
+            <form
+              phx-change="waypoint_set"
+              phx-value-index={idx}
+              phx-value-field="x"
+              class="contents"
+            >
+              <input
+                id={"waypoint-#{idx}-x"}
+                type="number"
+                name="value"
+                value={Map.get(wp, "x", 0)}
+                phx-debounce="300"
+                class="input input-xs input-bordered w-16"
+                aria-label="waypoint x"
+              />
+            </form>
+
+            <form
+              phx-change="waypoint_set"
+              phx-value-index={idx}
+              phx-value-field="y"
+              class="contents"
+            >
+              <input
+                id={"waypoint-#{idx}-y"}
+                type="number"
+                name="value"
+                value={Map.get(wp, "y", 0)}
+                phx-debounce="300"
+                class="input input-xs input-bordered w-16"
+                aria-label="waypoint y"
+              />
+            </form>
+
+            <button
+              id={"waypoint-remove-#{idx}"}
+              phx-click="waypoint_remove"
+              phx-value-index={idx}
+              class="btn btn-xs btn-ghost text-error ml-auto"
+              aria-label={"remove waypoint #{idx + 1}"}
+            >
+              <.icon name="hero-x-mark" class="size-3" />
+            </button>
+          </div>
         </div>
 
         <div class="rounded-box bg-base-200 p-3">
@@ -1679,7 +1862,7 @@ defmodule BoxlandWeb.LevelEditorLive do
                 >
                   <select name="value" class="select select-xs select-bordered w-full">
                     <option
-                      :for={k <- ~w(spawn_self despawn_self spawn_other despawn_other modify_property)}
+                      :for={k <- ~w(spawn_self despawn_self spawn_other despawn_other modify_property move_to_waypoint)}
                       value={k}
                       selected={action["function"]["kind"] == k}
                     >
