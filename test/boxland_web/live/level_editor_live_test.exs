@@ -218,6 +218,8 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
     level: level
   } do
     [layer] = Maps.list_layers(map.id)
+    # Realistic gid format — URL-safe base64 (mixed case + underscore).
+    gid = "Ab_-123XyZ"
 
     {:ok, _} =
       Maps.update_layer_tiles(layer, %{
@@ -225,13 +227,13 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
           "asset_id" => 1,
           "tile_index" => 0,
           "rotation" => 0,
-          "group_id" => "g-test"
+          "group_id" => gid
         },
         "4,3" => %{
           "asset_id" => 1,
           "tile_index" => 1,
           "rotation" => 0,
-          "group_id" => "g-test"
+          "group_id" => gid
         }
       })
 
@@ -243,12 +245,12 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
     # The inspector shows the group panel with the Promote button.
     assert html =~ "inspector-group"
     assert html =~ "promote-selection"
-    assert html =~ "g-test"
+    assert html =~ gid
 
     # Promote creates the entity bound to that group.
     render_click(view, "promote_selection")
     [e] = Levels.get_level!(d.id, level.id).entities
-    assert e.group_id == "g-test"
+    assert e.group_id == gid
   end
 
   test "V click on a bare tile cell selects (no entity) and Promote creates one", %{

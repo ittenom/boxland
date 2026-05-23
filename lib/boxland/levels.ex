@@ -369,7 +369,13 @@ defmodule Boxland.Levels do
   end
 
   defp type_descriptor_for({:group, group_id}) do
-    {"group-#{group_id}", "Group #{group_id}", %{"kind" => "group", "group_id" => group_id}}
+    # group_id is URL-safe base64 (mixed case + _/-), which doesn't satisfy
+    # EntityType's slug regex. Use a hex digest so the slug stays deterministic
+    # but lowercase.
+    hash =
+      :crypto.hash(:sha256, group_id) |> Base.encode16(case: :lower) |> binary_part(0, 12)
+
+    {"group-#{hash}", "Group #{group_id}", %{"kind" => "group", "group_id" => group_id}}
   end
 
   defp type_descriptor_for(:invisible) do
