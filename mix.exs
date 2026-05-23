@@ -39,7 +39,7 @@ defmodule Boxland.MixProject do
   #
   # Type `mix help deps` for examples and options.
   defp deps do
-    deps = [
+    [
       {:phoenix, "~> 1.8.5"},
       {:phoenix_ecto, "~> 4.5"},
       {:ecto_sql, "~> 3.13"},
@@ -87,19 +87,7 @@ defmodule Boxland.MixProject do
       # Scripting
       {:luerl, "~> 1.2"}
     ]
-
-    if with_tui?() do
-      deps ++
-        [
-          # TUI
-          {:term_ui, github: "pcharbon70/term_ui", tag: "v1.0.0-rc"}
-        ]
-    else
-      deps
-    end
   end
-
-  defp with_tui?, do: System.get_env("BOXLAND_WITH_TUI", "true") != "false"
 
   # Aliases are shortcuts or tasks specific to the current project.
   # For example, to install project dependencies and perform other setup tasks, run:

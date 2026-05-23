@@ -2,6 +2,7 @@ defmodule BoxlandWeb.SandboxLive do
   use BoxlandWeb, :live_view
 
   alias Boxland.{Levels, Library, Maps, Repo}
+  alias Boxland.Game.Eca
 
   def mount(%{"id" => id}, _session, socket) do
     designer = socket.assigns.current_designer
@@ -14,11 +15,14 @@ defmodule BoxlandWeb.SandboxLive do
     spawn = Enum.find(level.entities, &(preset(&1) == "spawn"))
     player = if spawn, do: {div(spawn.pos_x, 32), div(spawn.pos_y, 32)}, else: {0, 0}
 
+    world = Eca.init_world(level.entities, player) |> Eca.tick()
+
     {:ok,
      socket
      |> assign(:level, level)
      |> assign(:tilesets, Library.list_tilesets(designer.id))
      |> assign(:player, player)
+     |> assign(:world, world)
      |> assign(:message, nil)}
   end
 
@@ -33,7 +37,18 @@ defmodule BoxlandWeb.SandboxLive do
         {:noreply, assign(socket, :message, "Blocked")}
 
       true ->
-        {:noreply, socket |> assign(:player, next) |> assign(:message, inspect_tile(level, next))}
+        world =
+          socket.assigns.world
+          |> Eca.set_player(next)
+          |> Eca.tick()
+
+        message = inspect_tile(level, next) || eca_message(world, socket.assigns.world)
+
+        {:noreply,
+         socket
+         |> assign(:player, next)
+         |> assign(:world, world)
+         |> assign(:message, message)}
     end
   end
 
@@ -121,7 +136,26 @@ defmodule BoxlandWeb.SandboxLive do
     end)
   end
 
-  defp preset_label(entity), do: preset(entity) |> String.first() |> String.upcase()
+  defp preset_label(entity) do
+    case preset(entity) do
+      nil -> "?"
+      slug -> slug |> String.first() |> String.upcase()
+    end
+  end
+
+  defp eca_message(new_world, old_world) do
+    transitioned =
+      new_world.entities
+      |> Enum.find(fn {id, e} ->
+        old = Map.get(old_world.entities, id)
+        old && old.alive and not e.alive
+      end)
+
+    case transitioned do
+      {_id, e} -> "Entity #{e.tag || e.type_slug} despawned"
+      nil -> nil
+    end
+  end
 
   defp cell_style(tilesets, tiles, x, y) do
     case Maps.tile_at(tiles, x, y) do

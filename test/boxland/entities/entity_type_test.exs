@@ -53,4 +53,72 @@ defmodule Boxland.Entities.EntityTypeTest do
     assert {:ok, _} = %EntityType{} |> EntityType.changeset(attrs) |> Boxland.Repo.insert()
     assert {:error, _} = %EntityType{} |> EntityType.changeset(attrs) |> Boxland.Repo.insert()
   end
+
+  test "properties default to [] and size to 1x1", %{designer: d} do
+    {:ok, et} =
+      %EntityType{}
+      |> EntityType.changeset(%{owner_id: d.id, slug: "vase", name: "Vase"})
+      |> Boxland.Repo.insert()
+
+    assert et.properties == []
+    assert et.actions == []
+    assert et.size == %{"w" => 1, "h" => 1}
+  end
+
+  test "accepts well-formed properties and actions", %{designer: d} do
+    attrs = %{
+      owner_id: d.id,
+      slug: "boss",
+      name: "Boss",
+      size: %{"w" => 2, "h" => 3},
+      properties: [
+        %{"key" => "life", "type" => "number", "default" => 40},
+        %{"key" => "name", "type" => "string", "default" => "Boss"}
+      ],
+      actions: [
+        %{
+          "id" => "a1",
+          "name" => "On death",
+          "enabled" => true,
+          "trigger" => %{"kind" => "property", "key" => "life", "op" => "<=", "value" => 0},
+          "function" => %{"kind" => "despawn_self"}
+        }
+      ]
+    }
+
+    changeset = EntityType.changeset(%EntityType{}, attrs)
+    assert changeset.valid?
+  end
+
+  test "rejects malformed property entry", %{designer: d} do
+    attrs = %{
+      owner_id: d.id,
+      slug: "bad",
+      name: "Bad",
+      properties: [%{"key" => "life"}]
+    }
+
+    changeset = EntityType.changeset(%EntityType{}, attrs)
+    refute changeset.valid?
+    assert "each entry needs key, type, default" in errors_on(changeset).properties
+  end
+
+  test "rejects malformed action entry", %{designer: d} do
+    attrs = %{
+      owner_id: d.id,
+      slug: "bad2",
+      name: "Bad2",
+      actions: [%{"id" => "a", "trigger" => %{}, "function" => %{}}]
+    }
+
+    changeset = EntityType.changeset(%EntityType{}, attrs)
+    refute changeset.valid?
+    assert "each action needs id, trigger, function" in errors_on(changeset).actions
+  end
+
+  test "rejects non-positive size", %{designer: d} do
+    attrs = %{owner_id: d.id, slug: "zero", name: "Zero", size: %{"w" => 0, "h" => 1}}
+    changeset = EntityType.changeset(%EntityType{}, attrs)
+    refute changeset.valid?
+  end
 end

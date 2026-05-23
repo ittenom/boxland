@@ -3,10 +3,15 @@ defmodule Boxland.Levels do
 
   import Ecto.Query
 
+  alias Boxland.Entities
   alias Boxland.Entities.EntityType
   alias Boxland.Library.CollisionMask
   alias Boxland.Levels.{Level, LevelEntity, PublishedLevelVersion}
+  alias Boxland.Maps
+  alias Boxland.Maps.Map, as: BMap
   alias Boxland.Repo
+
+  @cell_px 32
 
   @preset_entities [
     {"spawn", "Spawn Point"},
@@ -53,20 +58,230 @@ defmodule Boxland.Levels do
       pos_y: y,
       z_index_override: z_override,
       instance_overrides: overrides,
-      script_state: %{}
+      script_state: %{"alive" => true}
     })
     |> Repo.insert()
   end
 
-  def delete_entity(owner_id, level_id, entity_id) do
-    level = get_level!(owner_id, level_id)
+  @doc """
+  Create a fresh LevelEntity. `attrs` may include `entity_type_id`,
+  `pos_x`, `pos_y` (pixels), `z_index_override`, `tag`, `group_id`,
+  `properties`. `script_state.alive` defaults to true.
+  """
+  def spawn_entity(owner_id, level_id, attrs) do
+    _ = get_level!(owner_id, level_id)
 
-    level.entities
-    |> Enum.find(&(&1.id == entity_id))
-    |> case do
+    attrs =
+      attrs
+      |> stringify_keys()
+      |> Elixir.Map.put("level_id", level_id)
+      |> Elixir.Map.put_new("script_state", %{"alive" => true})
+
+    %LevelEntity{}
+    |> LevelEntity.changeset(attrs)
+    |> Repo.insert()
+  end
+
+  @doc """
+  Soft-delete: mark `script_state.alive = false`. The instance row stays
+  put so referencing actions/snapshots still see it.
+  """
+  def despawn_entity(owner_id, level_id, entity_id) do
+    case get_entity(owner_id, level_id, entity_id) do
+      nil ->
+        {:error, :not_found}
+
+      entity ->
+        entity
+        |> LevelEntity.changeset(%{
+          script_state: Elixir.Map.put(entity.script_state || %{}, "alive", false)
+        })
+        |> Repo.update()
+    end
+  end
+
+  def delete_entity(owner_id, level_id, entity_id) do
+    case get_entity(owner_id, level_id, entity_id) do
       nil -> {:error, :not_found}
       entity -> Repo.delete(entity)
     end
+  end
+
+  def get_entity(owner_id, level_id, entity_id) do
+    level = get_level!(owner_id, level_id)
+    Enum.find(level.entities, &(&1.id == entity_id))
+  end
+
+  @doc """
+  Update an entity's mutable fields (`tag`, `properties`,
+  `z_index_override`, `pos_x`, `pos_y`, `group_id`). Returns
+  `{:ok, updated}` or a changeset error.
+  """
+  def update_entity(%LevelEntity{} = entity, attrs) do
+    entity
+    |> LevelEntity.changeset(stringify_keys(attrs))
+    |> Repo.update()
+  end
+
+  @doc """
+  Bind an existing tile group to an entity. Sets `entity.group_id` and
+  snaps `pos_x/pos_y` to the group's bbox top-left.
+  """
+  def bind_group(owner_id, level_id, entity_id, group_id) when is_binary(group_id) do
+    level = get_level!(owner_id, level_id)
+    map = Repo.preload(level.map, :layers)
+
+    case Enum.find(level.entities, &(&1.id == entity_id)) do
+      nil ->
+        {:error, :not_found}
+
+      entity ->
+        members = Maps.find_group_members(map, group_id)
+
+        case members do
+          [] ->
+            {:error, :empty_group}
+
+          _ ->
+            {min_x, min_y} = bbox_top_left(members)
+
+            update_entity(entity, %{
+              "group_id" => group_id,
+              "pos_x" => min_x * @cell_px,
+              "pos_y" => min_y * @cell_px
+            })
+        end
+    end
+  end
+
+  @doc """
+  Move an entity by `(dx, dy, dz)` cells. If the entity owns a tile
+  group (`group_id`), every tile in that group translates with it:
+  `(x, y)` shifts by `(dx, dy)` within its layer, and the tile moves
+  to the layer at `source_layer.z_index + dz`. If no layer exists at
+  the target z for a given tile, the move fails with
+  `{:error, :no_target_layer}`.
+
+  Returns `{:ok, updated_entity}` on success.
+  """
+  def move_entity(owner_id, level_id, entity_id, dx, dy, dz \\ 0)
+      when is_integer(dx) and is_integer(dy) and is_integer(dz) do
+    level = get_level!(owner_id, level_id)
+    map = Repo.preload(level.map, :layers)
+    entity = Enum.find(level.entities, &(&1.id == entity_id))
+
+    cond do
+      is_nil(entity) ->
+        {:error, :not_found}
+
+      dx == 0 and dy == 0 and dz == 0 ->
+        {:ok, entity}
+
+      true ->
+        Repo.transaction(fn ->
+          with {:ok, _} <- maybe_translate_group(map, entity, dx, dy, dz),
+               {:ok, updated} <- apply_entity_offset(entity, dx, dy, dz) do
+            updated
+          else
+            {:error, reason} -> Repo.rollback(reason)
+          end
+        end)
+    end
+  end
+
+  defp maybe_translate_group(_map, %LevelEntity{group_id: nil}, _dx, _dy, _dz), do: {:ok, :noop}
+
+  defp maybe_translate_group(%BMap{} = map, %LevelEntity{group_id: gid}, dx, dy, dz) do
+    members = Maps.find_group_members(map, gid)
+
+    if members == [] do
+      {:ok, :noop}
+    else
+      translate_group_members(map, members, dx, dy, dz, gid)
+    end
+  end
+
+  defp translate_group_members(map, members, dx, dy, dz, gid) do
+    layers_by_id = Elixir.Map.new(map.layers, &{&1.id, &1})
+    layers_by_z = Enum.group_by(map.layers, & &1.z_index)
+
+    target_records =
+      Enum.reduce_while(members, {:ok, []}, fn {lid, x, y, tile}, {:ok, acc} ->
+        source_layer = layers_by_id[lid]
+        target_z = source_layer.z_index + dz
+
+        case pick_layer_at_z(layers_by_z, target_z, lid) do
+          nil ->
+            {:halt, {:error, :no_target_layer}}
+
+          target ->
+            {:cont,
+             {:ok,
+              [
+                %{
+                  layer_id: target.id,
+                  dx: x + dx,
+                  dy: y + dy,
+                  tile: Elixir.Map.put(tile, "group_id", gid)
+                }
+                | acc
+              ]}}
+        end
+      end)
+
+    with {:ok, recs} <- target_records,
+         {:ok, del_updates} <- Maps.delete_cells_across_layers(map, members),
+         map_after_delete <- apply_layer_updates_to_struct(map, del_updates),
+         {:ok, _place_updates} <-
+           Maps.place_block(map_after_delete, recs, {0, 0}, hd(map.layers).id) do
+      {:ok, :moved}
+    end
+  end
+
+  defp apply_layer_updates_to_struct(map, updates) do
+    new_layers =
+      Enum.map(map.layers, fn l ->
+        case Elixir.Map.get(updates, l.id) do
+          {_prev, updated} -> updated
+          _ -> l
+        end
+      end)
+
+    %{map | layers: new_layers}
+  end
+
+  defp pick_layer_at_z(layers_by_z, z, prefer_id) do
+    case layers_by_z[z] do
+      nil -> nil
+      [single] -> single
+      list -> Enum.find(list, &(&1.id == prefer_id)) || hd(Enum.sort_by(list, & &1.id))
+    end
+  end
+
+  defp apply_entity_offset(entity, dx, dy, dz) do
+    new_z =
+      case entity.z_index_override do
+        nil -> nil
+        z -> z + dz
+      end
+
+    update_entity(entity, %{
+      "pos_x" => entity.pos_x + dx * @cell_px,
+      "pos_y" => entity.pos_y + dy * @cell_px,
+      "z_index_override" => new_z
+    })
+  end
+
+  defp bbox_top_left(members) do
+    {Enum.min_by(members, fn {_l, x, _y, _t} -> x end) |> elem(1),
+     Enum.min_by(members, fn {_l, _x, y, _t} -> y end) |> elem(2)}
+  end
+
+  defp stringify_keys(map) when is_map(map) do
+    Elixir.Map.new(map, fn
+      {k, v} when is_atom(k) -> {Atom.to_string(k), v}
+      {k, v} -> {k, v}
+    end)
   end
 
   def latest_published_version(level_id) do
@@ -107,6 +322,60 @@ defmodule Boxland.Levels do
 
   def blocked?(level, cell_x, cell_y), do: entity_blocked?(level, cell_x, cell_y)
 
+  @doc """
+  Ensure-and-return an EntityType matching the given visual source.
+
+  Sources:
+    {:preset, slug}            -> reuses existing preset type
+    {:tile, asset_id, idx}     -> one type per (asset, tile)
+    {:sprite, asset_id}        -> one type per sprite asset
+    {:group, group_id}         -> one type per tile group
+    :invisible                 -> single shared "invisible-box" type
+
+  Type slugs are deterministic, so repeated calls reuse the row.
+  """
+  def ensure_entity_type_for(owner_id, source) do
+    {slug, name, visual_ref} = type_descriptor_for(source)
+
+    case Repo.get_by(EntityType, owner_id: owner_id, slug: slug) do
+      nil ->
+        %EntityType{}
+        |> EntityType.changeset(%{
+          owner_id: owner_id,
+          slug: slug,
+          name: name,
+          visual_ref: visual_ref,
+          default_collision_mask: "none"
+        })
+        |> Repo.insert()
+
+      existing ->
+        {:ok, existing}
+    end
+  end
+
+  defp type_descriptor_for({:preset, slug}) do
+    {name, _} = Enum.find(@preset_entities, fn {s, _} -> s == slug end) || {slug, slug}
+    {"preset-#{slug}", name, %{"kind" => "preset", "slug" => slug}}
+  end
+
+  defp type_descriptor_for({:tile, asset_id, tile_index}) do
+    {"tile-#{asset_id}-#{tile_index}", "Tile #{asset_id}/#{tile_index}",
+     %{"kind" => "tile", "asset_id" => asset_id, "tile_index" => tile_index, "rotation" => 0}}
+  end
+
+  defp type_descriptor_for({:sprite, asset_id}) do
+    {"sprite-#{asset_id}", "Sprite #{asset_id}", %{"kind" => "sprite", "asset_id" => asset_id}}
+  end
+
+  defp type_descriptor_for({:group, group_id}) do
+    {"group-#{group_id}", "Group #{group_id}", %{"kind" => "group", "group_id" => group_id}}
+  end
+
+  defp type_descriptor_for(:invisible) do
+    {"invisible-box", "Invisible Box", %{"kind" => "invisible"}}
+  end
+
   defp ensure_preset_entity_type!(owner_id, preset_slug) do
     {slug, name} =
       Enum.find(@preset_entities, fn {slug, _name} -> slug == preset_slug end) ||
@@ -119,6 +388,7 @@ defmodule Boxland.Levels do
         slug: "preset-#{slug}",
         name: name,
         components: [%{"preset" => slug}],
+        visual_ref: %{"kind" => "preset", "slug" => slug},
         default_collision_mask: if(slug == "collision", do: "full", else: "none")
       })
       |> Repo.insert!()
@@ -178,15 +448,37 @@ defmodule Boxland.Levels do
           end)
       },
       "assets" => assets,
+      "entity_types" =>
+        level.entities
+        |> Enum.map(& &1.entity_type)
+        |> Enum.uniq_by(& &1.id)
+        |> Enum.map(fn et ->
+          %{
+            "id" => et.id,
+            "slug" => et.slug,
+            "name" => et.name,
+            "visual_ref" => et.visual_ref,
+            "size" => et.size,
+            "properties" => et.properties,
+            "actions" => et.actions,
+            "default_z_index" => et.default_z_index,
+            "default_collision_mask" => et.default_collision_mask
+          }
+        end),
       "entities" =>
         Enum.map(level.entities, fn entity ->
           %{
             "id" => entity.id,
+            "entity_type_id" => entity.entity_type_id,
             "preset" => preset_slug(entity),
+            "tag" => entity.tag,
+            "group_id" => entity.group_id,
             "pos_x" => entity.pos_x,
             "pos_y" => entity.pos_y,
             "z_index" => entity.z_index_override || entity.entity_type.default_z_index,
-            "instance_overrides" => entity.instance_overrides
+            "properties" => Entities.merge_properties(entity.entity_type, entity.properties),
+            "instance_overrides" => entity.instance_overrides,
+            "alive" => Elixir.Map.get(entity.script_state || %{}, "alive", true)
           }
         end)
     }
@@ -252,11 +544,19 @@ defmodule Boxland.Levels do
     end)
   end
 
-  defp preset_slug(%LevelEntity{entity_type: %EntityType{components: components}}) do
-    components
-    |> Enum.find_value(fn
+  defp preset_slug(%LevelEntity{entity_type: %EntityType{} = et}) do
+    case et.visual_ref do
+      %{"kind" => "preset", "slug" => slug} -> slug
+      _ -> components_preset(et.components)
+    end
+  end
+
+  defp components_preset(components) when is_list(components) do
+    Enum.find_value(components, fn
       %{"preset" => preset} -> preset
       _ -> nil
     end)
   end
+
+  defp components_preset(_), do: nil
 end

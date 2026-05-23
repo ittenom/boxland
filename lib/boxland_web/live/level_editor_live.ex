@@ -1,48 +1,232 @@
 defmodule BoxlandWeb.LevelEditorLive do
   use BoxlandWeb, :live_view
 
-  alias Boxland.{Levels, Library, Maps}
+  alias Boxland.{Entities, Levels, Library, Maps, Repo}
+  alias Boxland.Entities.EntityType
+  alias Boxland.Levels.LevelEntity
+
+  @cell_px 32
 
   def mount(%{"id" => id}, _session, socket) do
     designer = socket.assigns.current_designer
-    level = Levels.get_level!(designer.id, id)
+    level = Levels.get_level!(designer.id, id) |> preload_map_layers()
 
     {:ok,
      socket
      |> assign(:level, level)
      |> assign(:tilesets, Library.list_tilesets(designer.id))
+     |> assign(:sprites, list_sprites(designer.id))
+     |> assign(:groups, list_groups(level))
+     |> assign(:palette_mode, "preset")
      |> assign(:preset, "spawn")
+     |> assign(:selected_tile, nil)
+     |> assign(:selected_sprite_id, nil)
+     |> assign(:selected_group_id, nil)
+     |> assign(:invisible_size, %{"w" => 1, "h" => 1})
      |> assign(:place_z, default_place_z(level))
+     |> assign(:selected_entity_id, nil)
      |> assign(:publish_error, nil)}
   end
 
+  # === Palette events ===
+
+  def handle_event("palette_mode", %{"mode" => mode}, socket) do
+    {:noreply, assign(socket, :palette_mode, mode)}
+  end
+
   def handle_event("preset", %{"preset" => preset}, socket) do
-    {:noreply, assign(socket, :preset, preset)}
+    {:noreply, socket |> assign(:preset, preset) |> assign(:palette_mode, "preset")}
+  end
+
+  def handle_event("pick_tile", %{"asset_id" => asset_id, "index" => index}, socket) do
+    {:noreply,
+     socket
+     |> assign(:selected_tile, %{
+       "asset_id" => String.to_integer(asset_id),
+       "tile_index" => String.to_integer(index)
+     })
+     |> assign(:palette_mode, "tile")}
+  end
+
+  def handle_event("pick_sprite", %{"asset_id" => asset_id}, socket) do
+    {:noreply,
+     socket
+     |> assign(:selected_sprite_id, String.to_integer(asset_id))
+     |> assign(:palette_mode, "sprite")}
+  end
+
+  def handle_event("pick_group", %{"group_id" => gid}, socket) do
+    {:noreply,
+     socket |> assign(:selected_group_id, gid) |> assign(:palette_mode, "group")}
+  end
+
+  def handle_event("set_invisible_size", %{"w" => w, "h" => h}, socket) do
+    {:noreply,
+     assign(socket, :invisible_size, %{
+       "w" => safe_int(w, 1),
+       "h" => safe_int(h, 1)
+     })}
   end
 
   def handle_event("set_place_z", %{"z" => z}, socket) do
-    {:noreply, assign(socket, :place_z, String.to_integer(z))}
+    {:noreply, assign(socket, :place_z, safe_int(z, 0))}
   end
+
+  # === Canvas events ===
 
   def handle_event("place", %{"x" => x, "y" => y}, socket) do
     designer = socket.assigns.current_designer
     level = socket.assigns.level
-    x = String.to_integer(x) * 32
-    y = String.to_integer(y) * 32
+    cell_x = String.to_integer(x)
+    cell_y = String.to_integer(y)
 
-    {:ok, _entity} =
-      Levels.create_preset_entity(designer.id, level.id, socket.assigns.preset, x, y, %{},
-        z_index_override: socket.assigns.place_z
-      )
+    case place_from_palette(socket, designer, level, cell_x, cell_y) do
+      {:ok, entity} ->
+        {:noreply,
+         socket
+         |> refresh_level()
+         |> assign(:selected_entity_id, entity.id)}
 
-    {:noreply, assign(socket, :level, Levels.get_level!(designer.id, level.id))}
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, format_place_error(reason))}
+    end
+  end
+
+  def handle_event("select_entity", %{"id" => id}, socket) do
+    {:noreply, assign(socket, :selected_entity_id, String.to_integer(id))}
+  end
+
+  def handle_event("clear_selection", _params, socket) do
+    {:noreply, assign(socket, :selected_entity_id, nil)}
   end
 
   def handle_event("delete_entity", %{"id" => id}, socket) do
     designer = socket.assigns.current_designer
     level = socket.assigns.level
     _ = Levels.delete_entity(designer.id, level.id, String.to_integer(id))
-    {:noreply, assign(socket, :level, Levels.get_level!(designer.id, level.id))}
+
+    {:noreply,
+     socket
+     |> refresh_level()
+     |> assign(:selected_entity_id, nil)}
+  end
+
+  # === Inspector events ===
+
+  def handle_event("inspector_save", params, socket) do
+    designer = socket.assigns.current_designer
+    level = socket.assigns.level
+
+    with %LevelEntity{} = entity <- selected_entity(socket),
+         {:ok, _} <- Levels.update_entity(entity, inspector_attrs(params)) do
+      {:noreply, refresh_level(socket)}
+    else
+      nil -> {:noreply, socket}
+      {:error, _cs} -> {:noreply, put_flash(socket, :error, "Could not save entity.")}
+    end
+    |> tap(fn _ -> designer && level end)
+  end
+
+  def handle_event(
+        "inspector_property_set",
+        %{"key" => key, "value" => value} = _params,
+        socket
+      ) do
+    case selected_entity(socket) do
+      nil ->
+        {:noreply, socket}
+
+      entity ->
+        coerced = coerce_property_value(entity.entity_type, key, value)
+        new_props = Map.put(entity.properties || %{}, key, coerced)
+        {:ok, _} = Levels.update_entity(entity, %{"properties" => new_props})
+        {:noreply, refresh_level(socket)}
+    end
+  end
+
+  def handle_event(
+        "type_add_property",
+        %{"key" => key, "type" => type, "default" => default},
+        socket
+      ) do
+    case selected_entity(socket) do
+      nil ->
+        {:noreply, socket}
+
+      entity ->
+        coerced_default = coerce_value(type, default)
+
+        Entities.add_property(entity.entity_type, %{
+          "key" => key,
+          "type" => type,
+          "default" => coerced_default
+        })
+        |> case do
+          {:ok, _} -> {:noreply, refresh_level(socket)}
+          {:error, :duplicate_key} -> {:noreply, put_flash(socket, :error, "Key exists.")}
+        end
+    end
+  end
+
+  def handle_event("type_remove_property", %{"key" => key}, socket) do
+    case selected_entity(socket) do
+      nil ->
+        {:noreply, socket}
+
+      entity ->
+        {:ok, _} = Entities.remove_property(entity.entity_type, key)
+        {:noreply, refresh_level(socket)}
+    end
+  end
+
+  def handle_event("type_add_action", _params, socket) do
+    case selected_entity(socket) do
+      nil ->
+        {:noreply, socket}
+
+      entity ->
+        {:ok, _} =
+          Entities.add_action(entity.entity_type, %{
+            "name" => "Action",
+            "trigger" => %{"kind" => "spawn"},
+            "function" => %{"kind" => "despawn_self"}
+          })
+
+        {:noreply, refresh_level(socket)}
+    end
+  end
+
+  def handle_event(
+        "type_update_action",
+        %{"action_id" => action_id, "field" => field, "value" => value},
+        socket
+      ) do
+    case selected_entity(socket) do
+      nil ->
+        {:noreply, socket}
+
+      entity ->
+        action = Enum.find(entity.entity_type.actions, &(&1["id"] == action_id))
+
+        if action do
+          updated = put_in_action(action, String.split(field, "."), value)
+          {:ok, _} = Entities.update_action(entity.entity_type, action_id, updated)
+          {:noreply, refresh_level(socket)}
+        else
+          {:noreply, socket}
+        end
+    end
+  end
+
+  def handle_event("type_remove_action", %{"action_id" => action_id}, socket) do
+    case selected_entity(socket) do
+      nil ->
+        {:noreply, socket}
+
+      entity ->
+        {:ok, _} = Entities.remove_action(entity.entity_type, action_id)
+        {:noreply, refresh_level(socket)}
+    end
   end
 
   def handle_event("publish", _params, socket) do
@@ -64,9 +248,238 @@ defmodule BoxlandWeb.LevelEditorLive do
     end
   end
 
+  # === Placement helpers ===
+
+  defp place_from_palette(socket, designer, level, x, y) do
+    case socket.assigns.palette_mode do
+      "preset" ->
+        {:ok, _} =
+          Levels.create_preset_entity(
+            designer.id,
+            level.id,
+            socket.assigns.preset,
+            x * @cell_px,
+            y * @cell_px,
+            %{},
+            z_index_override: socket.assigns.place_z
+          )
+
+      "tile" ->
+        place_tile(socket, designer, level, x, y)
+
+      "sprite" ->
+        place_sprite(socket, designer, level, x, y)
+
+      "group" ->
+        place_group(socket, designer, level)
+
+      "invisible" ->
+        place_invisible(socket, designer, level, x, y)
+
+      _ ->
+        {:error, :unknown_palette}
+    end
+  end
+
+  defp place_tile(socket, designer, _level_id, x, y) do
+    case socket.assigns.selected_tile do
+      nil ->
+        {:error, :no_tile_selected}
+
+      %{"asset_id" => asset_id, "tile_index" => tile_index} ->
+        {:ok, type} =
+          Levels.ensure_entity_type_for(designer.id, {:tile, asset_id, tile_index})
+
+        Levels.spawn_entity(designer.id, socket.assigns.level.id, %{
+          "entity_type_id" => type.id,
+          "pos_x" => x * @cell_px,
+          "pos_y" => y * @cell_px,
+          "z_index_override" => socket.assigns.place_z
+        })
+    end
+  end
+
+  defp place_sprite(socket, designer, _level_id, x, y) do
+    case socket.assigns.selected_sprite_id do
+      nil ->
+        {:error, :no_sprite_selected}
+
+      sprite_id ->
+        {:ok, type} = Levels.ensure_entity_type_for(designer.id, {:sprite, sprite_id})
+
+        Levels.spawn_entity(designer.id, socket.assigns.level.id, %{
+          "entity_type_id" => type.id,
+          "pos_x" => x * @cell_px,
+          "pos_y" => y * @cell_px,
+          "z_index_override" => socket.assigns.place_z
+        })
+    end
+  end
+
+  defp place_group(socket, designer, _level_id) do
+    case socket.assigns.selected_group_id do
+      nil ->
+        {:error, :no_group_selected}
+
+      gid ->
+        {:ok, type} = Levels.ensure_entity_type_for(designer.id, {:group, gid})
+
+        # Position will be snapped to bbox top-left by bind_group.
+        {:ok, entity} =
+          Levels.spawn_entity(designer.id, socket.assigns.level.id, %{
+            "entity_type_id" => type.id,
+            "pos_x" => 0,
+            "pos_y" => 0,
+            "z_index_override" => socket.assigns.place_z
+          })
+
+        Levels.bind_group(designer.id, socket.assigns.level.id, entity.id, gid)
+    end
+  end
+
+  defp place_invisible(socket, designer, _level_id, x, y) do
+    {:ok, type} = Levels.ensure_entity_type_for(designer.id, :invisible)
+    size = socket.assigns.invisible_size
+
+    Levels.spawn_entity(designer.id, socket.assigns.level.id, %{
+      "entity_type_id" => type.id,
+      "pos_x" => x * @cell_px,
+      "pos_y" => y * @cell_px,
+      "z_index_override" => socket.assigns.place_z,
+      "instance_overrides" => %{"size" => size}
+    })
+  end
+
+  defp format_place_error(:no_tile_selected), do: "Select a tile from the palette first."
+  defp format_place_error(:no_sprite_selected), do: "Select a sprite from the palette first."
+  defp format_place_error(:no_group_selected), do: "Select a group from the palette first."
+  defp format_place_error(_), do: "Could not place entity."
+
+  # === Inspector helpers ===
+
+  defp inspector_attrs(params) do
+    params
+    |> Map.take(["tag", "pos_x", "pos_y", "z_index_override"])
+    |> Map.new(fn
+      {"pos_x", v} -> {"pos_x", safe_int(v, 0)}
+      {"pos_y", v} -> {"pos_y", safe_int(v, 0)}
+      {"z_index_override", ""} -> {"z_index_override", nil}
+      {"z_index_override", v} -> {"z_index_override", safe_int(v, 0)}
+      {"tag", v} -> {"tag", v}
+      pair -> pair
+    end)
+  end
+
+  defp coerce_property_value(%EntityType{properties: schema}, key, raw) do
+    case Enum.find(schema, &(&1["key"] == key)) do
+      %{"type" => type} -> coerce_value(type, raw)
+      _ -> raw
+    end
+  end
+
+  defp coerce_property_value(_, _, raw), do: raw
+
+  defp coerce_value("number", v) when is_binary(v) do
+    case Integer.parse(v) do
+      {n, ""} ->
+        n
+
+      _ ->
+        case Float.parse(v) do
+          {f, ""} -> f
+          _ -> 0
+        end
+    end
+  end
+
+  defp coerce_value("boolean", v) when is_binary(v), do: v in ["true", "1", "on"]
+  defp coerce_value("boolean", v) when is_boolean(v), do: v
+  defp coerce_value(_, v), do: v
+
+  defp put_in_action(action, [last], value), do: Map.put(action, last, value)
+
+  defp put_in_action(action, [head | rest], value) do
+    Map.update(action, head, put_in_action(%{}, rest, value), fn child ->
+      put_in_action(child || %{}, rest, value)
+    end)
+  end
+
+  # === Data loading ===
+
+  defp refresh_level(socket) do
+    designer = socket.assigns.current_designer
+    level = Levels.get_level!(designer.id, socket.assigns.level.id) |> preload_map_layers()
+
+    socket
+    |> assign(:level, level)
+    |> assign(:groups, list_groups(level))
+  end
+
+  defp preload_map_layers(level) do
+    Map.update!(level, :map, &Repo.preload(&1, layers: layer_order()))
+  end
+
+  defp layer_order do
+    import Ecto.Query
+    from(l in Boxland.Maps.Layer, order_by: [asc: l.z_index, asc: l.id])
+  end
+
+  defp list_sprites(owner_id) do
+    import Ecto.Query
+
+    Boxland.Library.Asset
+    |> where([a], a.owner_id == ^owner_id and a.kind == "sprite")
+    |> order_by([a], asc: a.name)
+    |> Repo.all()
+  end
+
+  defp list_groups(level) do
+    level.map.layers
+    |> Enum.flat_map(fn layer ->
+      layer.tiles
+      |> Map.values()
+      |> Enum.map(& &1["group_id"])
+    end)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+  end
+
+  defp selected_entity(socket) do
+    id = socket.assigns.selected_entity_id
+    if id, do: Enum.find(socket.assigns.level.entities, &(&1.id == id))
+  end
+
+  defp default_place_z(level) do
+    case visible_layers(level.map) do
+      [] -> 0
+      [layer | _] -> layer.z_index
+    end
+  end
+
+  defp visible_layers(%Boxland.Maps.Map{layers: layers}) when is_list(layers) do
+    layers
+    |> Enum.filter(& &1.visible)
+    |> Enum.sort_by(fn l -> {l.z_index, l.id} end)
+  end
+
+  defp visible_layers(_), do: []
+
+  defp safe_int(v, default) when is_binary(v) do
+    case Integer.parse(v) do
+      {n, _} -> n
+      :error -> default
+    end
+  end
+
+  defp safe_int(v, _) when is_integer(v), do: v
+  defp safe_int(_, default), do: default
+
+  # === Render ===
+
   def render(assigns) do
     layers = visible_layers(assigns.level.map)
     assigns = assign(assigns, :layers, layers)
+    assigns = assign(assigns, :selected, selected_entity_for_render(assigns))
 
     ~H"""
     <Layouts.app flash={@flash} current_scope={%{designer: @current_designer}}>
@@ -90,164 +503,503 @@ defmodule BoxlandWeb.LevelEditorLive do
 
         <div :if={@publish_error} class="alert alert-error">{@publish_error}</div>
 
-        <div class="flex flex-wrap items-center gap-3">
-          <div class="flex flex-wrap gap-2">
-            <button
-              :for={{slug, name} <- Levels.preset_entities()}
-              id={"preset-#{slug}"}
-              phx-click="preset"
-              phx-value-preset={slug}
-              class={["btn btn-sm", @preset == slug && "btn-primary"]}
-            >
-              {name}
-            </button>
-          </div>
+        <div class="grid gap-4 lg:grid-cols-[14rem_1fr_20rem]">
+          <.palette
+            mode={@palette_mode}
+            preset={@preset}
+            tilesets={@tilesets}
+            sprites={@sprites}
+            groups={@groups}
+            selected_tile={@selected_tile}
+            selected_sprite_id={@selected_sprite_id}
+            selected_group_id={@selected_group_id}
+            invisible_size={@invisible_size}
+            place_z={@place_z}
+          />
 
-          <form class="flex items-center gap-2" phx-change="set_place_z">
-            <label for="place-z" class="text-xs font-semibold uppercase tracking-wide text-base-content/60">
-              Place at z
-            </label>
-            <input
-              id="place-z"
-              type="number"
-              name="z"
-              value={@place_z}
-              step="1"
-              class="input input-xs input-bordered w-20"
-            />
-          </form>
-        </div>
+          <.canvas
+            level={@level}
+            layers={@layers}
+            tilesets={@tilesets}
+            selected_entity_id={@selected_entity_id}
+          />
 
-        <div class="grid gap-4 lg:grid-cols-[1fr_18rem]">
-          <div class="overflow-auto rounded-box bg-base-200 p-4">
-            <div
-              class="relative grid w-fit gap-px"
-              style={"grid-template-columns: repeat(#{@level.map.width}, 32px);"}
-            >
-              <button
-                :for={{x, y} <- cells(@level.map.width, @level.map.height)}
-                id={"level-cell-#{x}-#{y}"}
-                phx-click="place"
-                phx-value-x={x}
-                phx-value-y={y}
-                class="relative h-8 w-8 border border-base-300 bg-base-100"
-              >
-                <span
-                  :for={layer <- @layers}
-                  class="pointer-events-none absolute inset-0 bg-no-repeat"
-                  style={layer_cell_style(@tilesets, layer, x, y)}
-                />
-                <span
-                  :for={entity <- entities_at(@level.entities, x, y)}
-                  class="pointer-events-none absolute inset-1 rounded bg-primary/80 text-[10px] font-bold text-primary-content"
-                  title={"z=#{entity_z(entity)}"}
-                >
-                  {preset_label(entity)}
-                </span>
-              </button>
-            </div>
-          </div>
-
-          <aside class="space-y-4">
-            <div class="rounded-box bg-base-200 p-3">
-              <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-base-content/70">
-                Map layers
-              </h2>
-              <p :if={@layers == []} class="text-xs text-base-content/60">
-                No visible layers.
-              </p>
-              <ul class="space-y-1 text-sm">
-                <li
-                  :for={layer <- Enum.sort_by(@layers, fn l -> -l.z_index end)}
-                  class="flex items-center justify-between rounded bg-base-100 px-2 py-1"
-                >
-                  <span class="truncate">{layer.name}</span>
-                  <span class="font-mono text-[10px] text-base-content/50">z={layer.z_index}</span>
-                </li>
-              </ul>
-            </div>
-
-            <div class="space-y-2">
-              <h2 class="text-sm font-semibold uppercase tracking-wide text-base-content/70">
-                Placed entities
-              </h2>
-              <div
-                :for={entity <- @level.entities}
-                class="flex items-center justify-between gap-2 rounded-box bg-base-200 p-2"
-              >
-                <div class="min-w-0 flex-1">
-                  <div class="truncate text-sm font-medium">{preset_label_full(entity)}</div>
-                  <div class="font-mono text-[10px] text-base-content/60">
-                    ({div(entity.pos_x, 32)}, {div(entity.pos_y, 32)}) z={entity_z(entity)}
-                  </div>
-                </div>
-                <button
-                  phx-click="delete_entity"
-                  phx-value-id={entity.id}
-                  class="btn btn-xs btn-error"
-                  aria-label="Delete entity"
-                >
-                  <.icon name="hero-x-mark" class="size-3" />
-                </button>
-              </div>
-            </div>
-          </aside>
+          <.inspector entity={@selected} />
         </div>
       </section>
     </Layouts.app>
     """
   end
 
-  defp visible_layers(%Boxland.Maps.Map{layers: layers}) when is_list(layers) do
-    layers
-    |> Enum.filter(& &1.visible)
-    |> Enum.sort_by(fn l -> {l.z_index, l.id} end)
+  defp selected_entity_for_render(%{selected_entity_id: nil}), do: nil
+
+  defp selected_entity_for_render(%{level: level, selected_entity_id: id}) do
+    Enum.find(level.entities, &(&1.id == id))
   end
 
-  defp visible_layers(map) do
-    map
-    |> Boxland.Repo.preload(layers: from_layer_order())
-    |> Elixir.Map.get(:layers, [])
-    |> Enum.filter(& &1.visible)
-    |> Enum.sort_by(fn l -> {l.z_index, l.id} end)
+  # === Components ===
+
+  attr :mode, :string
+  attr :preset, :string
+  attr :tilesets, :list
+  attr :sprites, :list
+  attr :groups, :list
+  attr :selected_tile, :any
+  attr :selected_sprite_id, :any
+  attr :selected_group_id, :any
+  attr :invisible_size, :map
+  attr :place_z, :integer
+
+  defp palette(assigns) do
+    ~H"""
+    <aside id="level-palette" class="space-y-3">
+      <nav class="tabs tabs-boxed bg-base-200 text-xs" role="tablist">
+        <a
+          :for={tab <- ~w(preset tile sprite group invisible)}
+          id={"palette-tab-#{tab}"}
+          phx-click="palette_mode"
+          phx-value-mode={tab}
+          class={["tab", @mode == tab && "tab-active"]}
+        >
+          {String.capitalize(tab)}
+        </a>
+      </nav>
+
+      <form class="flex items-center gap-2" phx-change="set_place_z">
+        <label for="place-z" class="text-[10px] font-semibold uppercase tracking-wide text-base-content/60">
+          Place at z
+        </label>
+        <input
+          id="place-z"
+          type="number"
+          name="z"
+          value={@place_z}
+          step="1"
+          class="input input-xs input-bordered w-20"
+        />
+      </form>
+
+      <div :if={@mode == "preset"} class="space-y-1">
+        <button
+          :for={{slug, name} <- Boxland.Levels.preset_entities()}
+          id={"preset-#{slug}"}
+          phx-click="preset"
+          phx-value-preset={slug}
+          class={["btn btn-sm w-full justify-start", @preset == slug && "btn-primary"]}
+        >
+          {name}
+        </button>
+      </div>
+
+      <div :if={@mode == "tile"} class="space-y-2">
+        <p :if={@tilesets == []} class="text-xs text-base-content/60">No tilesets uploaded.</p>
+
+        <div :for={ts <- @tilesets} class="space-y-1">
+          <div class="text-[10px] font-semibold uppercase tracking-wide text-base-content/60">
+            {ts.name}
+          </div>
+          <div class="grid grid-cols-6 gap-1">
+            <button
+              :for={i <- 0..(tileset_tile_count(ts) - 1)}
+              id={"palette-tile-#{ts.id}-#{i}"}
+              phx-click="pick_tile"
+              phx-value-asset_id={ts.id}
+              phx-value-index={i}
+              class={[
+                "h-8 w-8 border border-base-300",
+                @selected_tile == %{"asset_id" => ts.id, "tile_index" => i} && "ring-2 ring-primary"
+              ]}
+              style={tile_swatch_style(ts, i)}
+              aria-label={"tile #{i} of #{ts.name}"}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div :if={@mode == "sprite"} class="space-y-1">
+        <p :if={@sprites == []} class="text-xs text-base-content/60">No sprites uploaded.</p>
+        <button
+          :for={s <- @sprites}
+          id={"palette-sprite-#{s.id}"}
+          phx-click="pick_sprite"
+          phx-value-asset_id={s.id}
+          class={[
+            "btn btn-sm w-full justify-start",
+            @selected_sprite_id == s.id && "btn-primary"
+          ]}
+        >
+          {s.name}
+        </button>
+      </div>
+
+      <div :if={@mode == "group"} class="space-y-1">
+        <p :if={@groups == []} class="text-xs text-base-content/60">
+          No tile groups on this map. Use Mapmaker to create one.
+        </p>
+        <button
+          :for={gid <- @groups}
+          id={"palette-group-#{gid}"}
+          phx-click="pick_group"
+          phx-value-group_id={gid}
+          class={[
+            "btn btn-sm w-full justify-start font-mono",
+            @selected_group_id == gid && "btn-primary"
+          ]}
+        >
+          {String.slice(gid, 0, 10)}…
+        </button>
+      </div>
+
+      <form
+        :if={@mode == "invisible"}
+        phx-change="set_invisible_size"
+        class="space-y-2 rounded-box bg-base-200 p-2"
+      >
+        <label class="text-[10px] font-semibold uppercase tracking-wide text-base-content/60">
+          Size (cells)
+        </label>
+        <div class="flex gap-2">
+          <input
+            id="invisible-w"
+            type="number"
+            name="w"
+            value={@invisible_size["w"]}
+            min="1"
+            class="input input-xs input-bordered w-16"
+          />
+          <input
+            id="invisible-h"
+            type="number"
+            name="h"
+            value={@invisible_size["h"]}
+            min="1"
+            class="input input-xs input-bordered w-16"
+          />
+        </div>
+        <p class="text-[10px] text-base-content/60">
+          Click a cell to place an invisible {@invisible_size["w"]}×{@invisible_size["h"]} box.
+        </p>
+      </form>
+    </aside>
+    """
   end
 
-  defp from_layer_order do
-    import Ecto.Query
-    from(l in Boxland.Maps.Layer, order_by: [asc: l.z_index, asc: l.id])
+  attr :level, :any
+  attr :layers, :list
+  attr :tilesets, :list
+  attr :selected_entity_id, :any
+
+  defp canvas(assigns) do
+    ~H"""
+    <div
+      id="level-canvas"
+      class="overflow-auto rounded-box bg-base-200 p-4"
+      phx-click="clear_selection"
+    >
+      <div
+        class="relative grid w-fit gap-px"
+        style={"grid-template-columns: repeat(#{@level.map.width}, 32px);"}
+      >
+        <button
+          :for={{x, y} <- cells(@level.map.width, @level.map.height)}
+          id={"level-cell-#{x}-#{y}"}
+          phx-click="place"
+          phx-value-x={x}
+          phx-value-y={y}
+          class="relative h-8 w-8 border border-base-300 bg-base-100"
+        >
+          <span
+            :for={layer <- @layers}
+            class="pointer-events-none absolute inset-0 bg-no-repeat"
+            style={layer_cell_style(@tilesets, layer, x, y)}
+          />
+        </button>
+
+        <button
+          :for={entity <- @level.entities}
+          id={"level-entity-#{entity.id}"}
+          phx-click="select_entity"
+          phx-value-id={entity.id}
+          class={[
+            "absolute z-10 flex items-center justify-center border text-[10px] font-bold",
+            entity_color_class(entity),
+            entity.id == @selected_entity_id && "ring-2 ring-accent"
+          ]}
+          style={entity_position_style(entity)}
+          aria-label={"entity #{entity.id}"}
+        >
+          {entity_label(entity)}
+        </button>
+      </div>
+    </div>
+    """
   end
 
-  defp default_place_z(level) do
-    case visible_layers(level.map) do
-      [] -> 0
-      [layer | _] -> layer.z_index
-    end
+  attr :entity, :any
+
+  defp inspector(assigns) do
+    ~H"""
+    <aside id="level-inspector" class="space-y-3">
+      <div :if={is_nil(@entity)} class="rounded-box bg-base-200 p-3 text-xs text-base-content/60">
+        Click an entity on the canvas to inspect.
+      </div>
+
+      <div :if={@entity} class="space-y-3">
+        <div class="rounded-box bg-base-200 p-3">
+          <div class="mb-2 flex items-center justify-between">
+            <h2 class="text-sm font-semibold uppercase tracking-wide text-base-content/70">
+              Identity
+            </h2>
+            <button
+              id="entity-delete"
+              phx-click="delete_entity"
+              phx-value-id={@entity.id}
+              class="btn btn-xs btn-error"
+            >
+              <.icon name="hero-trash" class="size-3" />
+            </button>
+          </div>
+          <form phx-change="inspector_save" class="space-y-2 text-xs">
+            <label class="flex flex-col">
+              <span class="text-base-content/60">Tag</span>
+              <input
+                id="entity-tag"
+                type="text"
+                name="tag"
+                value={@entity.tag || ""}
+                class="input input-xs input-bordered"
+              />
+            </label>
+            <div class="font-mono text-[10px] text-base-content/60">
+              Type: {@entity.entity_type.slug}
+            </div>
+          </form>
+        </div>
+
+        <div class="rounded-box bg-base-200 p-3">
+          <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-base-content/70">
+            Position
+          </h2>
+          <form phx-change="inspector_save" class="grid grid-cols-3 gap-2 text-xs">
+            <label class="flex flex-col">
+              <span class="text-base-content/60">x (px)</span>
+              <input
+                id="entity-pos-x"
+                type="number"
+                name="pos_x"
+                value={@entity.pos_x}
+                class="input input-xs input-bordered"
+              />
+            </label>
+            <label class="flex flex-col">
+              <span class="text-base-content/60">y (px)</span>
+              <input
+                id="entity-pos-y"
+                type="number"
+                name="pos_y"
+                value={@entity.pos_y}
+                class="input input-xs input-bordered"
+              />
+            </label>
+            <label class="flex flex-col">
+              <span class="text-base-content/60">z</span>
+              <input
+                id="entity-z"
+                type="number"
+                name="z_index_override"
+                value={@entity.z_index_override || ""}
+                class="input input-xs input-bordered"
+              />
+            </label>
+          </form>
+        </div>
+
+        <div class="rounded-box bg-base-200 p-3">
+          <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-base-content/70">
+            Properties
+          </h2>
+
+          <div :if={@entity.entity_type.properties == []} class="text-xs text-base-content/60">
+            No declared properties yet.
+          </div>
+
+          <form
+            :for={prop <- @entity.entity_type.properties}
+            phx-change="inspector_property_set"
+            class="mb-1 flex items-center gap-2 text-xs"
+          >
+            <span class="font-mono text-base-content/70 w-24 truncate">{prop["key"]}</span>
+            <input type="hidden" name="key" value={prop["key"]} />
+            <input
+              id={"entity-prop-#{prop["key"]}"}
+              name="value"
+              value={current_property_value(@entity, prop)}
+              class="input input-xs input-bordered flex-1"
+            />
+            <button
+              type="button"
+              phx-click="type_remove_property"
+              phx-value-key={prop["key"]}
+              class="btn btn-xs btn-ghost"
+              aria-label={"remove #{prop["key"]}"}
+            >
+              <.icon name="hero-x-mark" class="size-3" />
+            </button>
+          </form>
+
+          <form phx-submit="type_add_property" class="mt-2 flex gap-1 text-xs">
+            <input
+              type="text"
+              name="key"
+              placeholder="key"
+              class="input input-xs input-bordered flex-1"
+            />
+            <select name="type" class="select select-xs select-bordered">
+              <option value="number">number</option>
+              <option value="string">string</option>
+              <option value="boolean">boolean</option>
+            </select>
+            <input
+              type="text"
+              name="default"
+              placeholder="default"
+              class="input input-xs input-bordered w-20"
+            />
+            <button id="entity-add-property" type="submit" class="btn btn-xs">+</button>
+          </form>
+        </div>
+
+        <div class="rounded-box bg-base-200 p-3">
+          <div class="mb-2 flex items-center justify-between">
+            <h2 class="text-sm font-semibold uppercase tracking-wide text-base-content/70">
+              Actions
+            </h2>
+            <button id="entity-add-action" phx-click="type_add_action" class="btn btn-xs">
+              +
+            </button>
+          </div>
+
+          <div :if={@entity.entity_type.actions == []} class="text-xs text-base-content/60">
+            No actions on this entity type yet.
+          </div>
+
+          <div
+            :for={action <- @entity.entity_type.actions}
+            id={"action-#{action["id"]}"}
+            class="mb-2 rounded bg-base-100 p-2 text-xs"
+          >
+            <div class="mb-1 flex items-center justify-between">
+              <input
+                phx-blur="type_update_action"
+                phx-value-action_id={action["id"]}
+                phx-value-field="name"
+                name="value"
+                value={action["name"]}
+                class="input input-xs input-bordered flex-1 mr-1"
+              />
+              <button
+                phx-click="type_remove_action"
+                phx-value-action_id={action["id"]}
+                class="btn btn-xs btn-ghost"
+              >
+                <.icon name="hero-x-mark" class="size-3" />
+              </button>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <span class="text-base-content/60">Trigger</span>
+                <form
+                  phx-change="type_update_action"
+                  phx-value-action_id={action["id"]}
+                  phx-value-field="trigger.kind"
+                >
+                  <select name="value" class="select select-xs select-bordered w-full">
+                    <option :for={k <- ~w(spawn despawn proximity property)} value={k} selected={action["trigger"]["kind"] == k}>
+                      {k}
+                    </option>
+                  </select>
+                </form>
+              </div>
+
+              <div>
+                <span class="text-base-content/60">Function</span>
+                <form
+                  phx-change="type_update_action"
+                  phx-value-action_id={action["id"]}
+                  phx-value-field="function.kind"
+                >
+                  <select name="value" class="select select-xs select-bordered w-full">
+                    <option
+                      :for={k <- ~w(spawn_self despawn_self spawn_other despawn_other modify_property)}
+                      value={k}
+                      selected={action["function"]["kind"] == k}
+                    >
+                      {k}
+                    </option>
+                  </select>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
+    """
   end
 
-  defp entities_at(entities, x, y) do
-    Enum.filter(entities, &(div(&1.pos_x, 32) == x and div(&1.pos_y, 32) == y))
-  end
-
-  defp entity_z(entity) do
-    entity.z_index_override || entity.entity_type.default_z_index
-  end
+  # === Render helpers ===
 
   defp cells(width, height), do: for(y <- 0..(height - 1), x <- 0..(width - 1), do: {x, y})
 
-  defp preset_label(entity) do
-    entity.entity_type.components
-    |> Enum.find_value("?", fn
-      %{"preset" => preset} -> String.first(preset) |> String.upcase()
-      _ -> nil
-    end)
+  defp entity_color_class(entity) do
+    case entity.entity_type.visual_ref do
+      %{"kind" => "invisible"} -> "bg-accent/40 border-accent/70 text-accent-content"
+      %{"kind" => "preset"} -> "bg-primary/80 border-primary text-primary-content"
+      _ -> "bg-secondary/70 border-secondary text-secondary-content"
+    end
   end
 
-  defp preset_label_full(entity) do
-    entity.entity_type.components
-    |> Enum.find_value(entity.entity_type.name, fn
-      %{"preset" => preset} -> preset |> String.capitalize()
-      _ -> nil
-    end)
+  defp entity_position_style(entity) do
+    {w, h} = entity_size_cells(entity)
+    px = entity.pos_x
+    py = entity.pos_y
+    "left: #{px}px; top: #{py}px; width: #{w * @cell_px - 2}px; height: #{h * @cell_px - 2}px;"
+  end
+
+  defp entity_size_cells(entity) do
+    base =
+      (entity.instance_overrides || %{})
+      |> Map.get("size", entity.entity_type.size || %{"w" => 1, "h" => 1})
+
+    {Map.get(base, "w", 1), Map.get(base, "h", 1)}
+  end
+
+  defp entity_label(entity) do
+    case entity.entity_type.visual_ref do
+      %{"kind" => "preset", "slug" => slug} -> String.upcase(String.first(slug))
+      %{"kind" => "invisible"} -> "□"
+      _ -> ""
+    end
+  end
+
+  defp current_property_value(entity, %{"key" => key, "default" => default}) do
+    Map.get(entity.properties || %{}, key, default)
+  end
+
+  defp tile_swatch_style(asset, index) do
+    columns = asset.metadata["columns"] || 1
+    x = rem(index, columns) * 32
+    y = div(index, columns) * 32
+
+    "background-image: url('#{asset.content_url}');" <>
+      " background-position: -#{x}px -#{y}px;" <>
+      " background-repeat: no-repeat;"
+  end
+
+  defp tileset_tile_count(%{metadata: meta}) do
+    Map.get(meta, "tile_count") ||
+      ((Map.get(meta, "columns") || 1) * (Map.get(meta, "rows") || 1))
   end
 
   defp layer_cell_style(tilesets, layer, x, y) do

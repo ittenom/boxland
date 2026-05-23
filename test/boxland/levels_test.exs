@@ -89,6 +89,211 @@ defmodule Boxland.LevelsTest do
     end
   end
 
+  describe "spawn/despawn/move" do
+    setup %{designer: d, map: m, et: et} do
+      {:ok, level} =
+        %Level{}
+        |> Level.changeset(%{owner_id: d.id, slug: "spawn-lvl", name: "S", map_id: m.id})
+        |> Boxland.Repo.insert()
+
+      {:ok, level: level, et: et}
+    end
+
+    test "spawn_entity creates with alive=true", %{designer: d, level: lvl, et: et} do
+      {:ok, e} =
+        Boxland.Levels.spawn_entity(d.id, lvl.id, %{
+          "entity_type_id" => et.id,
+          "pos_x" => 0,
+          "pos_y" => 0
+        })
+
+      assert e.script_state["alive"] == true
+    end
+
+    test "despawn_entity flips alive=false but keeps row", %{designer: d, level: lvl, et: et} do
+      {:ok, e} =
+        Boxland.Levels.spawn_entity(d.id, lvl.id, %{
+          "entity_type_id" => et.id,
+          "pos_x" => 0,
+          "pos_y" => 0
+        })
+
+      assert {:ok, e2} = Boxland.Levels.despawn_entity(d.id, lvl.id, e.id)
+      assert e2.script_state["alive"] == false
+      assert Boxland.Levels.get_entity(d.id, lvl.id, e.id) != nil
+    end
+
+    test "move_entity without group_id just updates pos_x/pos_y/z", %{
+      designer: d,
+      level: lvl,
+      et: et
+    } do
+      {:ok, e} =
+        Boxland.Levels.spawn_entity(d.id, lvl.id, %{
+          "entity_type_id" => et.id,
+          "pos_x" => 0,
+          "pos_y" => 0,
+          "z_index_override" => 10
+        })
+
+      assert {:ok, moved} = Boxland.Levels.move_entity(d.id, lvl.id, e.id, 1, 2, 1)
+      assert moved.pos_x == 32
+      assert moved.pos_y == 64
+      assert moved.z_index_override == 11
+    end
+
+    test "move_entity with bound tile group translates tiles across x,y", %{
+      designer: d,
+      level: lvl,
+      map: m,
+      et: et
+    } do
+      {:ok, layer} = Boxland.Maps.create_layer(m, %{name: "ground", z_index: 0})
+
+      {:ok, _} =
+        Boxland.Maps.update_layer_tiles(layer, %{
+          "5,5" => %{
+            "asset_id" => 1,
+            "tile_index" => 0,
+            "rotation" => 0,
+            "group_id" => "g1"
+          },
+          "6,5" => %{
+            "asset_id" => 1,
+            "tile_index" => 1,
+            "rotation" => 0,
+            "group_id" => "g1"
+          }
+        })
+
+      {:ok, e} =
+        Boxland.Levels.spawn_entity(d.id, lvl.id, %{
+          "entity_type_id" => et.id,
+          "pos_x" => 5 * 32,
+          "pos_y" => 5 * 32,
+          "group_id" => "g1"
+        })
+
+      assert {:ok, moved} = Boxland.Levels.move_entity(d.id, lvl.id, e.id, 2, 0, 0)
+      assert moved.pos_x == 7 * 32
+
+      [layer_after] = Boxland.Maps.list_layers(m.id)
+      assert Boxland.Maps.tile_at(layer_after.tiles, 5, 5) == nil
+      assert Boxland.Maps.tile_at(layer_after.tiles, 6, 5) == nil
+      assert Boxland.Maps.tile_at(layer_after.tiles, 7, 5)["group_id"] == "g1"
+      assert Boxland.Maps.tile_at(layer_after.tiles, 8, 5)["group_id"] == "g1"
+    end
+
+    test "move_entity dz relocates tiles to target layer", %{
+      designer: d,
+      level: lvl,
+      map: m,
+      et: et
+    } do
+      {:ok, layer_a} = Boxland.Maps.create_layer(m, %{name: "ground", z_index: 0})
+      {:ok, layer_b} = Boxland.Maps.create_layer(m, %{name: "upper", z_index: 1})
+
+      {:ok, _} =
+        Boxland.Maps.update_layer_tiles(layer_a, %{
+          "3,3" => %{
+            "asset_id" => 1,
+            "tile_index" => 0,
+            "rotation" => 0,
+            "group_id" => "g2"
+          }
+        })
+
+      {:ok, e} =
+        Boxland.Levels.spawn_entity(d.id, lvl.id, %{
+          "entity_type_id" => et.id,
+          "pos_x" => 3 * 32,
+          "pos_y" => 3 * 32,
+          "z_index_override" => 0,
+          "group_id" => "g2"
+        })
+
+      assert {:ok, moved} = Boxland.Levels.move_entity(d.id, lvl.id, e.id, 0, 0, 1)
+      assert moved.z_index_override == 1
+
+      layer_a_after = Boxland.Maps.get_layer!(layer_a.id)
+      layer_b_after = Boxland.Maps.get_layer!(layer_b.id)
+      assert Boxland.Maps.tile_at(layer_a_after.tiles, 3, 3) == nil
+      assert Boxland.Maps.tile_at(layer_b_after.tiles, 3, 3)["group_id"] == "g2"
+    end
+
+    test "move_entity fails with :no_target_layer when target z has no layer", %{
+      designer: d,
+      level: lvl,
+      map: m,
+      et: et
+    } do
+      {:ok, layer_a} = Boxland.Maps.create_layer(m, %{name: "ground", z_index: 0})
+
+      {:ok, _} =
+        Boxland.Maps.update_layer_tiles(layer_a, %{
+          "0,0" => %{
+            "asset_id" => 1,
+            "tile_index" => 0,
+            "rotation" => 0,
+            "group_id" => "g3"
+          }
+        })
+
+      {:ok, e} =
+        Boxland.Levels.spawn_entity(d.id, lvl.id, %{
+          "entity_type_id" => et.id,
+          "pos_x" => 0,
+          "pos_y" => 0,
+          "z_index_override" => 0,
+          "group_id" => "g3"
+        })
+
+      assert {:error, :no_target_layer} =
+               Boxland.Levels.move_entity(d.id, lvl.id, e.id, 0, 0, 5)
+
+      # No partial writes
+      [layer_after] = Boxland.Maps.list_layers(m.id)
+      assert Boxland.Maps.tile_at(layer_after.tiles, 0, 0)["group_id"] == "g3"
+    end
+
+    test "bind_group snaps pos to bbox top-left", %{
+      designer: d,
+      level: lvl,
+      map: m,
+      et: et
+    } do
+      {:ok, layer} = Boxland.Maps.create_layer(m, %{name: "ground", z_index: 0})
+
+      {:ok, _} =
+        Boxland.Maps.update_layer_tiles(layer, %{
+          "10,12" => %{
+            "asset_id" => 1,
+            "tile_index" => 0,
+            "rotation" => 0,
+            "group_id" => "gbox"
+          },
+          "11,13" => %{
+            "asset_id" => 1,
+            "tile_index" => 1,
+            "rotation" => 0,
+            "group_id" => "gbox"
+          }
+        })
+
+      {:ok, e} =
+        Boxland.Levels.spawn_entity(d.id, lvl.id, %{
+          "entity_type_id" => et.id,
+          "pos_x" => 0,
+          "pos_y" => 0
+        })
+
+      assert {:ok, bound} = Boxland.Levels.bind_group(d.id, lvl.id, e.id, "gbox")
+      assert bound.group_id == "gbox"
+      assert bound.pos_x == 10 * 32
+      assert bound.pos_y == 12 * 32
+    end
+  end
+
   describe "publishing" do
     setup %{designer: d, map: m} do
       {:ok, level} =
