@@ -56,7 +56,7 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
   test "preset palette places an entity", %{conn: conn, designer: d, level: level} do
     {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
     render_click(view, "preset", %{"preset" => "spawn"})
-    render_click(view, "place", %{"x" => "1", "y" => "2"})
+    render_click(view, "cell", %{"x" => "1", "y" => "2"})
 
     level_after = Levels.get_level!(d.id, level.id)
     assert length(level_after.entities) == 1
@@ -75,7 +75,7 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
     render_click(view, "palette_mode", %{"mode" => "invisible"})
 
     render_change(view, "set_invisible_size", %{"w" => "3", "h" => "2"})
-    render_click(view, "place", %{"x" => "0", "y" => "0"})
+    render_click(view, "cell", %{"x" => "0", "y" => "0"})
 
     [e] = Levels.get_level!(d.id, level.id).entities
     assert e.entity_type.visual_ref == %{"kind" => "invisible"}
@@ -85,7 +85,7 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
   test "clicking entity opens inspector and saves tag", %{conn: conn, designer: d, level: level} do
     {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
     render_click(view, "preset", %{"preset" => "sign"})
-    render_click(view, "place", %{"x" => "0", "y" => "0"})
+    render_click(view, "cell", %{"x" => "0", "y" => "0"})
 
     [e] = Levels.get_level!(d.id, level.id).entities
 
@@ -113,7 +113,7 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
   } do
     {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
     render_click(view, "preset", %{"preset" => "sign"})
-    render_click(view, "place", %{"x" => "0", "y" => "0"})
+    render_click(view, "cell", %{"x" => "0", "y" => "0"})
 
     [e] = Levels.get_level!(d.id, level.id).entities
     render_click(view, "select_entity", %{"id" => to_string(e.id)})
@@ -139,7 +139,7 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
   } do
     {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
     render_click(view, "preset", %{"preset" => "sign"})
-    render_click(view, "place", %{"x" => "0", "y" => "0"})
+    render_click(view, "cell", %{"x" => "0", "y" => "0"})
 
     [e] = Levels.get_level!(d.id, level.id).entities
     render_click(view, "select_entity", %{"id" => to_string(e.id)})
@@ -158,7 +158,7 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
   } do
     {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
     render_click(view, "preset", %{"preset" => "sign"})
-    render_click(view, "place", %{"x" => "0", "y" => "0"})
+    render_click(view, "cell", %{"x" => "0", "y" => "0"})
 
     [e] = Levels.get_level!(d.id, level.id).entities
     render_click(view, "select_entity", %{"id" => to_string(e.id)})
@@ -183,11 +183,110 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
   } do
     {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
     render_click(view, "preset", %{"preset" => "sign"})
-    render_click(view, "place", %{"x" => "0", "y" => "0"})
+    render_click(view, "cell", %{"x" => "0", "y" => "0"})
 
     [e] = Levels.get_level!(d.id, level.id).entities
     render_click(view, "select_entity", %{"id" => to_string(e.id)})
     render_click(view, "delete_entity", %{"id" => to_string(e.id)})
+
+    assert Levels.get_level!(d.id, level.id).entities == []
+  end
+
+  test "renders the toolbar with select/place/delete buttons", %{conn: conn, level: level} do
+    {:ok, _view, html} = live(conn, ~p"/app/levels/#{level.id}")
+    assert html =~ ~s(id="level-tool-select")
+    assert html =~ ~s(id="level-tool-place")
+    assert html =~ ~s(id="level-tool-delete")
+  end
+
+  test "select mode is the default and switching tools is observable", %{
+    conn: conn,
+    level: level
+  } do
+    {:ok, view, html} = live(conn, ~p"/app/levels/#{level.id}")
+    assert html =~ ~r{id="level-tool-select"[^>]*btn-primary}
+
+    html = render_click(view, "tool", %{"tool" => "delete"})
+    assert html =~ ~r{id="level-tool-delete"[^>]*btn-primary}
+    refute html =~ ~r{id="level-tool-select"[^>]*btn-primary}
+  end
+
+  test "select-tool click on a group cell binds-and-selects a group entity", %{
+    conn: conn,
+    designer: d,
+    map: map,
+    level: level
+  } do
+    [layer] = Maps.list_layers(map.id)
+
+    {:ok, _} =
+      Maps.update_layer_tiles(layer, %{
+        "3,3" => %{
+          "asset_id" => 1,
+          "tile_index" => 0,
+          "rotation" => 0,
+          "group_id" => "g-test"
+        },
+        "4,3" => %{
+          "asset_id" => 1,
+          "tile_index" => 1,
+          "rotation" => 0,
+          "group_id" => "g-test"
+        }
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+    # Default tool is "select". Click a cell that's part of the group.
+    render_click(view, "cell", %{"x" => "3", "y" => "3"})
+
+    [e] = Levels.get_level!(d.id, level.id).entities
+    assert e.group_id == "g-test"
+    # Second click anywhere on the group reuses the same entity (no duplicate).
+    render_click(view, "cell", %{"x" => "4", "y" => "3"})
+    assert length(Levels.get_level!(d.id, level.id).entities) == 1
+  end
+
+  test "select-tool click on a bare tile cell binds-and-selects a tile entity", %{
+    conn: conn,
+    designer: d,
+    map: map,
+    level: level
+  } do
+    [layer] = Maps.list_layers(map.id)
+
+    {:ok, _} =
+      Maps.update_layer_tiles(layer, %{
+        "5,5" => %{"asset_id" => 7, "tile_index" => 2, "rotation" => 0}
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+    render_click(view, "cell", %{"x" => "5", "y" => "5"})
+
+    [e] = Levels.get_level!(d.id, level.id).entities
+    assert e.entity_type.visual_ref == %{
+             "kind" => "tile",
+             "asset_id" => 7,
+             "tile_index" => 2,
+             "rotation" => 0
+           }
+
+    assert e.pos_x == 5 * 32
+    assert e.pos_y == 5 * 32
+  end
+
+  test "delete tool removes the entity at the clicked cell", %{
+    conn: conn,
+    designer: d,
+    level: level
+  } do
+    {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+    render_click(view, "preset", %{"preset" => "sign"})
+    render_click(view, "cell", %{"x" => "2", "y" => "2"})
+
+    [_e] = Levels.get_level!(d.id, level.id).entities
+
+    render_click(view, "tool", %{"tool" => "delete"})
+    render_click(view, "cell", %{"x" => "2", "y" => "2"})
 
     assert Levels.get_level!(d.id, level.id).entities == []
   end

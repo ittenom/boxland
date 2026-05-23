@@ -6,6 +6,7 @@ defmodule BoxlandWeb.LevelEditorLive do
   alias Boxland.Levels.LevelEntity
 
   @cell_px 32
+  @tools ~w(select place delete)
 
   def mount(%{"id" => id}, _session, socket) do
     designer = socket.assigns.current_designer
@@ -17,6 +18,7 @@ defmodule BoxlandWeb.LevelEditorLive do
      |> assign(:tilesets, Library.list_tilesets(designer.id))
      |> assign(:sprites, list_sprites(designer.id))
      |> assign(:groups, list_groups(level))
+     |> assign(:tool, "select")
      |> assign(:palette_mode, "preset")
      |> assign(:preset, "spawn")
      |> assign(:selected_tile, nil)
@@ -28,14 +30,30 @@ defmodule BoxlandWeb.LevelEditorLive do
      |> assign(:publish_error, nil)}
   end
 
+  # === Tool events ===
+
+  def handle_event("tool", %{"tool" => tool}, socket) when tool in @tools do
+    socket =
+      socket
+      |> assign(:tool, tool)
+      |> maybe_clear_selection_for_tool(tool)
+
+    {:noreply, socket}
+  end
+
   # === Palette events ===
 
   def handle_event("palette_mode", %{"mode" => mode}, socket) do
-    {:noreply, assign(socket, :palette_mode, mode)}
+    # Picking from the palette implies you want to place — switch tools.
+    {:noreply, socket |> assign(:palette_mode, mode) |> assign(:tool, "place")}
   end
 
   def handle_event("preset", %{"preset" => preset}, socket) do
-    {:noreply, socket |> assign(:preset, preset) |> assign(:palette_mode, "preset")}
+    {:noreply,
+     socket
+     |> assign(:preset, preset)
+     |> assign(:palette_mode, "preset")
+     |> assign(:tool, "place")}
   end
 
   def handle_event("pick_tile", %{"asset_id" => asset_id, "index" => index}, socket) do
@@ -45,19 +63,24 @@ defmodule BoxlandWeb.LevelEditorLive do
        "asset_id" => String.to_integer(asset_id),
        "tile_index" => String.to_integer(index)
      })
-     |> assign(:palette_mode, "tile")}
+     |> assign(:palette_mode, "tile")
+     |> assign(:tool, "place")}
   end
 
   def handle_event("pick_sprite", %{"asset_id" => asset_id}, socket) do
     {:noreply,
      socket
      |> assign(:selected_sprite_id, String.to_integer(asset_id))
-     |> assign(:palette_mode, "sprite")}
+     |> assign(:palette_mode, "sprite")
+     |> assign(:tool, "place")}
   end
 
   def handle_event("pick_group", %{"group_id" => gid}, socket) do
     {:noreply,
-     socket |> assign(:selected_group_id, gid) |> assign(:palette_mode, "group")}
+     socket
+     |> assign(:selected_group_id, gid)
+     |> assign(:palette_mode, "group")
+     |> assign(:tool, "place")}
   end
 
   def handle_event("set_invisible_size", %{"w" => w, "h" => h}, socket) do
@@ -74,21 +97,14 @@ defmodule BoxlandWeb.LevelEditorLive do
 
   # === Canvas events ===
 
-  def handle_event("place", %{"x" => x, "y" => y}, socket) do
-    designer = socket.assigns.current_designer
-    level = socket.assigns.level
+  def handle_event("cell", %{"x" => x, "y" => y}, socket) do
     cell_x = String.to_integer(x)
     cell_y = String.to_integer(y)
 
-    case place_from_palette(socket, designer, level, cell_x, cell_y) do
-      {:ok, entity} ->
-        {:noreply,
-         socket
-         |> refresh_level()
-         |> assign(:selected_entity_id, entity.id)}
-
-      {:error, reason} ->
-        {:noreply, put_flash(socket, :error, format_place_error(reason))}
+    case socket.assigns.tool do
+      "select" -> handle_cell_select(socket, cell_x, cell_y)
+      "place" -> handle_cell_place(socket, cell_x, cell_y)
+      "delete" -> handle_cell_delete(socket, cell_x, cell_y)
     end
   end
 
@@ -245,6 +261,77 @@ defmodule BoxlandWeb.LevelEditorLive do
 
       {:error, changeset} ->
         {:noreply, assign(socket, :publish_error, inspect(changeset.errors))}
+    end
+  end
+
+  # === Cell-click dispatch helpers ===
+
+  defp handle_cell_place(socket, x, y) do
+    designer = socket.assigns.current_designer
+    level = socket.assigns.level
+
+    case place_from_palette(socket, designer, level, x, y) do
+      {:ok, entity} ->
+        {:noreply,
+         socket
+         |> refresh_level()
+         |> assign(:selected_entity_id, entity.id)}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, format_place_error(reason))}
+    end
+  end
+
+  defp handle_cell_select(socket, x, y) do
+    designer = socket.assigns.current_designer
+    level = socket.assigns.level
+
+    cond do
+      (entity = topmost_entity_at(level, x, y)) ->
+        {:noreply, assign(socket, :selected_entity_id, entity.id)}
+
+      (gid = group_id_at(level.map, x, y)) ->
+        case ensure_group_entity(designer, level, gid) do
+          {:ok, entity} ->
+            {:noreply,
+             socket
+             |> refresh_level()
+             |> assign(:selected_entity_id, entity.id)}
+
+          {:error, _} ->
+            {:noreply, put_flash(socket, :error, "Could not bind group to entity.")}
+        end
+
+      (tile = tile_at_on_visible(level.map, x, y)) ->
+        case ensure_tile_entity(designer, level, tile, x, y) do
+          {:ok, entity} ->
+            {:noreply,
+             socket
+             |> refresh_level()
+             |> assign(:selected_entity_id, entity.id)}
+
+          {:error, _} ->
+            {:noreply, put_flash(socket, :error, "Could not bind tile to entity.")}
+        end
+
+      true ->
+        {:noreply, assign(socket, :selected_entity_id, nil)}
+    end
+  end
+
+  defp handle_cell_delete(socket, x, y) do
+    case topmost_entity_at(socket.assigns.level, x, y) do
+      nil ->
+        {:noreply, socket}
+
+      entity ->
+        designer = socket.assigns.current_designer
+        _ = Levels.delete_entity(designer.id, socket.assigns.level.id, entity.id)
+
+        {:noreply,
+         socket
+         |> refresh_level()
+         |> assign(:selected_entity_id, nil)}
     end
   end
 
@@ -444,6 +531,126 @@ defmodule BoxlandWeb.LevelEditorLive do
     |> Enum.uniq()
   end
 
+  defp topmost_entity_at(level, x, y) do
+    level.entities
+    |> Enum.filter(&entity_covers_cell?(&1, level.map.layers, x, y))
+    |> Enum.sort_by(&-entity_z(&1))
+    |> List.first()
+  end
+
+  defp entity_covers_cell?(entity, layers, x, y) do
+    case group_cells_of(entity, layers) do
+      [_ | _] = cells ->
+        Enum.any?(cells, fn {gx, gy} -> gx == x and gy == y end)
+
+      [] ->
+        ex = div(entity.pos_x, @cell_px)
+        ey = div(entity.pos_y, @cell_px)
+        {w, h} = entity_footprint(entity)
+        x >= ex and x < ex + w and y >= ey and y < ey + h
+    end
+  end
+
+  defp entity_footprint(entity) do
+    base =
+      (entity.instance_overrides || %{})
+      |> Map.get("size", entity.entity_type.size || %{"w" => 1, "h" => 1})
+
+    {Map.get(base, "w", 1), Map.get(base, "h", 1)}
+  end
+
+  defp group_cells_of(%LevelEntity{group_id: nil}, _layers), do: []
+
+  defp group_cells_of(%LevelEntity{group_id: gid}, layers) when is_list(layers) do
+    for layer <- layers,
+        {k, tile} <- layer.tiles,
+        tile["group_id"] == gid do
+      Maps.parse_key(k)
+    end
+  end
+
+  defp group_cells_of(_, _), do: []
+
+  defp entity_z(entity), do: entity.z_index_override || entity.entity_type.default_z_index
+
+  defp group_id_at(map, x, y) do
+    map.layers
+    |> Enum.filter(& &1.visible)
+    |> Enum.sort_by(&(-&1.z_index))
+    |> Enum.find_value(fn layer ->
+      case Maps.tile_at(layer.tiles, x, y) do
+        %{"group_id" => gid} when is_binary(gid) -> gid
+        _ -> nil
+      end
+    end)
+  end
+
+  defp tile_at_on_visible(map, x, y) do
+    map.layers
+    |> Enum.filter(& &1.visible)
+    |> Enum.sort_by(&(-&1.z_index))
+    |> Enum.find_value(fn layer ->
+      case Maps.tile_at(layer.tiles, x, y) do
+        %{"asset_id" => _, "tile_index" => _} = tile -> {layer, tile}
+        _ -> nil
+      end
+    end)
+  end
+
+  defp ensure_group_entity(designer, level, group_id) do
+    case Enum.find(level.entities, &(&1.group_id == group_id)) do
+      nil ->
+        {:ok, type} = Levels.ensure_entity_type_for(designer.id, {:group, group_id})
+
+        {:ok, e} =
+          Levels.spawn_entity(designer.id, level.id, %{
+            "entity_type_id" => type.id,
+            "pos_x" => 0,
+            "pos_y" => 0
+          })
+
+        Levels.bind_group(designer.id, level.id, e.id, group_id)
+
+      existing ->
+        {:ok, existing}
+    end
+  end
+
+  defp ensure_tile_entity(designer, level, {layer, tile}, x, y) do
+    asset_id = tile["asset_id"]
+    tile_index = tile["tile_index"]
+
+    existing =
+      Enum.find(level.entities, fn e ->
+        ref = e.entity_type.visual_ref || %{}
+
+        ref["kind"] == "tile" and
+          ref["asset_id"] == asset_id and
+          ref["tile_index"] == tile_index and
+          div(e.pos_x, @cell_px) == x and
+          div(e.pos_y, @cell_px) == y
+      end)
+
+    case existing do
+      nil ->
+        {:ok, type} =
+          Levels.ensure_entity_type_for(designer.id, {:tile, asset_id, tile_index})
+
+        Levels.spawn_entity(designer.id, level.id, %{
+          "entity_type_id" => type.id,
+          "pos_x" => x * @cell_px,
+          "pos_y" => y * @cell_px,
+          "z_index_override" => layer.z_index
+        })
+
+      e ->
+        {:ok, e}
+    end
+  end
+
+  defp maybe_clear_selection_for_tool(socket, "place"), do: assign(socket, :selected_entity_id, nil)
+  defp maybe_clear_selection_for_tool(socket, _), do: socket
+
   defp selected_entity(socket) do
     id = socket.assigns.selected_entity_id
     if id, do: Enum.find(socket.assigns.level.entities, &(&1.id == id))
@@ -502,6 +709,12 @@ defmodule BoxlandWeb.LevelEditorLive do
         </div>
 
         <div :if={@publish_error} class="alert alert-error">{@publish_error}</div>
+
+        <div id="level-toolbar" class="flex flex-wrap gap-2">
+          <.tool_button icon="hero-cursor-arrow-rays" label="V" tool="select" active={@tool == "select"} />
+          <.tool_button icon="hero-pencil" label="P" tool="place" active={@tool == "place"} />
+          <.tool_button icon="hero-x-mark" label="X" tool="delete" active={@tool == "delete"} />
+        </div>
 
         <div class="grid gap-4 lg:grid-cols-[14rem_1fr_20rem]">
           <.palette
@@ -684,6 +897,24 @@ defmodule BoxlandWeb.LevelEditorLive do
     """
   end
 
+  attr :icon, :string, required: true
+  attr :label, :string, required: true
+  attr :tool, :string, required: true
+  attr :active, :boolean, required: true
+
+  defp tool_button(assigns) do
+    ~H"""
+    <button
+      id={"level-tool-#{@tool}"}
+      phx-click="tool"
+      phx-value-tool={@tool}
+      class={["btn btn-sm", @active && "btn-primary"]}
+    >
+      <.icon name={@icon} class="size-4" /> {@label}
+    </button>
+    """
+  end
+
   attr :level, :any
   attr :layers, :list
   attr :tilesets, :list
@@ -703,7 +934,7 @@ defmodule BoxlandWeb.LevelEditorLive do
         <button
           :for={{x, y} <- cells(@level.map.width, @level.map.height)}
           id={"level-cell-#{x}-#{y}"}
-          phx-click="place"
+          phx-click="cell"
           phx-value-x={x}
           phx-value-y={y}
           class="relative h-8 w-8 border border-base-300 bg-base-100"
@@ -715,13 +946,11 @@ defmodule BoxlandWeb.LevelEditorLive do
           />
         </button>
 
-        <button
+        <div
           :for={entity <- @level.entities}
           id={"level-entity-#{entity.id}"}
-          phx-click="select_entity"
-          phx-value-id={entity.id}
           class={[
-            "absolute z-10 flex items-center justify-center border text-[10px] font-bold",
+            "pointer-events-none absolute z-10 flex items-center justify-center border text-[10px] font-bold",
             entity_color_class(entity),
             entity.id == @selected_entity_id && "ring-2 ring-accent"
           ]}
@@ -729,7 +958,7 @@ defmodule BoxlandWeb.LevelEditorLive do
           aria-label={"entity #{entity.id}"}
         >
           {entity_label(entity)}
-        </button>
+        </div>
       </div>
     </div>
     """
