@@ -325,6 +325,96 @@ defmodule BoxlandWeb.MapmakerLiveTest do
       assert Map.has_key?(ground.tiles, "4,3")
     end
 
+    test "selection_group tags every tile in the rect with the same group_id",
+         %{conn: conn, map: map, ground: ground} do
+      {:ok, view, _html} = live(conn, ~p"/app/maps/#{map.id}")
+
+      render_hook(view, "select_area_drag", %{"x1" => 1, "y1" => 1, "x2" => 2, "y2" => 1})
+      render_click(view, "selection_group")
+
+      [ground] = Maps.list_layers(map.id) |> Enum.filter(&(&1.id == ground.id))
+      gid1 = ground.tiles["1,1"]["group_id"]
+      gid2 = ground.tiles["2,1"]["group_id"]
+
+      assert is_binary(gid1)
+      assert gid1 == gid2
+    end
+
+    test "selection_ungroup clears group_id from every group member",
+         %{conn: conn, map: map, ground: ground} do
+      {:ok, view, _html} = live(conn, ~p"/app/maps/#{map.id}")
+
+      render_hook(view, "select_area_drag", %{"x1" => 1, "y1" => 1, "x2" => 2, "y2" => 1})
+      render_click(view, "selection_group")
+      render_click(view, "selection_ungroup")
+
+      [ground] = Maps.list_layers(map.id) |> Enum.filter(&(&1.id == ground.id))
+      refute Map.has_key?(ground.tiles["1,1"], "group_id")
+      refute Map.has_key?(ground.tiles["2,1"], "group_id")
+    end
+
+    test "deleting any cell of a group removes the whole group across layers",
+         %{conn: conn, map: map, ground: ground, tileset: tileset} do
+      {:ok, view, _html} = live(conn, ~p"/app/maps/#{map.id}")
+      # Add a second layer and paint a tile on it that lives within the same
+      # rect we'll use to group, so the single selection_group call creates a
+      # cross-layer group in one shot.
+      render_click(view, "add_layer")
+      [_, upper] = Maps.list_layers(map.id) |> Enum.sort_by(& &1.z_index)
+      {:ok, _} =
+        Maps.update_layer_tiles(
+          upper,
+          Maps.put_tile(%{}, 2, 1, %{asset_id: tileset.id, tile_index: 0, rotation: 0})
+        )
+
+      # Drop the layer's visibility off and back on — that's our cheap way to
+      # force the LiveView's in-memory map to refresh.
+      render_click(view, "toggle_visibility", %{"id" => to_string(upper.id)})
+      render_click(view, "toggle_visibility", %{"id" => to_string(upper.id)})
+
+      # Group via a rect that spans ground (1,1) and (2,1) plus upper (2,1).
+      render_click(view, "select_layer", %{"id" => to_string(ground.id)})
+      render_hook(view, "select_area_drag", %{"x1" => 1, "y1" => 1, "x2" => 2, "y2" => 1})
+      render_click(view, "selection_group")
+
+      # Click only (1,1) and delete.
+      render_hook(view, "select_area_drag", %{"x1" => 1, "y1" => 1, "x2" => 1, "y2" => 1})
+      render_click(view, "selection_delete")
+
+      layers = Maps.list_layers(map.id)
+      ground_after = Enum.find(layers, &(&1.id == ground.id))
+      upper_after = Enum.find(layers, &(&1.id == upper.id))
+
+      # The whole cross-layer group is gone.
+      refute Map.has_key?(ground_after.tiles, "1,1")
+      refute Map.has_key?(ground_after.tiles, "2,1")
+      refute Map.has_key?(upper_after.tiles, "2,1")
+    end
+
+    test "copying a grouped tile copies every group member",
+         %{conn: conn, map: map} do
+      {:ok, view, _html} = live(conn, ~p"/app/maps/#{map.id}")
+
+      # Group both ground tiles.
+      render_hook(view, "select_area_drag", %{"x1" => 1, "y1" => 1, "x2" => 2, "y2" => 1})
+      render_click(view, "selection_group")
+
+      # Click a single cell containing one member, then Copy.
+      render_hook(view, "select_area_drag", %{"x1" => 1, "y1" => 1, "x2" => 1, "y2" => 1})
+      render_click(view, "selection_copy")
+
+      # Clipboard should hold BOTH group members.
+      html = render(view)
+      assert html =~ ~s|id="clone-ghost"| or html =~ "select_area"  # render OK
+      # State check via render_hook to expose internals isn't direct;
+      # paste it and verify the destination gains both cells.
+      render_click(view, "cell", %{"x" => "3", "y" => "3"})
+
+      [ground] = Maps.list_layers(map.id) |> Enum.filter(& &1.name == "ground")
+      assert Map.has_key?(ground.tiles, "3,3")
+      assert Map.has_key?(ground.tiles, "4,3")
+    end
+
     test "moving past the map edge is refused",
          %{conn: conn, map: map} do
       {:ok, view, _html} = live(conn, ~p"/app/maps/#{map.id}")

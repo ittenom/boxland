@@ -328,6 +328,305 @@ defmodule Boxland.Maps do
 
   def key(x, y), do: "#{x},#{y}"
 
+  def parse_key(s) do
+    [x, y] = s |> String.split(",", parts: 2) |> Enum.map(&String.to_integer/1)
+    {x, y}
+  end
+
+  # === Group operations ===
+
+  @doc "Returns every `{layer_id, x, y, tile}` tuple belonging to `group_id`."
+  def find_group_members(%Map{layers: layers}, group_id) when is_binary(group_id) do
+    for layer <- layers,
+        {k, tile} <- layer.tiles,
+        tile["group_id"] == group_id do
+      {x, y} = parse_key(k)
+      {layer.id, x, y, tile}
+    end
+  end
+
+  @doc """
+  Distinct group_ids present at any of the given `(x, y)` cells.
+  `visible_only: true` (default) limits the search to visible layers.
+  """
+  def group_ids_at_cells(%Map{layers: layers}, cells, opts \\ []) when is_list(cells) do
+    visible_only? = Keyword.get(opts, :visible_only, true)
+    cell_set = MapSet.new(cells)
+    scoped = if visible_only?, do: Enum.filter(layers, & &1.visible), else: layers
+
+    for layer <- scoped,
+        {k, tile} <- layer.tiles,
+        gid = tile["group_id"],
+        is_binary(gid),
+        MapSet.member?(cell_set, parse_key(k)),
+        uniq: true,
+        do: gid
+  end
+
+  @doc """
+  Group all tiles currently sitting at `cells` (across visible layers) under a
+  fresh group_id. If any of those tiles already carry a group_id, that whole
+  group is folded into the new one — overlapping groups merge.
+
+  Returns `{:ok, new_group_id}`.
+  """
+  def group_cells(%Map{} = map, cells) when is_list(cells) do
+    cell_set = MapSet.new(cells)
+    overlapping = group_ids_at_cells(map, cells)
+    new_gid = generate_group_id()
+
+    Repo.transaction(fn ->
+      Enum.each(map.layers, fn layer ->
+        new_tiles =
+          Enum.reduce(layer.tiles, %{}, fn {k, tile}, acc ->
+            {x, y} = parse_key(k)
+
+            new_tile =
+              cond do
+                MapSet.member?(cell_set, {x, y}) and layer.visible ->
+                  Elixir.Map.put(tile, "group_id", new_gid)
+
+                tile["group_id"] in overlapping ->
+                  Elixir.Map.put(tile, "group_id", new_gid)
+
+                true ->
+                  tile
+              end
+
+            Elixir.Map.put(acc, k, new_tile)
+          end)
+
+        if new_tiles != layer.tiles do
+          {:ok, _} = update_layer_tiles(layer, new_tiles)
+        end
+      end)
+
+      new_gid
+    end)
+  end
+
+  @doc """
+  Clear group_id from every tile whose group_id matches a group that has
+  members at any of `cells`. Returns `{:ok, removed_group_ids}`.
+  """
+  def ungroup_cells(%Map{} = map, cells) when is_list(cells) do
+    targets = group_ids_at_cells(map, cells)
+
+    if targets == [] do
+      {:ok, []}
+    else
+      Repo.transaction(fn ->
+        Enum.each(map.layers, fn layer ->
+          new_tiles =
+            Enum.reduce(layer.tiles, %{}, fn {k, tile}, acc ->
+              new_tile =
+                if tile["group_id"] in targets,
+                  do: Elixir.Map.delete(tile, "group_id"),
+                  else: tile
+
+              Elixir.Map.put(acc, k, new_tile)
+            end)
+
+          if new_tiles != layer.tiles do
+            {:ok, _} = update_layer_tiles(layer, new_tiles)
+          end
+        end)
+
+        targets
+      end)
+    end
+  end
+
+  defp generate_group_id do
+    :crypto.strong_rand_bytes(8) |> Base.url_encode64(padding: false)
+  end
+
+  # === Effective-cells expansion ===
+
+  @doc """
+  Expand a list of rect cells (on the active layer) into the full set of
+  `{layer_id, x, y, tile}` records the operation should affect. Always
+  includes existing tiles in the rect on `active_layer_id`; also pulls in
+  every group member (any visible layer) for groups touched by the rect.
+  """
+  def effective_block(%Map{} = map, rect_cells, active_layer_id) when is_list(rect_cells) do
+    active = Enum.find(map.layers, &(&1.id == active_layer_id))
+
+    rect_part =
+      if active do
+        Enum.flat_map(rect_cells, fn {x, y} ->
+          case active.tiles[key(x, y)] do
+            nil -> []
+            tile -> [{active.id, x, y, tile}]
+          end
+        end)
+      else
+        []
+      end
+
+    group_ids = group_ids_at_cells(map, rect_cells)
+    group_part = Enum.flat_map(group_ids, &find_group_members(map, &1))
+
+    (rect_part ++ group_part) |> Enum.uniq_by(fn {lid, x, y, _t} -> {lid, x, y} end)
+  end
+
+  @doc """
+  Delete every tile in the given `{layer_id, x, y}` list. Returns
+  `{:ok, %{layer_id => {previous_tiles, updated_layer}}}`. Atomic.
+  """
+  def delete_cells_across_layers(%Map{} = map, cells_with_layers)
+      when is_list(cells_with_layers) do
+    by_layer = Enum.group_by(cells_with_layers, fn {lid, _x, _y, _t} -> lid end)
+
+    Repo.transaction(fn ->
+      Enum.reduce(by_layer, %{}, fn {lid, items}, acc ->
+        layer = Enum.find(map.layers, &(&1.id == lid))
+
+        if layer do
+          new_tiles =
+            Enum.reduce(items, layer.tiles, fn {_, x, y, _}, t ->
+              Elixir.Map.delete(t, key(x, y))
+            end)
+
+          if new_tiles == layer.tiles do
+            Elixir.Map.put(acc, lid, {layer.tiles, layer})
+          else
+            case update_layer_tiles(layer, new_tiles) do
+              {:ok, updated} -> Elixir.Map.put(acc, lid, {layer.tiles, updated})
+              {:error, reason} -> Repo.rollback(reason)
+            end
+          end
+        else
+          acc
+        end
+      end)
+    end)
+  end
+
+  @doc """
+  Rotate a block of `{layer_id, x, y, tile}` records 90° clockwise around the
+  block's top-left, possibly spanning layers. Each tile is moved to its
+  rotated cell on the same layer it came from; per-tile `rotation` advances
+  by 90°.
+
+  Returns `{:ok, {updates, new_bbox}}` where `updates` is the same shape as
+  `place_block`'s and `new_bbox` is `%{x1, y1, x2, y2}` for the rotated
+  bounding box. Refuses with `{:error, :out_of_bounds}` if the rotated bbox
+  would leave the map.
+  """
+  def rotate_block_across_layers(%Map{} = map, records, %{} = bbox, map_width, map_height)
+      when is_list(records) do
+    %{x1: x1, y1: y1, x2: x2, y2: y2} = bbox
+    w = x2 - x1 + 1
+    h = y2 - y1 + 1
+    new_x2 = x1 + h - 1
+    new_y2 = y1 + w - 1
+
+    cond do
+      new_x2 >= map_width or new_y2 >= map_height or x1 < 0 or y1 < 0 ->
+        {:error, :out_of_bounds}
+
+      records == [] ->
+        {:ok, {%{}, %{x1: x1, y1: y1, x2: new_x2, y2: new_y2}}}
+
+      true ->
+        by_layer = Enum.group_by(records, fn {lid, _, _, _} -> lid end)
+
+        Repo.transaction(fn ->
+          updates =
+            Enum.reduce(by_layer, %{}, fn {lid, recs}, acc ->
+              layer = Enum.find(map.layers, &(&1.id == lid))
+
+              cond do
+                is_nil(layer) ->
+                  acc
+
+                not (layer.visible and not layer.locked) ->
+                  Repo.rollback(:layer_not_editable)
+
+                true ->
+                  source_keys = Enum.map(recs, fn {_, x, y, _} -> key(x, y) end)
+
+                  cleared =
+                    Enum.reduce(source_keys, layer.tiles, fn k, t ->
+                      Elixir.Map.delete(t, k)
+                    end)
+
+                  placed =
+                    Enum.reduce(recs, cleared, fn {_, x, y, tile}, t ->
+                      dx = x - x1
+                      dy = y - y1
+                      new_x = x1 + (h - 1 - dy)
+                      new_y = y1 + dx
+                      rotated = Elixir.Map.update(tile, "rotation", 90, &rem(&1 + 90, 360))
+                      Elixir.Map.put(t, key(new_x, new_y), rotated)
+                    end)
+
+                  if placed == layer.tiles do
+                    Elixir.Map.put(acc, lid, {layer.tiles, layer})
+                  else
+                    case update_layer_tiles(layer, placed) do
+                      {:ok, updated} -> Elixir.Map.put(acc, lid, {layer.tiles, updated})
+                      {:error, reason} -> Repo.rollback(reason)
+                    end
+                  end
+              end
+            end)
+
+          {updates, %{x1: x1, y1: y1, x2: new_x2, y2: new_y2}}
+        end)
+    end
+  end
+
+  @doc """
+  Place a clipboard's records onto the map relative to `{anchor_x, anchor_y}`.
+  Each record carries its `:layer_id`; if that layer no longer exists, the
+  fallback layer id is used. Returns `{:ok, %{layer_id => {previous, updated}}}`.
+  """
+  def place_block(
+        %Map{} = map,
+        records,
+        {anchor_x, anchor_y},
+        fallback_layer_id
+      )
+      when is_list(records) do
+    by_layer =
+      Enum.group_by(records, fn rec ->
+        if Enum.any?(map.layers, &(&1.id == rec.layer_id)),
+          do: rec.layer_id,
+          else: fallback_layer_id
+      end)
+
+    Repo.transaction(fn ->
+      Enum.reduce(by_layer, %{}, fn {lid, recs}, acc ->
+        layer = Enum.find(map.layers, &(&1.id == lid))
+
+        cond do
+          is_nil(layer) ->
+            acc
+
+          not (layer.visible and not layer.locked) ->
+            Repo.rollback(:layer_not_editable)
+
+          true ->
+            new_tiles =
+              Enum.reduce(recs, layer.tiles, fn rec, t ->
+                Elixir.Map.put(t, key(anchor_x + rec.dx, anchor_y + rec.dy), rec.tile)
+              end)
+
+            if new_tiles == layer.tiles do
+              Elixir.Map.put(acc, lid, {layer.tiles, layer})
+            else
+              case update_layer_tiles(layer, new_tiles) do
+                {:ok, updated} -> Elixir.Map.put(acc, lid, {layer.tiles, updated})
+                {:error, reason} -> Repo.rollback(reason)
+              end
+            end
+        end
+      end)
+    end)
+  end
+
   defp stringify_tile(tile) do
     %{
       "asset_id" => tile.asset_id,
