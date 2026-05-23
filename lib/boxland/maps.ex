@@ -347,12 +347,17 @@ defmodule Boxland.Maps do
 
   @doc """
   Distinct group_ids present at any of the given `(x, y)` cells.
-  `visible_only: true` (default) limits the search to visible layers.
+  `editable_only: true` (default) limits the search to visible, unlocked
+  layers. `editable_only: false` returns groups from any layer.
   """
   def group_ids_at_cells(%Map{layers: layers}, cells, opts \\ []) when is_list(cells) do
-    visible_only? = Keyword.get(opts, :visible_only, true)
+    editable_only? = Keyword.get(opts, :editable_only, true)
     cell_set = MapSet.new(cells)
-    scoped = if visible_only?, do: Enum.filter(layers, & &1.visible), else: layers
+
+    scoped =
+      if editable_only?,
+        do: Enum.filter(layers, &(&1.visible and not &1.locked)),
+        else: layers
 
     for layer <- scoped,
         {k, tile} <- layer.tiles,
@@ -383,10 +388,10 @@ defmodule Boxland.Maps do
 
             new_tile =
               cond do
-                MapSet.member?(cell_set, {x, y}) and layer.visible ->
+                MapSet.member?(cell_set, {x, y}) and layer.visible and not layer.locked ->
                   Elixir.Map.put(tile, "group_id", new_gid)
 
-                tile["group_id"] in overlapping ->
+                tile["group_id"] in overlapping and layer.visible and not layer.locked ->
                   Elixir.Map.put(tile, "group_id", new_gid)
 
                 true ->
@@ -417,18 +422,20 @@ defmodule Boxland.Maps do
     else
       Repo.transaction(fn ->
         Enum.each(map.layers, fn layer ->
-          new_tiles =
-            Enum.reduce(layer.tiles, %{}, fn {k, tile}, acc ->
-              new_tile =
-                if tile["group_id"] in targets,
-                  do: Elixir.Map.delete(tile, "group_id"),
-                  else: tile
+          if layer.visible and not layer.locked do
+            new_tiles =
+              Enum.reduce(layer.tiles, %{}, fn {k, tile}, acc ->
+                new_tile =
+                  if tile["group_id"] in targets,
+                    do: Elixir.Map.delete(tile, "group_id"),
+                    else: tile
 
-              Elixir.Map.put(acc, k, new_tile)
-            end)
+                Elixir.Map.put(acc, k, new_tile)
+              end)
 
-          if new_tiles != layer.tiles do
-            {:ok, _} = update_layer_tiles(layer, new_tiles)
+            if new_tiles != layer.tiles do
+              {:ok, _} = update_layer_tiles(layer, new_tiles)
+            end
           end
         end)
 
@@ -444,28 +451,38 @@ defmodule Boxland.Maps do
   # === Effective-cells expansion ===
 
   @doc """
-  Expand a list of rect cells (on the active layer) into the full set of
-  `{layer_id, x, y, tile}` records the operation should affect. Always
-  includes existing tiles in the rect on `active_layer_id`; also pulls in
-  every group member (any visible layer) for groups touched by the rect.
+  Expand a list of rect cells into the full set of `{layer_id, x, y, tile}`
+  records the operation should affect:
+
+    * every existing tile in the rect on any **visible, unlocked** layer; plus
+    * every group member on a visible, unlocked layer (for groups touched by
+      the rect).
+
+  Hidden or locked layers are excluded. Toggling visibility or locking is the
+  user's scoping mechanism — a locked layer's tiles deselect automatically.
   """
-  def effective_block(%Map{} = map, rect_cells, active_layer_id) when is_list(rect_cells) do
-    active = Enum.find(map.layers, &(&1.id == active_layer_id))
+  def effective_block(%Map{} = map, rect_cells, _ignored \\ nil) when is_list(rect_cells) do
+    editable = fn lid ->
+      l = Enum.find(map.layers, &(&1.id == lid))
+      l && l.visible && not l.locked
+    end
+
+    editable_layers = Enum.filter(map.layers, &(&1.visible and not &1.locked))
 
     rect_part =
-      if active do
-        Enum.flat_map(rect_cells, fn {x, y} ->
-          case active.tiles[key(x, y)] do
-            nil -> []
-            tile -> [{active.id, x, y, tile}]
-          end
-        end)
-      else
-        []
+      for layer <- editable_layers,
+          {x, y} <- rect_cells,
+          tile = layer.tiles[key(x, y)],
+          not is_nil(tile) do
+        {layer.id, x, y, tile}
       end
 
     group_ids = group_ids_at_cells(map, rect_cells)
-    group_part = Enum.flat_map(group_ids, &find_group_members(map, &1))
+
+    group_part =
+      group_ids
+      |> Enum.flat_map(&find_group_members(map, &1))
+      |> Enum.filter(fn {lid, _x, _y, _t} -> editable.(lid) end)
 
     (rect_part ++ group_part) |> Enum.uniq_by(fn {lid, x, y, _t} -> {lid, x, y} end)
   end

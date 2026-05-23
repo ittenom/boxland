@@ -325,6 +325,105 @@ defmodule BoxlandWeb.MapmakerLiveTest do
       assert Map.has_key?(ground.tiles, "4,3")
     end
 
+    test "selection_delete reaches across all visible layers within the rect",
+         %{conn: conn, map: map, ground: ground, tileset: tileset} do
+      {:ok, view, _html} = live(conn, ~p"/app/maps/#{map.id}")
+      render_click(view, "add_layer")
+      [_, upper] = Maps.list_layers(map.id) |> Enum.sort_by(& &1.z_index)
+
+      {:ok, _} =
+        Maps.update_layer_tiles(
+          upper,
+          Maps.put_tile(%{}, 2, 1, %{asset_id: tileset.id, tile_index: 0, rotation: 0})
+        )
+
+      # Refresh LV's map
+      render_click(view, "toggle_visibility", %{"id" => to_string(upper.id)})
+      render_click(view, "toggle_visibility", %{"id" => to_string(upper.id)})
+
+      # Active layer is "ground" but selection should affect both layers.
+      render_click(view, "select_layer", %{"id" => to_string(ground.id)})
+      render_hook(view, "select_area_drag", %{"x1" => 1, "y1" => 1, "x2" => 2, "y2" => 1})
+      render_click(view, "selection_delete")
+
+      [ground_after, upper_after] =
+        Maps.list_layers(map.id) |> Enum.sort_by(& &1.z_index)
+
+      refute Map.has_key?(ground_after.tiles, "1,1")
+      refute Map.has_key?(ground_after.tiles, "2,1")
+      refute Map.has_key?(upper_after.tiles, "2,1")
+    end
+
+    test "selection skips hidden layers — they are not affected",
+         %{conn: conn, map: map, ground: ground, tileset: tileset} do
+      {:ok, view, _html} = live(conn, ~p"/app/maps/#{map.id}")
+      render_click(view, "add_layer")
+      [_, upper] = Maps.list_layers(map.id) |> Enum.sort_by(& &1.z_index)
+
+      {:ok, _} =
+        Maps.update_layer_tiles(
+          upper,
+          Maps.put_tile(%{}, 2, 1, %{asset_id: tileset.id, tile_index: 0, rotation: 0})
+        )
+
+      # Hide upper.
+      render_click(view, "toggle_visibility", %{"id" => to_string(upper.id)})
+
+      render_click(view, "select_layer", %{"id" => to_string(ground.id)})
+      render_hook(view, "select_area_drag", %{"x1" => 1, "y1" => 1, "x2" => 2, "y2" => 1})
+      render_click(view, "selection_delete")
+
+      [ground_after, upper_after] =
+        Maps.list_layers(map.id) |> Enum.sort_by(& &1.z_index)
+
+      refute Map.has_key?(ground_after.tiles, "1,1")
+      refute Map.has_key?(ground_after.tiles, "2,1")
+      # Hidden layer is untouched.
+      assert Map.has_key?(upper_after.tiles, "2,1")
+    end
+
+    test "locking a non-active layer deselects its tiles but keeps others selected",
+         %{conn: conn, map: map, ground: ground, tileset: tileset} do
+      {:ok, view, _html} = live(conn, ~p"/app/maps/#{map.id}")
+      render_click(view, "add_layer")
+      [_, upper] = Maps.list_layers(map.id) |> Enum.sort_by(& &1.z_index)
+
+      {:ok, _} =
+        Maps.update_layer_tiles(
+          upper,
+          Maps.put_tile(%{}, 2, 1, %{asset_id: tileset.id, tile_index: 0, rotation: 0})
+        )
+
+      # Force LV map refresh
+      render_click(view, "toggle_visibility", %{"id" => to_string(upper.id)})
+      render_click(view, "toggle_visibility", %{"id" => to_string(upper.id)})
+
+      # Active = ground; select a rect that spans tiles on both layers.
+      render_click(view, "select_layer", %{"id" => to_string(ground.id)})
+      render_hook(view, "select_area_drag", %{"x1" => 1, "y1" => 1, "x2" => 2, "y2" => 1})
+
+      # Before lock: both layers should appear in the affected set.
+      html = render(view)
+      assert html =~ ~r{id="layer-row-#{ground.id}"[^>]*ring-accent}
+      assert html =~ ~r{id="layer-row-#{upper.id}"[^>]*ring-accent}
+
+      # Lock upper.
+      render_click(view, "toggle_lock", %{"id" => to_string(upper.id)})
+
+      # After lock: upper should drop out of the affected set; ground stays.
+      html = render(view)
+      assert html =~ ~r{id="layer-row-#{ground.id}"[^>]*ring-accent}
+      refute html =~ ~r{id="layer-row-#{upper.id}"[^>]*ring-accent}
+
+      # And a delete should not touch the locked layer.
+      render_click(view, "selection_delete")
+
+      [ground_after, upper_after] = Maps.list_layers(map.id) |> Enum.sort_by(& &1.z_index)
+      refute Map.has_key?(ground_after.tiles, "1,1")
+      refute Map.has_key?(ground_after.tiles, "2,1")
+      assert Map.has_key?(upper_after.tiles, "2,1")
+    end
+
     test "selection_group tags every tile in the rect with the same group_id",
          %{conn: conn, map: map, ground: ground} do
       {:ok, view, _html} = live(conn, ~p"/app/maps/#{map.id}")
@@ -466,6 +565,76 @@ defmodule BoxlandWeb.MapmakerLiveTest do
 
       assert html =~ "No layer above"
     end
+  end
+
+  test "layers panel rings every layer touched by the selection",
+       %{conn: conn, designer: designer, map: map} do
+    # Seed an asset + a second layer with a tile, then create a cross-layer
+    # group so the selection on ground will pull in the upper layer too.
+    {:ok, tileset} =
+      %Boxland.Library.Asset{}
+      |> Boxland.Library.Asset.changeset(%{
+        owner_id: designer.id,
+        kind: "tileset",
+        name: "T",
+        sha256: String.duplicate("b", 64),
+        content_url: "https://example.com/t.png",
+        byte_size: 1,
+        mime_type: "image/png",
+        metadata: %{"columns" => 2, "rows" => 1, "tile_count" => 2}
+      })
+      |> Boxland.Repo.insert()
+
+    [ground] = Maps.list_layers(map.id)
+    tiles =
+      %{}
+      |> Maps.put_tile(1, 1, %{asset_id: tileset.id, tile_index: 0, rotation: 0})
+      |> Maps.put_tile(2, 1, %{asset_id: tileset.id, tile_index: 0, rotation: 0})
+
+    {:ok, _} = Maps.update_layer_tiles(ground, tiles)
+
+    {:ok, view, _html} = live(conn, ~p"/app/maps/#{map.id}")
+    render_click(view, "add_layer")
+    [_, upper] = Maps.list_layers(map.id) |> Enum.sort_by(& &1.z_index)
+
+    {:ok, _} =
+      Maps.update_layer_tiles(
+        upper,
+        Maps.put_tile(%{}, 2, 1, %{asset_id: tileset.id, tile_index: 0, rotation: 0})
+      )
+
+    # Force LV's in-memory map to refresh.
+    render_click(view, "toggle_visibility", %{"id" => to_string(upper.id)})
+    render_click(view, "toggle_visibility", %{"id" => to_string(upper.id)})
+
+    # Group across layers.
+    render_click(view, "select_layer", %{"id" => to_string(ground.id)})
+    render_hook(view, "select_area_drag", %{"x1" => 1, "y1" => 1, "x2" => 2, "y2" => 1})
+    render_click(view, "selection_group")
+
+    # Click a single cell of the group.
+    render_hook(view, "select_area_drag", %{"x1" => 1, "y1" => 1, "x2" => 1, "y2" => 1})
+
+    html = render(view)
+
+    # Both layer rows should carry the accent ring.
+    assert html =~ ~r{id="layer-row-#{ground.id}"[^>]*ring-accent}
+    assert html =~ ~r{id="layer-row-#{upper.id}"[^>]*ring-accent}
+  end
+
+  test "clicking a tile in the palette switches to P and clears the selection",
+       %{conn: conn, map: map} do
+    {:ok, view, _html} = live(conn, ~p"/app/maps/#{map.id}")
+
+    # Get into select_area + make a selection, then click a palette tile.
+    render_click(view, "tool", %{"tool" => "select_area"})
+    render_hook(view, "select_area_drag", %{"x1" => 0, "y1" => 0, "x2" => 1, "y2" => 1})
+
+    html = render_click(view, "select_tile", %{"tile" => "3"})
+
+    # P tool active, selection rect gone.
+    assert html =~ ~r{id="map-tool-place"[^>]*btn-primary}
+    refute html =~ ~r{id="map-cell-0-0"[^>]*ring-primary}
   end
 
   test "set_opacity updates the layer", %{conn: conn, map: map} do

@@ -75,11 +75,24 @@ defmodule BoxlandWeb.MapmakerLive do
   end
 
   def handle_event("select_asset", %{"asset_id" => asset_id}, socket) do
-    {:noreply, assign(socket, selected_asset_id: String.to_integer(asset_id), selected_tile: 0)}
+    {:noreply,
+     socket
+     |> assign(:selected_asset_id, String.to_integer(asset_id))
+     |> assign(:selected_tile, 0)
+     |> assign(:tool, "place")
+     |> assign(:selection, nil)
+     |> assign(:move, nil)
+     |> assign(:cursor_cell, nil)}
   end
 
   def handle_event("select_tile", %{"tile" => tile}, socket) do
-    {:noreply, assign(socket, :selected_tile, String.to_integer(tile))}
+    {:noreply,
+     socket
+     |> assign(:selected_tile, String.to_integer(tile))
+     |> assign(:tool, "place")
+     |> assign(:selection, nil)
+     |> assign(:move, nil)
+     |> assign(:cursor_cell, nil)}
   end
 
   def handle_event("copy_selection", _params, socket) do
@@ -331,7 +344,12 @@ defmodule BoxlandWeb.MapmakerLive do
 
   def render(assigns) do
     highlighted = highlighted_cells(assigns.map, assigns.selection)
-    assigns = assign(assigns, :highlighted_cells, highlighted)
+    affected = affected_layer_ids(assigns.map, assigns.selection, assigns.selected_layer_id)
+
+    assigns =
+      assigns
+      |> assign(:highlighted_cells, highlighted)
+      |> assign(:affected_layer_ids, affected)
 
     ~H"""
     <Layouts.app flash={@flash} width="wide" current_scope={%{designer: @current_designer}}>
@@ -486,6 +504,7 @@ defmodule BoxlandWeb.MapmakerLive do
             layers={display_layers(@map)}
             selected_layer_id={@selected_layer_id}
             renaming_layer_id={@renaming_layer_id}
+            affected_layer_ids={@affected_layer_ids}
           />
         </div>
       </section>
@@ -688,6 +707,7 @@ defmodule BoxlandWeb.MapmakerLive do
   attr :layers, :list, required: true
   attr :selected_layer_id, :any, required: true
   attr :renaming_layer_id, :any, required: true
+  attr :affected_layer_ids, :any, required: true
 
   defp layers_panel(assigns) do
     ~H"""
@@ -715,7 +735,8 @@ defmodule BoxlandWeb.MapmakerLive do
           class={[
             "group flex flex-col gap-1 rounded-md border p-2 transition cursor-pointer",
             layer.id == @selected_layer_id && "border-primary bg-primary/10",
-            layer.id != @selected_layer_id && "border-base-300 bg-base-100 hover:bg-base-100/70"
+            layer.id != @selected_layer_id && "border-base-300 bg-base-100 hover:bg-base-100/70",
+            MapSet.member?(@affected_layer_ids, layer.id) && "ring-2 ring-accent/60"
           ]}
         >
           <div class="flex items-center gap-1">
@@ -1414,6 +1435,16 @@ defmodule BoxlandWeb.MapmakerLive do
   end
 
   defp cell_highlighted?(set, x, y), do: MapSet.member?(set, {x, y})
+
+  defp affected_layer_ids(_map, nil, _active), do: MapSet.new()
+  defp affected_layer_ids(_map, _sel, nil), do: MapSet.new()
+
+  defp affected_layer_ids(map, selection, active_layer_id) do
+    map
+    |> Maps.effective_block(selection_cells(selection), active_layer_id)
+    |> Enum.map(fn {lid, _x, _y, _t} -> lid end)
+    |> MapSet.new()
+  end
 
   defp tile_indexes(asset) do
     Map.get(asset.metadata, "tile_indexes", Enum.to_list(0..(asset.metadata["tile_count"] - 1)))
