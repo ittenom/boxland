@@ -21,7 +21,9 @@ defmodule BoxlandWeb.MapmakerLive do
      |> assign(:selected_tile, 0)
      |> assign(:tool, "place")
      |> assign(:selection, nil)
-     |> assign(:clipboard, %{})
+     |> assign(:clipboard, nil)
+     |> assign(:move, nil)
+     |> assign(:cursor_cell, nil)
      |> assign(:undo_stack, [])
      |> assign(:redo_stack, [])}
   end
@@ -54,7 +56,11 @@ defmodule BoxlandWeb.MapmakerLive do
         {:noreply, assign(socket, :tool, "select")}
 
       key == "Escape" ->
-        {:noreply, assign(socket, :selection, nil)}
+        cond do
+          socket.assigns.move != nil -> cancel_move(socket)
+          socket.assigns.tool == "clone" -> {:noreply, assign(socket, tool: "select_area", cursor_cell: nil)}
+          true -> {:noreply, assign(socket, :selection, nil)}
+        end
 
       key in ["z", "Z"] and truthy?(params["metaKey"] || params["ctrlKey"]) and
           truthy?(params["shiftKey"]) ->
@@ -122,9 +128,43 @@ defmodule BoxlandWeb.MapmakerLive do
   end
 
   def handle_event("selection_rotate", _params, socket) do
-    apply_to_selection(socket, fn layer, cells ->
-      Maps.rotate_tiles_in_cells(layer, cells)
-    end)
+    selection = socket.assigns.selection
+    layer = active_layer(socket.assigns.map, socket.assigns.selected_layer_id)
+    map = socket.assigns.map
+
+    cond do
+      is_nil(selection) ->
+        {:noreply, socket}
+
+      is_nil(layer) ->
+        {:noreply, socket}
+
+      not layer_editable?(layer) ->
+        {:noreply, put_flash(socket, :error, "Layer is locked or hidden.")}
+
+      true ->
+        previous = layer.tiles
+
+        case Maps.rotate_block(layer, selection, map.width, map.height) do
+          {:ok, {updated, new_selection}} ->
+            if updated.tiles == previous do
+              {:noreply, socket}
+            else
+              {:noreply,
+               socket
+               |> replace_layer(updated)
+               |> assign(:selection, new_selection)
+               |> assign(:undo_stack, [{layer.id, previous} | socket.assigns.undo_stack])
+               |> assign(:redo_stack, [])}
+            end
+
+          {:error, :out_of_bounds} ->
+            {:noreply, put_flash(socket, :error, "Rotation would extend past the map edge.")}
+
+          {:error, _} ->
+            {:noreply, socket}
+        end
+    end
   end
 
   def handle_event("selection_move_up", _params, socket) do
@@ -133,6 +173,22 @@ defmodule BoxlandWeb.MapmakerLive do
 
   def handle_event("selection_move_down", _params, socket) do
     move_selection(socket, :down)
+  end
+
+  def handle_event("selection_move_begin", _params, socket) do
+    begin_move(socket)
+  end
+
+  def handle_event("selection_move_cancel", _params, socket) do
+    cancel_move(socket)
+  end
+
+  def handle_event("cursor_at", %{"x" => x, "y" => y}, socket) do
+    if socket.assigns.tool in ["move", "clone"] do
+      {:noreply, assign(socket, :cursor_cell, {to_int(x), to_int(y)})}
+    else
+      {:noreply, socket}
+    end
   end
 
   # === Layer events ===
@@ -305,6 +361,22 @@ defmodule BoxlandWeb.MapmakerLive do
             class="overflow-auto rounded-box bg-base-200 p-2"
           >
             <div
+              :if={@move}
+              class="mb-2 flex items-center justify-between rounded-md bg-primary/15 px-3 py-1.5 text-xs text-primary-content"
+            >
+              <span class="text-primary">
+                Moving {map_size(@move.tiles)} tile{if map_size(@move.tiles) == 1, do: "", else: "s"} —
+                click to drop, Esc to cancel.
+              </span>
+              <button
+                type="button"
+                phx-click="selection_move_cancel"
+                class="btn btn-ghost btn-xs"
+              >
+                Cancel
+              </button>
+            </div>
+            <div
               class="relative grid w-fit gap-0"
               style={"grid-template-columns: repeat(#{@map.width}, 32px);"}
             >
@@ -335,6 +407,27 @@ defmodule BoxlandWeb.MapmakerLive do
                 selection={@selection}
                 map={@map}
                 selected_layer={active_layer(@map, @selected_layer_id)}
+              />
+
+              <.ghost_preview
+                :if={@move && @cursor_cell}
+                id="move-ghost"
+                tiles={@move.tiles}
+                w={@move.w}
+                h={@move.h}
+                cursor_cell={@cursor_cell}
+                tilesets={@tilesets}
+              />
+
+              <.ghost_preview
+                :if={@tool == "clone" && @clipboard && map_size(@clipboard.tiles) > 0 && @cursor_cell}
+                id="clone-ghost"
+                tiles={@clipboard.tiles}
+                w={@clipboard.w}
+                h={@clipboard.h}
+                cursor_cell={@cursor_cell}
+                tilesets={@tilesets}
+                ring_class="ring-secondary/70"
               />
             </div>
           </div>
@@ -444,6 +537,16 @@ defmodule BoxlandWeb.MapmakerLive do
       <span class="mx-0.5 h-4 w-px bg-base-300" />
       <button
         type="button"
+        id="selection-move"
+        phx-click="selection_move_begin"
+        class="btn btn-ghost btn-xs px-1"
+        title="Pick up tiles to move"
+        aria-label="Pick up tiles to move"
+      >
+        <.icon name="hero-arrows-pointing-out" class="size-3.5" />
+      </button>
+      <button
+        type="button"
         id="selection-copy"
         phx-click="selection_copy"
         class="btn btn-ghost btn-xs px-1"
@@ -472,6 +575,33 @@ defmodule BoxlandWeb.MapmakerLive do
       >
         <.icon name="hero-trash" class="size-3.5" />
       </button>
+    </div>
+    """
+  end
+
+  attr :id, :string, required: true
+  attr :tiles, :map, required: true
+  attr :w, :integer, required: true
+  attr :h, :integer, required: true
+  attr :cursor_cell, :any, required: true
+  attr :tilesets, :list, required: true
+  attr :ring_class, :string, default: "ring-primary/70"
+
+  defp ghost_preview(assigns) do
+    {cx, cy} = assigns.cursor_cell
+    assigns = assign(assigns, cx: cx, cy: cy)
+
+    ~H"""
+    <div
+      id={@id}
+      class={["pointer-events-none absolute rounded ring-2", @ring_class]}
+      style={"top: #{@cy * 32}px; left: #{@cx * 32}px; width: #{@w * 32}px; height: #{@h * 32}px;"}
+    >
+      <span
+        :for={{offset, tile} <- @tiles}
+        class="absolute h-8 w-8 bg-no-repeat"
+        style={ghost_tile_style(@tilesets, tile, offset)}
+      />
     </div>
     """
   end
@@ -691,6 +821,9 @@ defmodule BoxlandWeb.MapmakerLive do
       is_nil(layer) ->
         {:noreply, socket}
 
+      socket.assigns.tool == "move" and socket.assigns.move != nil ->
+        place_move(socket, x, y)
+
       socket.assigns.tool == "select" ->
         {:noreply, assign(socket, :selection, normalize_selection({x, y}))}
 
@@ -779,7 +912,7 @@ defmodule BoxlandWeb.MapmakerLive do
         assign(socket, :tool, "clone")
 
       layer ->
-        clipboard =
+        tiles =
           selection
           |> selection_cells()
           |> Enum.reduce(%{}, fn {x, y}, acc ->
@@ -789,14 +922,22 @@ defmodule BoxlandWeb.MapmakerLive do
             end
           end)
 
+        clipboard = %{
+          tiles: tiles,
+          w: selection.x2 - selection.x1 + 1,
+          h: selection.y2 - selection.y1 + 1
+        }
+
         assign(socket, clipboard: clipboard, tool: "clone")
     end
   end
 
   defp clone_selection(socket), do: assign(socket, :tool, "clone")
 
-  defp paste_clipboard(tiles, clipboard, x, y) do
-    Enum.reduce(clipboard, tiles, fn {offset, tile}, acc ->
+  defp paste_clipboard(tiles, nil, _x, _y), do: tiles
+
+  defp paste_clipboard(tiles, %{tiles: clipboard_tiles}, x, y) do
+    Enum.reduce(clipboard_tiles, tiles, fn {offset, tile}, acc ->
       [dx, dy] = offset |> String.split(",", parts: 2) |> Enum.map(&String.to_integer/1)
       Map.put(acc, Maps.key(x + dx, y + dy), tile)
     end)
@@ -808,6 +949,116 @@ defmodule BoxlandWeb.MapmakerLive do
     case Map.fetch(tiles, key) do
       {:ok, tile} -> Map.put(tiles, key, fun.(tile))
       :error -> tiles
+    end
+  end
+
+  defp begin_move(socket) do
+    selection = socket.assigns.selection
+    layer = active_layer(socket.assigns.map, socket.assigns.selected_layer_id)
+
+    with %{} <- selection,
+         %{} <- layer,
+         true <- layer_editable?(layer) do
+      cells = selection_cells(selection)
+
+      tiles =
+        Enum.reduce(cells, %{}, fn {x, y}, acc ->
+          case Maps.tile_at(layer.tiles, x, y) do
+            nil -> acc
+            tile -> Elixir.Map.put(acc, "#{x - selection.x1},#{y - selection.y1}", tile)
+          end
+        end)
+
+      move = %{
+        tiles: tiles,
+        source_layer_id: layer.id,
+        source_cells: cells,
+        source_origin: {selection.x1, selection.y1},
+        w: selection.x2 - selection.x1 + 1,
+        h: selection.y2 - selection.y1 + 1
+      }
+
+      {:noreply,
+       socket
+       |> assign(:move, move)
+       |> assign(:tool, "move")
+       |> assign(:selection, nil)
+       |> assign(:cursor_cell, nil)}
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
+  defp cancel_move(socket) do
+    {:noreply,
+     socket
+     |> assign(:move, nil)
+     |> assign(:cursor_cell, nil)
+     |> assign(:tool, "select_area")}
+  end
+
+  defp place_move(socket, dest_x, dest_y) do
+    move = socket.assigns.move
+    map = socket.assigns.map
+
+    new_x2 = dest_x + move.w - 1
+    new_y2 = dest_y + move.h - 1
+
+    cond do
+      dest_x < 0 or dest_y < 0 or new_x2 >= map.width or new_y2 >= map.height ->
+        {:noreply,
+         put_flash(socket, :error, "Tiles would land outside the map.")}
+
+      true ->
+        from_layer = Enum.find(map.layers, &(&1.id == move.source_layer_id))
+        to_layer = active_layer(map, socket.assigns.selected_layer_id)
+
+        cond do
+          is_nil(from_layer) ->
+            cancel_move(socket)
+
+          is_nil(to_layer) or not layer_editable?(to_layer) ->
+            {:noreply, put_flash(socket, :error, "Destination layer is locked or hidden.")}
+
+          true ->
+            previous_from = from_layer.tiles
+            previous_to = to_layer.tiles
+
+            case Maps.relocate_block(
+                   from_layer,
+                   move.source_cells,
+                   move.source_origin,
+                   to_layer,
+                   {dest_x, dest_y}
+                 ) do
+              {:ok, {updated_from, updated_to}} ->
+                undo_entries =
+                  if from_layer.id == to_layer.id do
+                    [{from_layer.id, previous_from}]
+                  else
+                    [{from_layer.id, previous_from}, {to_layer.id, previous_to}]
+                  end
+
+                {:noreply,
+                 socket
+                 |> replace_layer(updated_from)
+                 |> replace_layer(updated_to)
+                 |> assign(:move, nil)
+                 |> assign(:cursor_cell, nil)
+                 |> assign(:tool, "select_area")
+                 |> assign(:selection, %{
+                   x1: dest_x,
+                   y1: dest_y,
+                   x2: new_x2,
+                   y2: new_y2
+                 })
+                 |> assign(:undo_stack, undo_entries ++ socket.assigns.undo_stack)
+                 |> assign(:redo_stack, [])}
+
+              {:error, _} ->
+                {:noreply, put_flash(socket, :error, "Could not move tiles.")}
+            end
+        end
     end
   end
 
@@ -990,6 +1241,17 @@ defmodule BoxlandWeb.MapmakerLive do
     y = div(index, columns) * 32
 
     "background-image: url('#{asset.content_url}'); background-position: -#{x}px -#{y}px;"
+  end
+
+  defp ghost_tile_style(tilesets, tile, offset) do
+    [dx, dy] = offset |> String.split(",") |> Enum.map(&String.to_integer/1)
+    asset = Enum.find(tilesets, &(&1.id == tile["asset_id"]))
+
+    tile_style(asset, tile["tile_index"]) <>
+      " left: #{dx * 32}px;" <>
+      " top: #{dy * 32}px;" <>
+      " transform: rotate(#{tile["rotation"]}deg);" <>
+      " opacity: 0.55;"
   end
 
   defp tile_indexes(asset) do

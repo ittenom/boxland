@@ -178,7 +178,7 @@ defmodule BoxlandWeb.MapmakerLiveTest do
       refute Map.has_key?(ground.tiles, "2,1")
     end
 
-    test "selection_rotate increments rotation by 90", %{conn: conn, map: map, ground: ground} do
+    test "selection_rotate on a 1×1 only rotates the tile in place", %{conn: conn, map: map, ground: ground} do
       {:ok, view, _html} = live(conn, ~p"/app/maps/#{map.id}")
 
       render_hook(view, "select_area_drag", %{"x1" => 1, "y1" => 1, "x2" => 1, "y2" => 1})
@@ -190,6 +190,165 @@ defmodule BoxlandWeb.MapmakerLiveTest do
       render_click(view, "selection_rotate")
       [ground] = Maps.list_layers(map.id) |> Enum.filter(&(&1.id == ground.id))
       assert ground.tiles["1,1"]["rotation"] == 180
+    end
+
+    test "selection_rotate on a horizontal pair moves tiles into a vertical pair",
+         %{conn: conn, map: map, ground: ground, tileset: tileset} do
+      {:ok, view, _html} = live(conn, ~p"/app/maps/#{map.id}")
+
+      # Selection covers (1,1)-(2,1) — two horizontal tiles A,B
+      render_hook(view, "select_area_drag", %{"x1" => 1, "y1" => 1, "x2" => 2, "y2" => 1})
+      render_click(view, "selection_rotate")
+
+      [ground] = Maps.list_layers(map.id) |> Enum.filter(&(&1.id == ground.id))
+
+      # After 90° CW around top-left, the two horizontal cells become two vertical
+      # cells anchored at the same top-left: (1,1) and (1,2). Tiles A (was at
+      # (2,1)) goes to (1,1); B (was at (1,1)) goes to (1,2).
+      assert Map.has_key?(ground.tiles, "1,1")
+      assert Map.has_key?(ground.tiles, "1,2")
+      refute Map.has_key?(ground.tiles, "2,1")
+
+      # Each tile's individual rotation also advances by 90°.
+      assert ground.tiles["1,1"]["rotation"] == 90
+      assert ground.tiles["1,1"]["asset_id"] == tileset.id
+      refute is_nil(ground)
+    end
+
+    test "selection_move_begin lifts tiles into move state without touching source yet",
+         %{conn: conn, map: map, ground: ground} do
+      {:ok, view, _html} = live(conn, ~p"/app/maps/#{map.id}")
+
+      render_hook(view, "select_area_drag", %{"x1" => 1, "y1" => 1, "x2" => 2, "y2" => 1})
+      render_click(view, "selection_move_begin")
+
+      # Source tiles are still in the DB until placement.
+      [ground] = Maps.list_layers(map.id) |> Enum.filter(&(&1.id == ground.id))
+      assert Map.has_key?(ground.tiles, "1,1")
+      assert Map.has_key?(ground.tiles, "2,1")
+
+      # The move-mode banner appears.
+      html = render(view)
+      assert html =~ "Moving"
+      assert html =~ "click to drop"
+    end
+
+    test "clicking a cell while in move mode relocates the block",
+         %{conn: conn, map: map, ground: ground} do
+      {:ok, view, _html} = live(conn, ~p"/app/maps/#{map.id}")
+
+      render_hook(view, "select_area_drag", %{"x1" => 1, "y1" => 1, "x2" => 2, "y2" => 1})
+      render_click(view, "selection_move_begin")
+
+      # Drop at (3, 3) — tiles at (1,1) and (2,1) should land at (3,3) and (4,3).
+      render_click(view, "cell", %{"x" => "3", "y" => "3"})
+
+      [ground] = Maps.list_layers(map.id) |> Enum.filter(&(&1.id == ground.id))
+      refute Map.has_key?(ground.tiles, "1,1")
+      refute Map.has_key?(ground.tiles, "2,1")
+      assert Map.has_key?(ground.tiles, "3,3")
+      assert Map.has_key?(ground.tiles, "4,3")
+    end
+
+    test "moving onto a different layer transfers tiles cross-layer",
+         %{conn: conn, map: map, ground: ground} do
+      {:ok, view, _html} = live(conn, ~p"/app/maps/#{map.id}")
+      render_click(view, "add_layer")
+
+      [_, upper] = Maps.list_layers(map.id) |> Enum.sort_by(& &1.z_index)
+      # ground stays as source (it has the tiles); switch active to upper.
+      render_click(view, "select_layer", %{"id" => to_string(ground.id)})
+      render_hook(view, "select_area_drag", %{"x1" => 1, "y1" => 1, "x2" => 2, "y2" => 1})
+      render_click(view, "selection_move_begin")
+
+      # Switch destination layer mid-move and drop.
+      render_click(view, "select_layer", %{"id" => to_string(upper.id)})
+      render_click(view, "cell", %{"x" => "3", "y" => "3"})
+
+      [from, to] = Maps.list_layers(map.id) |> Enum.sort_by(& &1.z_index)
+      assert from.id == ground.id
+      refute Map.has_key?(from.tiles, "1,1")
+      refute Map.has_key?(from.tiles, "2,1")
+      assert Map.has_key?(to.tiles, "3,3")
+      assert Map.has_key?(to.tiles, "4,3")
+    end
+
+    test "Escape cancels the move without changing tiles",
+         %{conn: conn, map: map, ground: ground} do
+      {:ok, view, _html} = live(conn, ~p"/app/maps/#{map.id}")
+
+      render_hook(view, "select_area_drag", %{"x1" => 1, "y1" => 1, "x2" => 2, "y2" => 1})
+      render_click(view, "selection_move_begin")
+      render_keydown(view, "hotkey", %{"key" => "Escape"})
+
+      [ground] = Maps.list_layers(map.id) |> Enum.filter(&(&1.id == ground.id))
+      assert Map.has_key?(ground.tiles, "1,1")
+      assert Map.has_key?(ground.tiles, "2,1")
+
+      # Banner gone.
+      html = render(view)
+      refute html =~ "Moving"
+    end
+
+    test "selection_copy stores clipboard with the source dimensions and enters clone tool",
+         %{conn: conn, map: map} do
+      {:ok, view, _html} = live(conn, ~p"/app/maps/#{map.id}")
+
+      render_hook(view, "select_area_drag", %{"x1" => 1, "y1" => 1, "x2" => 2, "y2" => 1})
+      render_click(view, "selection_copy")
+
+      # Render the canvas while clone tool is active and cursor hovers a cell —
+      # the clone-ghost overlay should appear.
+      render_hook(view, "cursor_at", %{"x" => 4, "y" => 4})
+      html = render(view)
+
+      assert html =~ ~s|id="clone-ghost"|
+      # Hover position lands at (4 * 32 = 128, 4 * 32 = 128).
+      assert html =~ "top: 128px"
+      assert html =~ "left: 128px"
+    end
+
+    test "pasting under clone tool drops a copy without removing the source",
+         %{conn: conn, map: map, ground: ground} do
+      {:ok, view, _html} = live(conn, ~p"/app/maps/#{map.id}")
+
+      render_hook(view, "select_area_drag", %{"x1" => 1, "y1" => 1, "x2" => 2, "y2" => 1})
+      render_click(view, "selection_copy")
+      render_click(view, "cell", %{"x" => "3", "y" => "3"})
+
+      [ground] = Maps.list_layers(map.id) |> Enum.filter(&(&1.id == ground.id))
+      # Source still present.
+      assert Map.has_key?(ground.tiles, "1,1")
+      assert Map.has_key?(ground.tiles, "2,1")
+      # Copy landed.
+      assert Map.has_key?(ground.tiles, "3,3")
+      assert Map.has_key?(ground.tiles, "4,3")
+    end
+
+    test "moving past the map edge is refused",
+         %{conn: conn, map: map} do
+      {:ok, view, _html} = live(conn, ~p"/app/maps/#{map.id}")
+
+      render_hook(view, "select_area_drag", %{"x1" => 1, "y1" => 1, "x2" => 2, "y2" => 1})
+      render_click(view, "selection_move_begin")
+
+      # Map is 6×6; dropping a 2×1 block at (5, 5) would extend to x=6 which is out.
+      html = render_click(view, "cell", %{"x" => "5", "y" => "5"})
+
+      assert html =~ "outside the map"
+    end
+
+    test "selection_rotate refuses when the rotated rect would leave the map",
+         %{conn: conn, map: map} do
+      {:ok, view, _html} = live(conn, ~p"/app/maps/#{map.id}")
+
+      # Map is 6×6 (created in outer setup). Select a 6×1 row → rotated would
+      # become 1×6, fits. Try a 5×1 starting at row 2 → rotated 1×5 from row 2
+      # extends to row 6, off the map.
+      render_hook(view, "select_area_drag", %{"x1" => 0, "y1" => 2, "x2" => 4, "y2" => 2})
+      html = render_click(view, "selection_rotate")
+
+      assert html =~ "extend past the map edge"
     end
 
     test "selection_move_up moves tiles to the next layer up", %{conn: conn, map: map, ground: ground} do

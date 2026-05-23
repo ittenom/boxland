@@ -45,6 +45,7 @@ type MapmakerCanvasHook = {
   selecting: boolean;
   selectStart: {x: number; y: number} | null;
   lastSelectKey: string | null;
+  lastCursorKey: string | null;
   moved: boolean;
   lastCell: string | null;
   panStartX: number;
@@ -70,6 +71,7 @@ const MapmakerCanvas = {
     this.selecting = false
     this.selectStart = null
     this.lastSelectKey = null
+    this.lastCursorKey = null
     this.moved = false
     this.lastCell = null
     this.panStartX = 0
@@ -152,6 +154,21 @@ const MapmakerCanvas = {
           event.preventDefault()
           this.emitSelect(cell)
         }
+        return
+      }
+
+      const tool = this.el.dataset["tool"]
+      if (tool === "move" || tool === "clone") {
+        const cell = this.cellFromEvent(event)
+        if (!cell) return
+        const x = cell.dataset["x"]
+        const y = cell.dataset["y"]
+        if (!x || !y) return
+        const key = `${x},${y}`
+        if (key !== this.lastCursorKey) {
+          this.lastCursorKey = key
+          this.pushEvent("cursor_at", {x, y})
+        }
       }
     }
 
@@ -168,6 +185,7 @@ const MapmakerCanvas = {
       this.selecting = false
       this.selectStart = null
       this.lastSelectKey = null
+      this.lastCursorKey = null
       this.lastCell = null
     }
 

@@ -169,6 +169,129 @@ defmodule Boxland.Maps do
   end
 
   @doc """
+  Move a rectangle of tiles from one layer (and origin) to another. `source_cells`
+  enumerates the absolute (x, y) cells to lift; `source_origin` is the top-left
+  the user picked them up at; `dest_origin` is where the top-left should land.
+
+  Same-layer and cross-layer moves are both supported. Tiles already at the
+  destination get clobbered. Atomic. Returns
+  `{:ok, {updated_source_layer, updated_dest_layer}}`.
+  """
+  def relocate_block(
+        %Layer{} = from_layer,
+        source_cells,
+        {sx, sy},
+        %Layer{} = to_layer,
+        {dx_o, dy_o}
+      )
+      when is_list(source_cells) do
+    moving =
+      Enum.reduce(source_cells, %{}, fn {x, y}, acc ->
+        case Elixir.Map.fetch(from_layer.tiles, key(x, y)) do
+          {:ok, tile} -> Elixir.Map.put(acc, {x - sx, y - sy}, tile)
+          :error -> acc
+        end
+      end)
+
+    from_remaining =
+      Enum.reduce(source_cells, from_layer.tiles, fn {x, y}, acc ->
+        Elixir.Map.delete(acc, key(x, y))
+      end)
+
+    Repo.transaction(fn ->
+      if from_layer.id == to_layer.id do
+        final =
+          Enum.reduce(moving, from_remaining, fn {{dx, dy}, tile}, acc ->
+            Elixir.Map.put(acc, key(dx_o + dx, dy_o + dy), tile)
+          end)
+
+        case update_layer_tiles(from_layer, final) do
+          {:ok, updated} -> {updated, updated}
+          {:error, reason} -> Repo.rollback(reason)
+        end
+      else
+        to_final =
+          Enum.reduce(moving, to_layer.tiles, fn {{dx, dy}, tile}, acc ->
+            Elixir.Map.put(acc, key(dx_o + dx, dy_o + dy), tile)
+          end)
+
+        with {:ok, updated_from} <- update_layer_tiles(from_layer, from_remaining),
+             {:ok, updated_to} <- update_layer_tiles(to_layer, to_final) do
+          {updated_from, updated_to}
+        else
+          {:error, reason} -> Repo.rollback(reason)
+        end
+      end
+    end)
+  end
+
+  @doc """
+  Rotate a rectangular block of tiles 90° clockwise as a group: tile positions
+  follow the rotation and each tile's `rotation` field is incremented by 90°.
+  The block is anchored at its top-left corner — a `w×h` selection becomes
+  `h×w` with the same `x1,y1`.
+
+  Returns `{:ok, {updated_layer, new_selection}}` or `{:error, :out_of_bounds}`
+  if the rotated extent would leave the map.
+  """
+  def rotate_block(%Layer{} = layer, selection, map_width, map_height)
+      when is_integer(map_width) and is_integer(map_height) do
+    %{x1: x1, y1: y1, x2: x2, y2: y2} = selection
+    w = x2 - x1 + 1
+    h = y2 - y1 + 1
+    new_x2 = x1 + h - 1
+    new_y2 = y1 + w - 1
+
+    cond do
+      new_x2 >= map_width or new_y2 >= map_height ->
+        {:error, :out_of_bounds}
+
+      x1 < 0 or y1 < 0 ->
+        {:error, :out_of_bounds}
+
+      true ->
+        cells = for y <- y1..y2, x <- x1..x2, do: {x, y}
+
+        # Pull existing tiles out of the source rectangle.
+        moving =
+          Enum.reduce(cells, %{}, fn {x, y}, acc ->
+            case Elixir.Map.fetch(layer.tiles, key(x, y)) do
+              {:ok, tile} -> Elixir.Map.put(acc, {x, y}, tile)
+              :error -> acc
+            end
+          end)
+
+        # Clear the source rectangle.
+        cleared =
+          Enum.reduce(cells, layer.tiles, fn {x, y}, acc ->
+            Elixir.Map.delete(acc, key(x, y))
+          end)
+
+        # Re-place each moving tile at its rotated coordinate.
+        placed =
+          Enum.reduce(moving, cleared, fn {{x, y}, tile}, acc ->
+            dx = x - x1
+            dy = y - y1
+            new_x = x1 + (h - 1 - dy)
+            new_y = y1 + dx
+
+            rotated =
+              Elixir.Map.update(tile, "rotation", 90, &rem(&1 + 90, 360))
+
+            Elixir.Map.put(acc, key(new_x, new_y), rotated)
+          end)
+
+        case update_layer_tiles(layer, placed) do
+          {:ok, updated} ->
+            {:ok, {updated, %{x1: x1, y1: y1, x2: new_x2, y2: new_y2}}}
+
+          err ->
+            err
+        end
+    end
+  end
+
+  @doc """
   Move every existing tile in `cells` from `from` to `to`. Atomic; returns
   `{:ok, {updated_from, updated_to}}`.
   """
