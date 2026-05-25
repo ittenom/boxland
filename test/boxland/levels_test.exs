@@ -325,4 +325,49 @@ defmodule Boxland.LevelsTest do
       assert %PublishedLevelVersion{} = Boxland.Levels.latest_published_version(level.id)
     end
   end
+
+  describe "blocked_cells_by_z/2" do
+    setup %{designer: d, map: m} do
+      # Ensure there's a second layer at z=10 so we can place tiles on it.
+      {:ok, _layer_top} =
+        Boxland.Maps.create_layer(m, %{"z_index" => 10, "name" => "top"})
+
+      {:ok, level} =
+        %Level{}
+        |> Level.changeset(%{owner_id: d.id, slug: "bz", name: "BZ", map_id: m.id})
+        |> Boxland.Repo.insert()
+
+      {:ok, level: Boxland.Levels.get_level!(d.id, level.id)}
+    end
+
+    test "collision-preset entities are keyed by their effective z", %{
+      designer: d,
+      level: level
+    } do
+      {:ok, _floor_wall} =
+        Boxland.Levels.create_preset_entity(d.id, level.id, "collision", 1 * 32, 0, %{},
+          z_index_override: 0
+        )
+
+      {:ok, _ceiling_wall} =
+        Boxland.Levels.create_preset_entity(d.id, level.id, "collision", 2 * 32, 0, %{},
+          z_index_override: 10
+        )
+
+      level =
+        Boxland.Levels.get_level!(d.id, level.id)
+        |> Elixir.Map.update!(:map, &Boxland.Repo.preload(&1, :layers))
+
+      by_z = Boxland.Levels.blocked_cells_by_z(level, [])
+
+      assert MapSet.member?(Boxland.Levels.blocked_at(by_z, 0), {1, 0})
+      refute MapSet.member?(Boxland.Levels.blocked_at(by_z, 0), {2, 0})
+
+      assert MapSet.member?(Boxland.Levels.blocked_at(by_z, 10), {2, 0})
+      refute MapSet.member?(Boxland.Levels.blocked_at(by_z, 10), {1, 0})
+
+      # An unused z returns an empty set, never nil.
+      assert MapSet.size(Boxland.Levels.blocked_at(by_z, 999)) == 0
+    end
+  end
 end

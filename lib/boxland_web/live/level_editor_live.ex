@@ -29,6 +29,7 @@ defmodule BoxlandWeb.LevelEditorLive do
      |> assign(:selected_layer_id, default_selected_layer_id(level))
      |> assign(:renaming_layer_id, nil)
      |> assign(:selection, nil)
+     |> assign(:show_paths, true)
      |> assign(:publish_error, nil)}
   end
 
@@ -469,6 +470,10 @@ defmodule BoxlandWeb.LevelEditorLive do
     end
   end
 
+  def handle_event("toggle_show_paths", _params, socket) do
+    {:noreply, assign(socket, :show_paths, not socket.assigns.show_paths)}
+  end
+
   def handle_event("waypoint_remove", %{"index" => index}, socket) do
     case selected_entity(socket) do
       nil ->
@@ -563,9 +568,9 @@ defmodule BoxlandWeb.LevelEditorLive do
 
   defp pick_selection(level, x, y) do
     cond do
-      (entity = topmost_entity_at(level, x, y)) -> {:entity, entity.id}
-      (gid = group_id_at(level.map, x, y)) -> {:group, gid}
-      (tile = tile_at_on_visible(level.map, x, y)) -> {:tile, elem(tile, 0).id, x, y}
+      entity = topmost_entity_at(level, x, y) -> {:entity, entity.id}
+      gid = group_id_at(level.map, x, y) -> {:group, gid}
+      tile = tile_at_on_visible(level.map, x, y) -> {:tile, elem(tile, 0).id, x, y}
       true -> nil
     end
   end
@@ -695,7 +700,6 @@ defmodule BoxlandWeb.LevelEditorLive do
 
   # === Inspector helpers ===
 
-
   defp coerce_property_value(%EntityType{properties: schema}, key, raw) do
     case Enum.find(schema, &(&1["key"] == key)) do
       %{"type" => type} -> coerce_value(type, raw)
@@ -773,7 +777,7 @@ defmodule BoxlandWeb.LevelEditorLive do
   defp topmost_entity_at(level, x, y) do
     level.entities
     |> Enum.filter(&entity_covers_cell?(&1, level.map.layers, x, y))
-    |> Enum.sort_by(&-entity_z(&1))
+    |> Enum.sort_by(&(-entity_z(&1)))
     |> List.first()
   end
 
@@ -944,6 +948,11 @@ defmodule BoxlandWeb.LevelEditorLive do
     entity_cell_index = build_entity_cell_index(assigns.level)
     waypoint_markers = build_waypoint_markers(selection_entity)
 
+    {path_cells, unreachable_leg} =
+      if assigns.show_paths,
+        do: compute_path_overlay(selection_entity, assigns.level, assigns.tilesets),
+        else: {MapSet.new(), nil}
+
     assigns =
       assigns
       |> assign(:layers, layers)
@@ -952,6 +961,8 @@ defmodule BoxlandWeb.LevelEditorLive do
       |> assign(:affected_layer_ids, affected_layers)
       |> assign(:entity_cell_index, entity_cell_index)
       |> assign(:waypoint_markers, waypoint_markers)
+      |> assign(:path_cells, path_cells)
+      |> assign(:unreachable_leg, unreachable_leg)
 
     ~H"""
     <Layouts.app flash={@flash} current_scope={%{designer: @current_designer}}>
@@ -976,9 +987,24 @@ defmodule BoxlandWeb.LevelEditorLive do
         <div :if={@publish_error} class="alert alert-error">{@publish_error}</div>
 
         <div id="level-toolbar" class="flex flex-wrap gap-2">
-          <.tool_button icon="hero-cursor-arrow-rays" label="V" tool="select" active={@tool == "select"} />
+          <.tool_button
+            icon="hero-cursor-arrow-rays"
+            label="V"
+            tool="select"
+            active={@tool == "select"}
+          />
           <.tool_button icon="hero-pencil" label="P" tool="place" active={@tool == "place"} />
           <.tool_button icon="hero-x-mark" label="X" tool="delete" active={@tool == "delete"} />
+
+          <label class="ml-2 flex cursor-pointer items-center gap-1 text-xs text-base-content/70">
+            <input
+              id="toggle-show-paths"
+              type="checkbox"
+              class="checkbox checkbox-xs"
+              checked={@show_paths}
+              phx-click="toggle_show_paths"
+            /> Show paths
+          </label>
         </div>
 
         <div class="grid gap-4 lg:grid-cols-[14rem_1fr_20rem]">
@@ -1003,6 +1029,8 @@ defmodule BoxlandWeb.LevelEditorLive do
             highlight_cells={@selection_highlight}
             entity_cell_index={@entity_cell_index}
             waypoint_markers={@waypoint_markers}
+            path_cells={@path_cells}
+            unreachable_leg={@unreachable_leg}
           />
 
           <div class="space-y-3">
@@ -1101,6 +1129,33 @@ defmodule BoxlandWeb.LevelEditorLive do
     end)
   end
 
+  # Returns {MapSet of cells in the entity's projected A* route, unreachable_leg_or_nil}.
+  defp compute_path_overlay(nil, _level, _assets), do: {MapSet.new(), nil}
+
+  defp compute_path_overlay(entity, level, assets) do
+    waypoints = entity.waypoints || []
+
+    if waypoints == [] do
+      {MapSet.new(), nil}
+    else
+      start = {div(entity.pos_x, @cell_px), div(entity.pos_y, @cell_px)}
+      z = Levels.entity_effective_z(entity)
+      blocked = Levels.blocked_at(Levels.blocked_cells_by_z(level, assets), z)
+
+      blocked? = fn cell ->
+        cell != start and MapSet.member?(blocked, cell)
+      end
+
+      opts = [bounds: {level.map.width, level.map.height}, blocked?: blocked?]
+
+      case Boxland.Pathfinding.preview_path(start, waypoints, opts) do
+        :empty -> {MapSet.new(), nil}
+        {:ok, cells} -> {MapSet.new(cells), nil}
+        {:partial, cells, leg} -> {MapSet.new(cells), leg}
+      end
+    end
+  end
+
   defp build_entity_cell_index(level) do
     Enum.reduce(level.entities, %{}, fn entity, acc ->
       anchor = {div(entity.pos_x, @cell_px), div(entity.pos_y, @cell_px)}
@@ -1168,7 +1223,10 @@ defmodule BoxlandWeb.LevelEditorLive do
       </nav>
 
       <form class="flex items-center gap-2" phx-change="set_place_z">
-        <label for="place-z" class="text-[10px] font-semibold uppercase tracking-wide text-base-content/60">
+        <label
+          for="place-z"
+          class="text-[10px] font-semibold uppercase tracking-wide text-base-content/60"
+        >
           Place at z
         </label>
         <input
@@ -1484,6 +1542,8 @@ defmodule BoxlandWeb.LevelEditorLive do
   attr :highlight_cells, :any, default: nil
   attr :entity_cell_index, :map, default: %{}
   attr :waypoint_markers, :map, default: %{}
+  attr :path_cells, :any, default: nil
+  attr :unreachable_leg, :any, default: nil
 
   defp canvas(assigns) do
     ~H"""
@@ -1513,6 +1573,15 @@ defmodule BoxlandWeb.LevelEditorLive do
           />
 
           <span
+            :if={path_cell?(@path_cells, x, y)}
+            id={"path-cell-#{x}-#{y}"}
+            class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center"
+            aria-hidden="true"
+          >
+            <span class="block h-2 w-2 rounded-full bg-info/80 shadow-[0_0_4px_rgba(59,130,246,0.6)]" />
+          </span>
+
+          <span
             :for={covering <- Elixir.Map.get(@entity_cell_index, {x, y}, [])}
             id={"level-entity-#{covering.entity.id}-cell-#{x}-#{y}"}
             class={[
@@ -1528,9 +1597,20 @@ defmodule BoxlandWeb.LevelEditorLive do
           <span
             :for={marker <- Elixir.Map.get(@waypoint_markers, {x, y}, [])}
             id={"waypoint-marker-#{marker.entity_id}-#{marker.index}"}
-            class="pointer-events-none absolute right-0 top-0 z-30 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-warning text-[9px] font-bold text-warning-content shadow"
+            class={[
+              "pointer-events-none absolute right-0 top-0 z-30 flex h-3.5 w-3.5 items-center justify-center rounded-full text-[9px] font-bold shadow",
+              if(waypoint_unreachable?(@unreachable_leg, marker.index),
+                do: "bg-error text-error-content",
+                else: "bg-warning text-warning-content"
+              )
+            ]}
             aria-label={"waypoint #{marker.index}"}
-            title={"waypoint #{marker.index}"}
+            title={
+              if(waypoint_unreachable?(@unreachable_leg, marker.index),
+                do: "waypoint #{marker.index} unreachable",
+                else: "waypoint #{marker.index}"
+              )
+            }
           >
             {marker.index}
           </span>
@@ -1538,6 +1618,18 @@ defmodule BoxlandWeb.LevelEditorLive do
       </div>
     </div>
     """
+  end
+
+  defp path_cell?(nil, _x, _y), do: false
+  defp path_cell?(%MapSet{} = cells, x, y), do: MapSet.member?(cells, {x, y})
+
+  # The "unreachable_leg" is 0..N where leg k is the segment heading to
+  # waypoint k+1 (1-indexed waypoint label). leg 0 = start → wp1, so wp1
+  # is the first unreachable. legs > N mean the closing leg back to wp1.
+  defp waypoint_unreachable?(nil, _index), do: false
+
+  defp waypoint_unreachable?(leg, index) when is_integer(leg) and is_integer(index) do
+    leg + 1 == index
   end
 
   defp entity_cell_color_class(entity) do
@@ -1846,7 +1938,11 @@ defmodule BoxlandWeb.LevelEditorLive do
                   phx-value-field="trigger.kind"
                 >
                   <select name="value" class="select select-xs select-bordered w-full">
-                    <option :for={k <- ~w(spawn despawn proximity property)} value={k} selected={action["trigger"]["kind"] == k}>
+                    <option
+                      :for={k <- ~w(spawn despawn proximity property)}
+                      value={k}
+                      selected={action["trigger"]["kind"] == k}
+                    >
                       {k}
                     </option>
                   </select>
@@ -1862,7 +1958,10 @@ defmodule BoxlandWeb.LevelEditorLive do
                 >
                   <select name="value" class="select select-xs select-bordered w-full">
                     <option
-                      :for={k <- ~w(spawn_self despawn_self spawn_other despawn_other modify_property move_to_waypoint)}
+                      :for={
+                        k <-
+                          ~w(spawn_self despawn_self spawn_other despawn_other modify_property move_to_waypoint)
+                      }
                       value={k}
                       selected={action["function"]["kind"] == k}
                     >
@@ -1913,7 +2012,7 @@ defmodule BoxlandWeb.LevelEditorLive do
 
   defp tileset_tile_count(%{metadata: meta}) do
     Map.get(meta, "tile_count") ||
-      ((Map.get(meta, "columns") || 1) * (Map.get(meta, "rows") || 1))
+      (Map.get(meta, "columns") || 1) * (Map.get(meta, "rows") || 1)
   end
 
   defp layer_cell_style(tilesets, layer, x, y) do

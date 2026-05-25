@@ -110,4 +110,66 @@ defmodule Boxland.Pathfinding do
       {:ok, prev} -> rebuild_step(came_from, start, prev, [prev | acc])
     end
   end
+
+  @doc """
+  Trace the full looped route an entity will walk through its waypoints.
+
+  Builds the sequence `start → wp[0] → wp[1] → ... → wp[N-1] → wp[0]` and
+  concatenates the A* path between each pair, deduplicating joint cells.
+  The closing leg back to wp[0] only runs when there are 2+ waypoints
+  (matches `Eca.move_to_waypoint` cycling via `rem(idx + 1, len)`).
+
+  `waypoints` is a list of `%{"x" => integer, "y" => integer}`.
+
+  Returns:
+    * `:empty` — no waypoints; nothing to draw.
+    * `{:ok, [cells]}` — every leg routed.
+    * `{:partial, [cells], unreachable_index}` — A* failed at this leg
+      (0 = start→wp[0], 1 = wp[0]→wp[1], ..., N = wp[N-1]→wp[0]). `cells`
+      holds the reachable prefix so the designer still sees how far it gets.
+  """
+  @spec preview_path(cell, [map], keyword) ::
+          :empty | {:ok, [cell]} | {:partial, [cell], non_neg_integer}
+  def preview_path(start, waypoints, opts) do
+    targets = Enum.map(waypoints, &waypoint_cell/1)
+
+    case targets do
+      [] ->
+        :empty
+
+      [single] ->
+        do_legs([start, single], opts, [], 0)
+
+      [first | _] ->
+        do_legs([start | targets] ++ [first], opts, [], 0)
+    end
+  end
+
+  defp waypoint_cell(wp) do
+    {coerce_int(Map.get(wp, "x")), coerce_int(Map.get(wp, "y"))}
+  end
+
+  defp coerce_int(n) when is_integer(n), do: n
+  defp coerce_int(n) when is_binary(n), do: String.to_integer(n)
+  defp coerce_int(_), do: 0
+
+  defp do_legs([_last], _opts, acc, _leg), do: {:ok, Enum.reverse(acc)}
+
+  defp do_legs([a, b | rest], opts, acc, leg) do
+    case shortest_path(a, b, opts) do
+      {:ok, cells} ->
+        do_legs([b | rest], opts, prepend_leg(acc, cells), leg + 1)
+
+      {:error, :no_path} ->
+        {:partial, Enum.reverse(acc), leg}
+    end
+  end
+
+  # First leg seeds the accumulator with the full path (reversed).
+  # Subsequent legs share their head cell with the previous tail, so drop it.
+  defp prepend_leg([], cells), do: Enum.reverse(cells)
+
+  defp prepend_leg(acc, [_dup | tail]), do: Enum.reduce(tail, acc, &[&1 | &2])
+
+  defp prepend_leg(acc, []), do: acc
 end

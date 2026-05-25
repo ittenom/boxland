@@ -47,4 +47,43 @@ defmodule Boxland.PathfindingTest do
                blocked?: fn cell -> cell == {2, 2} end
              )
   end
+
+  describe "preview_path/3" do
+    test "returns :empty when there are no waypoints" do
+      assert :empty = Pathfinding.preview_path({0, 0}, [], bounds: {5, 5})
+    end
+
+    test "single waypoint does not close into a loop" do
+      assert {:ok, [{0, 0}, {1, 0}, {2, 0}]} =
+               Pathfinding.preview_path({0, 0}, [%{"x" => 2, "y" => 0}], bounds: {5, 5})
+    end
+
+    test "multiple waypoints close back to the first" do
+      assert {:ok, cells} =
+               Pathfinding.preview_path(
+                 {0, 0},
+                 [%{"x" => 2, "y" => 0}, %{"x" => 2, "y" => 2}],
+                 bounds: {5, 5}
+               )
+
+      assert List.first(cells) == {0, 0}
+      # Closes the loop back to wp[0] = {2, 0}.
+      assert List.last(cells) == {2, 0}
+      assert {2, 2} in cells
+    end
+
+    test "partial path reports the failing leg index" do
+      # Start at (0,0), wp1 = (3,0). The cells {1,0} and {0,1} wall the
+      # start in completely, so leg 0 (start → wp1) is unreachable.
+      blocked = MapSet.new([{1, 0}, {0, 1}])
+
+      assert {:partial, [], 0} =
+               Pathfinding.preview_path(
+                 {0, 0},
+                 [%{"x" => 3, "y" => 0}],
+                 bounds: {5, 5},
+                 blocked?: &MapSet.member?(blocked, &1)
+               )
+    end
+  end
 end

@@ -315,12 +315,71 @@ defmodule Boxland.Levels do
     end
   end
 
-  def blocked?(level, assets, cell_x, cell_y) do
-    entity_blocked?(level, cell_x, cell_y) or
-      tile_blocked?(level.map.layers, assets, cell_x, cell_y)
+  @doc """
+  Compute impassable cells keyed by z-index. Tile cells contribute at
+  their layer's `z_index`; collision-preset entity placements contribute
+  at their effective z (`z_index_override || entity_type.default_z_index`).
+
+  Returns `%{z_index => MapSet<{x, y}>}`. Used by the editor path preview
+  and Sandbox runtime so both see the same z-aware blockers as ECA's
+  `step_along_path`.
+  """
+  def blocked_cells_by_z(level, assets) do
+    assets_by_id = Elixir.Map.new(assets, &{&1.id, &1})
+
+    tile_acc =
+      Enum.reduce(level.map.layers, %{}, fn layer, acc ->
+        cells =
+          layer.tiles
+          |> Enum.filter(fn {_k, tile} -> tile_cell_blocked?(tile, assets_by_id) end)
+          |> Enum.map(fn {k, _t} -> Maps.parse_key(k) end)
+          |> MapSet.new()
+
+        if MapSet.size(cells) == 0 do
+          acc
+        else
+          Elixir.Map.update(acc, layer.z_index, cells, &MapSet.union(&1, cells))
+        end
+      end)
+
+    Enum.reduce(level.entities, tile_acc, fn entity, acc ->
+      if preset_slug(entity) == "collision" do
+        z = entity_effective_z(entity)
+        cell = {div(entity.pos_x, @cell_px), div(entity.pos_y, @cell_px)}
+        Elixir.Map.update(acc, z, MapSet.new([cell]), &MapSet.put(&1, cell))
+      else
+        acc
+      end
+    end)
   end
 
-  def blocked?(level, cell_x, cell_y), do: entity_blocked?(level, cell_x, cell_y)
+  @doc """
+  Look up the blocked-cell MapSet for a specific z, returning an empty
+  MapSet when no entry exists.
+  """
+  def blocked_at(%{} = blocked_by_z, z) do
+    Elixir.Map.get(blocked_by_z, z, MapSet.new())
+  end
+
+  @doc """
+  Effective z for a LevelEntity (instance override wins over entity-type default).
+  """
+  def entity_effective_z(%LevelEntity{} = entity) do
+    entity.z_index_override || entity.entity_type.default_z_index || 0
+  end
+
+  defp tile_cell_blocked?(%{"asset_id" => asset_id, "tile_index" => tile_index}, assets_by_id) do
+    asset = assets_by_id[asset_id]
+
+    asset &&
+      asset.metadata
+      |> Elixir.Map.get("collisions", %{})
+      |> Elixir.Map.get(Integer.to_string(tile_index), CollisionMask.none())
+      |> CollisionMask.to_booleans()
+      |> Enum.any?()
+  end
+
+  defp tile_cell_blocked?(_, _), do: false
 
   @doc """
   Ensure-and-return an EntityType matching the given visual source.
@@ -515,38 +574,6 @@ defmodule Boxland.Levels do
         "content_url" => asset.content_url,
         "metadata" => asset.metadata
       }
-    end)
-  end
-
-  defp entity_blocked?(level, cell_x, cell_y) do
-    level.entities
-    |> Enum.any?(fn entity ->
-      entity_cell_x = div(entity.pos_x, 32)
-      entity_cell_y = div(entity.pos_y, 32)
-      preset = preset_slug(entity)
-      preset == "collision" and entity_cell_x == cell_x and entity_cell_y == cell_y
-    end)
-  end
-
-  defp tile_blocked?(layers, assets, cell_x, cell_y) do
-    assets_by_id = Map.new(assets, &{&1.id, &1})
-
-    layers
-    |> Enum.any?(fn layer ->
-      case Map.get(layer.tiles, "#{cell_x},#{cell_y}") do
-        %{"asset_id" => asset_id, "tile_index" => tile_index} ->
-          asset = assets_by_id[asset_id]
-
-          asset &&
-            asset.metadata
-            |> Map.get("collisions", %{})
-            |> Map.get(Integer.to_string(tile_index), CollisionMask.none())
-            |> CollisionMask.to_booleans()
-            |> Enum.any?()
-
-        _ ->
-          false
-      end
     end)
   end
 

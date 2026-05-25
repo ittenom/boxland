@@ -28,7 +28,7 @@ defmodule Boxland.Entities.EntityType do
     field :actions, {:array, :map}, default: []
     field :size, :map, default: %{"w" => 1, "h" => 1}
     field :default_collision_mask, :string, default: "land"
-    field :default_z_index, :integer, default: 25
+    field :default_z_index, :integer, default: 0
 
     belongs_to :owner, Boxland.Auth.Designer
 
