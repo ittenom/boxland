@@ -6,7 +6,7 @@ defmodule BoxlandWeb.LevelEditorLive do
   alias Boxland.Levels.LevelEntity
 
   @cell_px 32
-  @tools ~w(select place delete)
+  @tools ~w(select place delete path)
 
   def mount(%{"id" => id}, _session, socket) do
     designer = socket.assigns.current_designer
@@ -115,6 +115,7 @@ defmodule BoxlandWeb.LevelEditorLive do
       "select" -> handle_cell_select(socket, cell_x, cell_y)
       "place" -> handle_cell_place(socket, cell_x, cell_y)
       "delete" -> handle_cell_delete(socket, cell_x, cell_y)
+      "path" -> handle_cell_path(socket, cell_x, cell_y)
     end
   end
 
@@ -474,6 +475,60 @@ defmodule BoxlandWeb.LevelEditorLive do
     {:noreply, assign(socket, :show_paths, not socket.assigns.show_paths)}
   end
 
+  def handle_event("movement_set", params, socket) do
+    case selected_entity(socket) do
+      nil ->
+        {:noreply, socket}
+
+      entity ->
+        current = entity.movement || %{}
+
+        next =
+          current
+          |> stash_movement_field(params, "mode")
+          |> stash_movement_field(params, "ticks_per_step")
+          |> stash_movement_field(params, "wait_at_waypoint")
+
+        {:ok, _} = Levels.update_entity(entity, %{"movement" => next})
+        {:noreply, refresh_level(socket)}
+    end
+  end
+
+  def handle_event("waypoint_clear_all", _params, socket) do
+    case selected_entity(socket) do
+      nil ->
+        {:noreply, socket}
+
+      entity ->
+        {:ok, _} = Levels.update_entity(entity, %{"waypoints" => []})
+        {:noreply, refresh_level(socket)}
+    end
+  end
+
+  def handle_event("waypoint_remove_at_cell", %{"x" => x, "y" => y}, socket) do
+    case selected_entity(socket) do
+      nil ->
+        {:noreply, socket}
+
+      entity ->
+        cx = String.to_integer(x)
+        cy = String.to_integer(y)
+        wps = entity.waypoints || []
+
+        new_wps =
+          Enum.reject(wps, fn wp ->
+            Map.get(wp, "x") == cx and Map.get(wp, "y") == cy
+          end)
+
+        if new_wps == wps do
+          {:noreply, socket}
+        else
+          {:ok, _} = Levels.update_entity(entity, %{"waypoints" => new_wps})
+          {:noreply, refresh_level(socket)}
+        end
+    end
+  end
+
   def handle_event("waypoint_remove", %{"index" => index}, socket) do
     case selected_entity(socket) do
       nil ->
@@ -572,6 +627,82 @@ defmodule BoxlandWeb.LevelEditorLive do
       gid = group_id_at(level.map, x, y) -> {:group, gid}
       tile = tile_at_on_visible(level.map, x, y) -> {:tile, elem(tile, 0).id, x, y}
       true -> nil
+    end
+  end
+
+  # In Path mode, clicks edit the selected entity's waypoint list:
+  #   - on the entity's own anchor cell → no-op (entity already starts there)
+  #   - on an existing waypoint cell    → remove that waypoint
+  #   - otherwise                       → append a new waypoint at the cell
+  # If nothing is selected, clicking an entity selects it instead.
+  defp handle_cell_path(socket, x, y) do
+    level = socket.assigns.level
+
+    case selected_entity(socket) do
+      nil ->
+        case topmost_entity_at(level, x, y) do
+          nil ->
+            {:noreply,
+             put_flash(socket, :info, "Select an entity first, then click cells to lay its path.")}
+
+          entity ->
+            {:noreply, assign(socket, :selection, {:entity, entity.id})}
+        end
+
+      entity ->
+        anchor_x = div(entity.pos_x, @cell_px)
+        anchor_y = div(entity.pos_y, @cell_px)
+        wps = entity.waypoints || []
+
+        cond do
+          x == anchor_x and y == anchor_y ->
+            {:noreply, socket}
+
+          Enum.any?(wps, &(Map.get(&1, "x") == x and Map.get(&1, "y") == y)) ->
+            new_wps =
+              Enum.reject(wps, &(Map.get(&1, "x") == x and Map.get(&1, "y") == y))
+
+            {:ok, _} = Levels.update_entity(entity, %{"waypoints" => new_wps})
+            {:noreply, refresh_level(socket)}
+
+          true ->
+            new_wps = wps ++ [%{"x" => x, "y" => y}]
+            updates = %{"waypoints" => new_wps} |> maybe_default_movement(entity)
+            {:ok, _} = Levels.update_entity(entity, updates)
+            {:noreply, refresh_level(socket)}
+        end
+    end
+  end
+
+  defp maybe_default_movement(updates, entity) do
+    case entity.movement || %{} do
+      m when map_size(m) == 0 ->
+        Map.put(updates, "movement", %{
+          "mode" => "loop",
+          "ticks_per_step" => 1,
+          "wait_at_waypoint" => 0
+        })
+
+      _ ->
+        updates
+    end
+  end
+
+  defp stash_movement_field(current, params, key) do
+    case Map.get(params, key) do
+      nil ->
+        current
+
+      value ->
+        case key do
+          "mode" ->
+            if value in LevelEntity.movement_modes(),
+              do: Map.put(current, "mode", value),
+              else: current
+
+          _ ->
+            Map.put(current, key, safe_int(value, Map.get(current, key, 0)))
+        end
     end
   end
 
@@ -948,10 +1079,10 @@ defmodule BoxlandWeb.LevelEditorLive do
     entity_cell_index = build_entity_cell_index(assigns.level)
     waypoint_markers = build_waypoint_markers(selection_entity)
 
-    {path_cells, unreachable_leg} =
+    {path_cells, path_directions, unreachable_leg} =
       if assigns.show_paths,
         do: compute_path_overlay(selection_entity, assigns.level, assigns.tilesets),
-        else: {MapSet.new(), nil}
+        else: {MapSet.new(), %{}, nil}
 
     assigns =
       assigns
@@ -962,6 +1093,7 @@ defmodule BoxlandWeb.LevelEditorLive do
       |> assign(:entity_cell_index, entity_cell_index)
       |> assign(:waypoint_markers, waypoint_markers)
       |> assign(:path_cells, path_cells)
+      |> assign(:path_directions, path_directions)
       |> assign(:unreachable_leg, unreachable_leg)
 
     ~H"""
@@ -995,6 +1127,7 @@ defmodule BoxlandWeb.LevelEditorLive do
           />
           <.tool_button icon="hero-pencil" label="P" tool="place" active={@tool == "place"} />
           <.tool_button icon="hero-x-mark" label="X" tool="delete" active={@tool == "delete"} />
+          <.tool_button icon="hero-map-pin" label="Path" tool="path" active={@tool == "path"} />
 
           <label class="ml-2 flex cursor-pointer items-center gap-1 text-xs text-base-content/70">
             <input
@@ -1025,16 +1158,18 @@ defmodule BoxlandWeb.LevelEditorLive do
             level={@level}
             layers={@layers}
             tilesets={@tilesets}
+            tool={@tool}
             selected_entity_id={selected_entity_id_for_canvas(@selection)}
             highlight_cells={@selection_highlight}
             entity_cell_index={@entity_cell_index}
             waypoint_markers={@waypoint_markers}
             path_cells={@path_cells}
+            path_directions={@path_directions}
             unreachable_leg={@unreachable_leg}
           />
 
           <div class="space-y-3">
-            <.inspector selection={@selection} entity={@selected} />
+            <.inspector selection={@selection} entity={@selected} tool={@tool} />
             <.layers_panel
               layers={display_layers(@level.map)}
               selected_layer_id={@selected_layer_id}
@@ -1129,14 +1264,16 @@ defmodule BoxlandWeb.LevelEditorLive do
     end)
   end
 
-  # Returns {MapSet of cells in the entity's projected A* route, unreachable_leg_or_nil}.
-  defp compute_path_overlay(nil, _level, _assets), do: {MapSet.new(), nil}
+  # Returns {MapSet of cells in the entity's projected A* route,
+  #          %{cell => :north|:south|:east|:west} for direction arrows,
+  #          unreachable_leg_or_nil}.
+  defp compute_path_overlay(nil, _level, _assets), do: {MapSet.new(), %{}, nil}
 
   defp compute_path_overlay(entity, level, assets) do
     waypoints = entity.waypoints || []
 
     if waypoints == [] do
-      {MapSet.new(), nil}
+      {MapSet.new(), %{}, nil}
     else
       start = {div(entity.pos_x, @cell_px), div(entity.pos_y, @cell_px)}
       z = Levels.entity_effective_z(entity)
@@ -1149,11 +1286,31 @@ defmodule BoxlandWeb.LevelEditorLive do
       opts = [bounds: {level.map.width, level.map.height}, blocked?: blocked?]
 
       case Boxland.Pathfinding.preview_path(start, waypoints, opts) do
-        :empty -> {MapSet.new(), nil}
-        {:ok, cells} -> {MapSet.new(cells), nil}
-        {:partial, cells, leg} -> {MapSet.new(cells), leg}
+        :empty -> {MapSet.new(), %{}, nil}
+        {:ok, cells} -> {MapSet.new(cells), path_direction_map(cells), nil}
+        {:partial, cells, leg} -> {MapSet.new(cells), path_direction_map(cells), leg}
       end
     end
+  end
+
+  # Build %{cell => direction} for each cell in the projected route by
+  # looking at the next cell. The last cell has no direction (it's the
+  # final waypoint or a dead-end).
+  defp path_direction_map(cells) do
+    cells
+    |> Enum.chunk_every(2, 1, :discard)
+    |> Enum.into(%{}, fn [{x1, y1}, {x2, y2}] ->
+      dir =
+        cond do
+          x2 > x1 -> :east
+          x2 < x1 -> :west
+          y2 > y1 -> :south
+          y2 < y1 -> :north
+          true -> :east
+        end
+
+      {{x1, y1}, dir}
+    end)
   end
 
   defp build_entity_cell_index(level) do
@@ -1538,83 +1695,112 @@ defmodule BoxlandWeb.LevelEditorLive do
   attr :level, :any
   attr :layers, :list
   attr :tilesets, :list
+  attr :tool, :string, default: "select"
   attr :selected_entity_id, :any
   attr :highlight_cells, :any, default: nil
   attr :entity_cell_index, :map, default: %{}
   attr :waypoint_markers, :map, default: %{}
   attr :path_cells, :any, default: nil
+  attr :path_directions, :map, default: %{}
   attr :unreachable_leg, :any, default: nil
 
   defp canvas(assigns) do
     ~H"""
-    <div
-      id="level-canvas"
-      class="overflow-auto rounded-box bg-base-200 p-4"
-    >
+    <div id="level-canvas-wrap" class="space-y-2">
       <div
-        class="relative grid w-fit gap-px"
-        style={"grid-template-columns: repeat(#{@level.map.width}, 32px);"}
+        :if={@tool == "path"}
+        id="path-tool-banner"
+        class="rounded-md border border-info/40 bg-info/10 px-3 py-1.5 text-xs text-info"
       >
-        <button
-          :for={{x, y} <- cells(@level.map.width, @level.map.height)}
-          id={"level-cell-#{x}-#{y}"}
-          phx-click="cell"
-          phx-value-x={x}
-          phx-value-y={y}
+        <strong>Path tool —</strong>
+        with an entity selected, click cells to add waypoints; click a numbered waypoint to remove it.
+      </div>
+
+      <div
+        id="level-canvas"
+        class="overflow-auto rounded-box bg-base-200 p-4"
+      >
+        <div
           class={[
-            "relative h-8 w-8 border border-base-300 bg-base-100",
-            cell_highlighted?(@highlight_cells, x, y) && "ring-2 ring-accent z-20"
+            "relative grid w-fit gap-px",
+            @tool == "path" && "cursor-crosshair",
+            @tool == "delete" && "cursor-not-allowed",
+            @tool == "place" && "cursor-pointer"
           ]}
+          style={"grid-template-columns: repeat(#{@level.map.width}, 32px);"}
         >
-          <span
-            :for={layer <- @layers}
-            class="pointer-events-none absolute inset-0 bg-no-repeat"
-            style={layer_cell_style(@tilesets, layer, x, y)}
-          />
-
-          <span
-            :if={path_cell?(@path_cells, x, y)}
-            id={"path-cell-#{x}-#{y}"}
-            class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center"
-            aria-hidden="true"
-          >
-            <span class="block h-2 w-2 rounded-full bg-info/80 shadow-[0_0_4px_rgba(59,130,246,0.6)]" />
-          </span>
-
-          <span
-            :for={covering <- Elixir.Map.get(@entity_cell_index, {x, y}, [])}
-            id={"level-entity-#{covering.entity.id}-cell-#{x}-#{y}"}
+          <button
+            :for={{x, y} <- cells(@level.map.width, @level.map.height)}
+            id={"level-cell-#{x}-#{y}"}
+            phx-click="cell"
+            phx-value-x={x}
+            phx-value-y={y}
             class={[
-              "pointer-events-none absolute inset-0 flex items-center justify-center text-[10px] font-bold opacity-40",
-              entity_cell_color_class(covering.entity),
-              covering.entity.id == @selected_entity_id && "entity-pulse"
+              "relative h-8 w-8 border border-base-300 bg-base-100",
+              cell_highlighted?(@highlight_cells, x, y) && "ring-2 ring-accent z-20"
             ]}
-            aria-label={"entity #{covering.entity.id}"}
           >
-            <span :if={covering.anchor?}>{entity_label(covering.entity)}</span>
-          </span>
+            <span
+              :for={layer <- @layers}
+              class="pointer-events-none absolute inset-0 bg-no-repeat"
+              style={layer_cell_style(@tilesets, layer, x, y)}
+            />
 
-          <span
-            :for={marker <- Elixir.Map.get(@waypoint_markers, {x, y}, [])}
-            id={"waypoint-marker-#{marker.entity_id}-#{marker.index}"}
-            class={[
-              "pointer-events-none absolute right-0 top-0 z-30 flex h-3.5 w-3.5 items-center justify-center rounded-full text-[9px] font-bold shadow",
-              if(waypoint_unreachable?(@unreachable_leg, marker.index),
-                do: "bg-error text-error-content",
-                else: "bg-warning text-warning-content"
-              )
-            ]}
-            aria-label={"waypoint #{marker.index}"}
-            title={
-              if(waypoint_unreachable?(@unreachable_leg, marker.index),
-                do: "waypoint #{marker.index} unreachable",
-                else: "waypoint #{marker.index}"
-              )
-            }
-          >
-            {marker.index}
-          </span>
-        </button>
+            <span
+              :if={path_cell?(@path_cells, x, y)}
+              id={"path-cell-#{x}-#{y}"}
+              class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center text-info/90"
+              aria-hidden="true"
+            >
+              <%= case Elixir.Map.get(@path_directions, {x, y}) do %>
+                <% :north -> %>
+                  <span class="text-[14px] leading-none">↑</span>
+                <% :south -> %>
+                  <span class="text-[14px] leading-none">↓</span>
+                <% :east -> %>
+                  <span class="text-[14px] leading-none">→</span>
+                <% :west -> %>
+                  <span class="text-[14px] leading-none">←</span>
+                <% _ -> %>
+                  <span class="block h-2 w-2 rounded-full bg-info/80 shadow-[0_0_4px_rgba(59,130,246,0.6)]" />
+              <% end %>
+            </span>
+
+            <span
+              :for={covering <- Elixir.Map.get(@entity_cell_index, {x, y}, [])}
+              id={"level-entity-#{covering.entity.id}-cell-#{x}-#{y}"}
+              class={[
+                "pointer-events-none absolute inset-0 flex items-center justify-center text-[10px] font-bold opacity-40",
+                entity_cell_color_class(covering.entity),
+                covering.entity.id == @selected_entity_id && "entity-pulse"
+              ]}
+              aria-label={"entity #{covering.entity.id}"}
+            >
+              <span :if={covering.anchor?}>{entity_label(covering.entity)}</span>
+            </span>
+
+            <span
+              :for={marker <- Elixir.Map.get(@waypoint_markers, {x, y}, [])}
+              id={"waypoint-marker-#{marker.entity_id}-#{marker.index}"}
+              class={[
+                "pointer-events-none absolute -right-1 -top-1 z-30 flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold shadow ring-2 ring-base-100",
+                if(waypoint_unreachable?(@unreachable_leg, marker.index),
+                  do: "bg-error text-error-content",
+                  else: "bg-warning text-warning-content"
+                )
+              ]}
+              aria-label={"waypoint #{marker.index}"}
+              title={
+                if(waypoint_unreachable?(@unreachable_leg, marker.index),
+                  do: "waypoint #{marker.index} unreachable",
+                  else: "waypoint #{marker.index}"
+                )
+              }
+            >
+              {marker.index}
+            </span>
+          </button>
+        </div>
       </div>
     </div>
     """
@@ -1642,6 +1828,7 @@ defmodule BoxlandWeb.LevelEditorLive do
 
   attr :selection, :any, default: nil
   attr :entity, :any
+  attr :tool, :string, default: "select"
 
   defp inspector(assigns) do
     ~H"""
@@ -1765,76 +1952,117 @@ defmodule BoxlandWeb.LevelEditorLive do
           </form>
         </div>
 
-        <div class="rounded-box bg-base-200 p-3">
+        <div class="rounded-box bg-base-200 p-3" id="inspector-path">
           <div class="mb-2 flex items-center justify-between">
             <h2 class="text-sm font-semibold uppercase tracking-wide text-base-content/70">
-              Waypoints
+              Path
             </h2>
-            <button
-              id="waypoint-add"
-              phx-click="waypoint_add"
-              class="btn btn-xs btn-primary"
-              title="Add waypoint at entity's current position"
-            >
-              <.icon name="hero-plus" class="size-3" />
-            </button>
+            <div class="flex gap-1">
+              <button
+                id="waypoint-clear"
+                phx-click="waypoint_clear_all"
+                data-confirm="Remove every waypoint on this entity?"
+                class="btn btn-xs btn-ghost"
+                title="Clear all waypoints"
+                disabled={(@entity.waypoints || []) == []}
+              >
+                Clear
+              </button>
+            </div>
           </div>
 
-          <div :if={(@entity.waypoints || []) == []} class="text-xs text-base-content/60">
-            No waypoints yet. The entity will stay put.
-          </div>
+          <% movement = LevelEntity.normalize_movement(@entity.movement) %>
+
+          <form phx-change="movement_set" class="mb-2 grid grid-cols-3 gap-2 text-xs">
+            <label class="col-span-3 flex flex-col">
+              <span class="text-base-content/60">Mode</span>
+              <select
+                id="movement-mode"
+                name="mode"
+                class="select select-xs select-bordered"
+              >
+                <option
+                  :for={{val, lbl} <- movement_mode_options()}
+                  value={val}
+                  selected={movement["mode"] == val}
+                >
+                  {lbl}
+                </option>
+              </select>
+            </label>
+            <label class="flex flex-col">
+              <span class="text-base-content/60" title="One step every N ticks">Step ÷</span>
+              <input
+                id="movement-ticks-per-step"
+                type="number"
+                name="ticks_per_step"
+                value={movement["ticks_per_step"]}
+                min="1"
+                max="100"
+                class="input input-xs input-bordered"
+              />
+            </label>
+            <label class="col-span-2 flex flex-col">
+              <span class="text-base-content/60" title="Ticks paused after each arrival">
+                Wait at WP
+              </span>
+              <input
+                id="movement-wait"
+                type="number"
+                name="wait_at_waypoint"
+                value={movement["wait_at_waypoint"]}
+                min="0"
+                max="1000"
+                class="input input-xs input-bordered"
+              />
+            </label>
+          </form>
 
           <div
-            :for={{wp, idx} <- Enum.with_index(@entity.waypoints || [])}
-            id={"waypoint-row-#{idx}"}
-            class="mb-1 flex items-center gap-1 text-xs"
+            :if={(@entity.waypoints || []) == []}
+            class="rounded bg-base-100 p-2 text-xs text-base-content/60"
           >
-            <span class="w-4 font-mono text-base-content/50">{idx + 1}.</span>
-
-            <form
-              phx-change="waypoint_set"
-              phx-value-index={idx}
-              phx-value-field="x"
-              class="contents"
-            >
-              <input
-                id={"waypoint-#{idx}-x"}
-                type="number"
-                name="value"
-                value={Map.get(wp, "x", 0)}
-                phx-debounce="300"
-                class="input input-xs input-bordered w-16"
-                aria-label="waypoint x"
-              />
-            </form>
-
-            <form
-              phx-change="waypoint_set"
-              phx-value-index={idx}
-              phx-value-field="y"
-              class="contents"
-            >
-              <input
-                id={"waypoint-#{idx}-y"}
-                type="number"
-                name="value"
-                value={Map.get(wp, "y", 0)}
-                phx-debounce="300"
-                class="input input-xs input-bordered w-16"
-                aria-label="waypoint y"
-              />
-            </form>
-
-            <button
-              id={"waypoint-remove-#{idx}"}
-              phx-click="waypoint_remove"
-              phx-value-index={idx}
-              class="btn btn-xs btn-ghost text-error ml-auto"
-              aria-label={"remove waypoint #{idx + 1}"}
-            >
-              <.icon name="hero-x-mark" class="size-3" />
-            </button>
+            <p class="mb-1 font-semibold">No waypoints yet.</p>
+            <p>
+              Switch to the
+              <span class="rounded bg-primary/10 px-1 font-mono text-primary">Path</span>
+              tool, then click cells on the map to lay this entity's route. Click an existing waypoint to remove it.
+            </p>
           </div>
+
+          <ol
+            :if={(@entity.waypoints || []) != []}
+            class="space-y-1 text-xs"
+            aria-label="waypoint list"
+          >
+            <li
+              :for={{wp, idx} <- Enum.with_index(@entity.waypoints || [])}
+              id={"waypoint-row-#{idx}"}
+              class="flex items-center gap-2 rounded bg-base-100 px-2 py-1 font-mono"
+            >
+              <span class="w-5 text-right text-base-content/50">{idx + 1}.</span>
+              <span class="flex-1">
+                ({Map.get(wp, "x", 0)}, {Map.get(wp, "y", 0)})
+              </span>
+              <button
+                id={"waypoint-remove-#{idx}"}
+                phx-click="waypoint_remove"
+                phx-value-index={idx}
+                class="btn btn-xs btn-ghost text-error"
+                aria-label={"remove waypoint #{idx + 1}"}
+                title="Remove"
+              >
+                <.icon name="hero-x-mark" class="size-3" />
+              </button>
+            </li>
+          </ol>
+
+          <p
+            :if={@tool != "path" and (@entity.waypoints || []) != []}
+            class="mt-2 text-[10px] text-base-content/50"
+          >
+            Tip: switch to the Path tool to edit waypoints on the map.
+          </p>
         </div>
 
         <div class="rounded-box bg-base-200 p-3">
@@ -1960,7 +2188,7 @@ defmodule BoxlandWeb.LevelEditorLive do
                     <option
                       :for={
                         k <-
-                          ~w(spawn_self despawn_self spawn_other despawn_other modify_property move_to_waypoint)
+                          ~w(spawn_self despawn_self spawn_other despawn_other modify_property)
                       }
                       value={k}
                       selected={action["function"]["kind"] == k}
@@ -1981,6 +2209,16 @@ defmodule BoxlandWeb.LevelEditorLive do
   # === Render helpers ===
 
   defp cells(width, height), do: for(y <- 0..(height - 1), x <- 0..(width - 1), do: {x, y})
+
+  defp movement_mode_options do
+    [
+      {"loop", "Loop (wp1 → wpN → wp1)"},
+      {"ping_pong", "Ping-pong (bounce)"},
+      {"once", "Once (stop at end)"},
+      {"random", "Random pick"},
+      {"off", "Off (don't move)"}
+    ]
+  end
 
   defp cell_highlighted?(nil, _x, _y), do: false
 

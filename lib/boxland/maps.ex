@@ -58,8 +58,11 @@ defmodule Boxland.Maps do
   end
 
   def create_layer(%Map{id: map_id}, attrs \\ %{}) do
-    name = Elixir.Map.get(attrs, :name) || Elixir.Map.get(attrs, "name") || next_layer_name(map_id)
-    z_index = Elixir.Map.get(attrs, :z_index) || Elixir.Map.get(attrs, "z_index") || next_z_index(map_id)
+    name =
+      Elixir.Map.get(attrs, :name) || Elixir.Map.get(attrs, "name") || next_layer_name(map_id)
+
+    z_index =
+      Elixir.Map.get(attrs, :z_index) || Elixir.Map.get(attrs, "z_index") || next_z_index(map_id)
 
     %Layer{}
     |> Layer.changeset(%{map_id: map_id, name: name, z_index: z_index, tiles: %{}})

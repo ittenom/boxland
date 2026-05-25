@@ -209,6 +209,7 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
     render_click(view, "type_add_action")
 
     e_after = Levels.get_entity(d.id, level.id, e.id)
+
     assert [%{"trigger" => %{"kind" => "spawn"}, "function" => %{"kind" => "despawn_self"}}] =
              e_after.entity_type.actions
   end
@@ -476,7 +477,7 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
     assert html =~ ~r{id="layer-row-#{upper.id}"[^>]*ring-accent}
   end
 
-  test "waypoint markers render on canvas when the entity is selected", %{
+  test "Path tool: clicking cells appends waypoints, clicking a waypoint cell removes it", %{
     conn: conn,
     designer: d,
     level: level
@@ -487,21 +488,49 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
 
     [e] = Levels.get_level!(d.id, level.id).entities
     render_click(view, "select_entity", %{"id" => to_string(e.id)})
-    render_click(view, "waypoint_add")
-    render_change(view, "waypoint_set", %{"index" => "0", "field" => "x", "value" => "5"})
-    render_change(view, "waypoint_set", %{"index" => "0", "field" => "y", "value" => "4"})
+
+    # Switch to the Path tool and lay a 2-waypoint route by clicking cells.
+    render_click(view, "tool", %{"tool" => "path"})
+    render_click(view, "cell", %{"x" => "5", "y" => "4"})
+    render_click(view, "cell", %{"x" => "5", "y" => "6"})
+
+    e2 = Levels.get_entity(d.id, level.id, e.id)
+    assert [%{"x" => 5, "y" => 4}, %{"x" => 5, "y" => 6}] = e2.waypoints
+
+    # Movement defaults to loop when waypoints are first added.
+    assert e2.movement["mode"] == "loop"
+
+    # Re-clicking an existing waypoint cell removes it.
+    render_click(view, "cell", %{"x" => "5", "y" => "4"})
+    e3 = Levels.get_entity(d.id, level.id, e.id)
+    assert [%{"x" => 5, "y" => 6}] = e3.waypoints
 
     html = render(view)
-    # Marker for waypoint 1 of the selected entity is on the canvas at (5, 4).
     assert html =~ ~s(id="waypoint-marker-#{e.id}-1")
-
-    # Click an empty cell to clear selection — markers go away.
-    render_click(view, "cell", %{"x" => "7", "y" => "7"})
-    html2 = render(view)
-    refute html2 =~ ~s(id="waypoint-marker-#{e.id}-1")
   end
 
-  test "inspector adds, edits, and removes waypoints", %{
+  test "waypoint markers disappear when selection is cleared", %{
+    conn: conn,
+    designer: d,
+    level: level
+  } do
+    {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+    render_click(view, "preset", %{"preset" => "sign"})
+    render_click(view, "cell", %{"x" => "1", "y" => "1"})
+
+    [e] = Levels.get_level!(d.id, level.id).entities
+    render_click(view, "select_entity", %{"id" => to_string(e.id)})
+    render_click(view, "tool", %{"tool" => "path"})
+    render_click(view, "cell", %{"x" => "5", "y" => "4"})
+
+    # Switch to select and click empty cell → selection clears, markers gone.
+    render_click(view, "tool", %{"tool" => "select"})
+    render_click(view, "cell", %{"x" => "7", "y" => "7"})
+    html = render(view)
+    refute html =~ ~s(id="waypoint-marker-#{e.id}-1")
+  end
+
+  test "inspector movement_set changes mode and waypoint_clear_all wipes the route", %{
     conn: conn,
     designer: d,
     level: level
@@ -512,22 +541,24 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
 
     [e] = Levels.get_level!(d.id, level.id).entities
     render_click(view, "select_entity", %{"id" => to_string(e.id)})
+    render_click(view, "tool", %{"tool" => "path"})
+    render_click(view, "cell", %{"x" => "4", "y" => "3"})
 
-    # Add a waypoint — default position is the entity's cell.
-    render_click(view, "waypoint_add")
-    e1 = Levels.get_entity(d.id, level.id, e.id)
-    assert [%{"x" => 2, "y" => 3}] = e1.waypoints
+    # Change mode to ping_pong via the form.
+    render_change(view, "movement_set", %{
+      "mode" => "ping_pong",
+      "ticks_per_step" => "2",
+      "wait_at_waypoint" => "3"
+    })
 
-    # Edit the y of waypoint 0.
-    render_change(view, "waypoint_set", %{"index" => "0", "field" => "y", "value" => "7"})
-    e2 = Levels.get_entity(d.id, level.id, e.id)
-    assert [%{"x" => 2, "y" => 7}] = e2.waypoints
+    updated = Levels.get_entity(d.id, level.id, e.id)
+    assert updated.movement["mode"] == "ping_pong"
+    assert updated.movement["ticks_per_step"] == 2
+    assert updated.movement["wait_at_waypoint"] == 3
 
-    # Add a second waypoint and remove the first.
-    render_click(view, "waypoint_add")
-    render_click(view, "waypoint_remove", %{"index" => "0"})
-    e3 = Levels.get_entity(d.id, level.id, e.id)
-    assert length(e3.waypoints) == 1
+    # Clear all waypoints.
+    render_click(view, "waypoint_clear_all")
+    assert Levels.get_entity(d.id, level.id, e.id).waypoints == []
   end
 
   test "promoted group entity covers every group cell and pulses when selected", %{

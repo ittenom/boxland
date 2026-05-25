@@ -202,70 +202,45 @@ defmodule Boxland.Game.EcaTest do
     end
   end
 
-  describe "move_to_waypoint" do
-    test "steps one cell toward the current target, advances index on arrival" do
-      action = %{
-        "id" => "follow",
-        "trigger" => %{"kind" => "spawn"},
-        "function" => %{"kind" => "move_to_waypoint"}
-      }
-
+  describe "auto-mover (waypoints)" do
+    test "steps one cell toward the current target each tick (loop mode)" do
       e =
-        entity("walker", %{
-          cell_x: 0,
-          cell_y: 0,
-          actions: [action]
-        })
+        entity("walker", %{cell_x: 0, cell_y: 0})
         |> Map.put(:waypoints, [%{"x" => 2, "y" => 0}, %{"x" => 2, "y" => 2}])
+        |> Map.put(:movement, %{"mode" => "loop"})
 
       w = world([e]) |> Map.put(:bounds, {5, 5})
 
-      # Tick 1: walker has spawned this tick, so spawn fires and steps one cell.
       w1 = Eca.tick(w)
       assert {w1.entities["walker"].cell_x, w1.entities["walker"].cell_y} == {1, 0}
 
-      # The spawn trigger is edge-triggered so won't re-fire on later ticks.
-      # Drive subsequent steps by re-firing via a property trigger instead.
-      step = %{
-        "id" => "step",
-        "trigger" => %{"kind" => "property", "key" => "go", "op" => "==", "value" => true},
-        "function" => %{"kind" => "move_to_waypoint"}
-      }
+      w2 = Eca.tick(w1)
+      assert {w2.entities["walker"].cell_x, w2.entities["walker"].cell_y} == {2, 0}
 
-      e2 =
-        entity("walker", %{
-          cell_x: 0,
-          cell_y: 0,
-          properties: %{"go" => true},
-          actions: [step]
-        })
-        |> Map.put(:waypoints, [%{"x" => 2, "y" => 0}])
-
-      w0 = world([e2]) |> Map.put(:bounds, {5, 5}) |> Eca.tick()
-      assert {w0.entities["walker"].cell_x, w0.entities["walker"].cell_y} == {1, 0}
+      # After arriving at wp[0], next tick advances toward wp[1] = (2, 2).
+      w3 = Eca.tick(w2)
+      assert {w3.entities["walker"].cell_x, w3.entities["walker"].cell_y} == {2, 1}
     end
 
     test "no waypoints is a no-op" do
-      action = %{
-        "id" => "f",
-        "trigger" => %{"kind" => "spawn"},
-        "function" => %{"kind" => "move_to_waypoint"}
-      }
+      e = entity("a", %{cell_x: 0, cell_y: 0}) |> Map.put(:waypoints, [])
+      w = world([e]) |> Map.put(:bounds, {5, 5}) |> Eca.tick()
+      assert {w.entities["a"].cell_x, w.entities["a"].cell_y} == {0, 0}
+    end
 
-      e = entity("a", %{cell_x: 0, cell_y: 0, actions: [action]}) |> Map.put(:waypoints, [])
+    test "movement.mode == \"off\" disables auto-move even with waypoints" do
+      e =
+        entity("a", %{cell_x: 0, cell_y: 0})
+        |> Map.put(:waypoints, [%{"x" => 2, "y" => 0}])
+        |> Map.put(:movement, %{"mode" => "off"})
+
       w = world([e]) |> Map.put(:bounds, {5, 5}) |> Eca.tick()
       assert {w.entities["a"].cell_x, w.entities["a"].cell_y} == {0, 0}
     end
 
     test "routes around blocked cells" do
-      action = %{
-        "id" => "f",
-        "trigger" => %{"kind" => "spawn"},
-        "function" => %{"kind" => "move_to_waypoint"}
-      }
-
       e =
-        entity("a", %{cell_x: 0, cell_y: 0, z: 0, actions: [action]})
+        entity("a", %{cell_x: 0, cell_y: 0, z: 0})
         |> Map.put(:waypoints, [%{"x" => 2, "y" => 0}])
 
       # (1, 0) is blocked → first step must detour through (0, 1).
@@ -275,6 +250,60 @@ defmodule Boxland.Game.EcaTest do
 
       step = {w.entities["a"].cell_x, w.entities["a"].cell_y}
       assert step in [{0, 1}]
+    end
+
+    test "ping_pong reverses direction at endpoints" do
+      e =
+        entity("p", %{cell_x: 0, cell_y: 0})
+        |> Map.put(:waypoints, [%{"x" => 0, "y" => 0}, %{"x" => 2, "y" => 0}])
+        |> Map.put(:movement, %{"mode" => "ping_pong"})
+
+      w = world([e]) |> Map.put(:bounds, {5, 5})
+
+      positions =
+        Enum.scan(1..6, w, fn _, last -> Eca.tick(last) end)
+        |> Enum.map(fn t -> {t.entities["p"].cell_x, t.entities["p"].cell_y} end)
+
+      # Tick 1: cur == wp[0] → advance only; pos still (0,0).
+      # Tick 2: → (1,0). Tick 3: → (2,0) and bounce. Tick 4: → (1,0).
+      # Tick 5: → (0,0) and bounce. Tick 6: → (1,0).
+      assert positions == [{0, 0}, {1, 0}, {2, 0}, {1, 0}, {0, 0}, {1, 0}]
+    end
+
+    test "once stops at the last waypoint" do
+      e =
+        entity("o", %{cell_x: 0, cell_y: 0})
+        |> Map.put(:waypoints, [%{"x" => 1, "y" => 0}, %{"x" => 2, "y" => 0}])
+        |> Map.put(:movement, %{"mode" => "once"})
+
+      w =
+        world([e])
+        |> Map.put(:bounds, {5, 5})
+        |> Eca.tick()
+        |> Eca.tick()
+        |> Eca.tick()
+        |> Eca.tick()
+
+      # Reaches (2, 0) and parks there.
+      assert {w.entities["o"].cell_x, w.entities["o"].cell_y} == {2, 0}
+
+      w2 = Eca.tick(w)
+      assert {w2.entities["o"].cell_x, w2.entities["o"].cell_y} == {2, 0}
+    end
+
+    test "ticks_per_step slows motion" do
+      e =
+        entity("slow", %{cell_x: 0, cell_y: 0})
+        |> Map.put(:waypoints, [%{"x" => 2, "y" => 0}])
+        |> Map.put(:movement, %{"mode" => "loop", "ticks_per_step" => 2})
+
+      w = world([e]) |> Map.put(:bounds, {5, 5})
+
+      w1 = Eca.tick(w)
+      assert {w1.entities["slow"].cell_x, w1.entities["slow"].cell_y} == {0, 0}
+
+      w2 = Eca.tick(w1)
+      assert {w2.entities["slow"].cell_x, w2.entities["slow"].cell_y} == {1, 0}
     end
   end
 

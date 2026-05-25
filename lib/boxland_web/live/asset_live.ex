@@ -336,7 +336,10 @@ defmodule BoxlandWeb.AssetLive do
         <div tabindex="0" role="button" class="btn btn-ghost btn-xs btn-square" aria-label="Actions">
           <.icon name="hero-ellipsis-vertical" class="size-4" />
         </div>
-        <ul tabindex="0" class="menu dropdown-content z-10 mt-1 w-32 rounded-box bg-base-100 p-1 shadow">
+        <ul
+          tabindex="0"
+          class="menu dropdown-content z-10 mt-1 w-32 rounded-box bg-base-100 p-1 shadow"
+        >
           <li>
             <button type="button" phx-click="rename_start" phx-value-id={@asset.id}>
               Rename
@@ -374,10 +377,20 @@ defmodule BoxlandWeb.AssetLive do
         </div>
         <div class="flex items-center gap-2">
           <span class="text-xs uppercase tracking-wide text-base-content/60">Quick set</span>
-          <button type="button" class="btn btn-sm btn-ghost" phx-click="quick_set" phx-value-mode="none">
+          <button
+            type="button"
+            class="btn btn-sm btn-ghost"
+            phx-click="quick_set"
+            phx-value-mode="none"
+          >
             Passable
           </button>
-          <button type="button" class="btn btn-sm btn-ghost" phx-click="quick_set" phx-value-mode="full">
+          <button
+            type="button"
+            class="btn btn-sm btn-ghost"
+            phx-click="quick_set"
+            phx-value-mode="full"
+          >
             Solid
           </button>
         </div>
@@ -436,7 +449,9 @@ defmodule BoxlandWeb.AssetLive do
       <div :if={@selected_asset} class="rounded-box bg-base-200/60 p-4 space-y-4">
         <header>
           <h3 class="text-base font-semibold">Tile {@selected_tile}</h3>
-          <p class="text-xs text-base-content/60">Click a tile to select, then choose a collision mode.</p>
+          <p class="text-xs text-base-content/60">
+            Click a tile to select, then choose a collision mode.
+          </p>
         </header>
 
         <.tile_preview asset={@selected_asset} selected_tile={@selected_tile} />
@@ -607,8 +622,8 @@ defmodule BoxlandWeb.AssetLive do
     ~H"""
     <form phx-change="update_polygon" phx-submit="update_polygon" class="space-y-2">
       <p class="text-xs text-base-content/60">
-        Points as <code>x,y</code> pairs separated by spaces. Example:
-        <code>0,0 31,0 31,31 0,31</code>.
+        Points as <code>x,y</code>
+        pairs separated by spaces. Example: <code>0,0 31,0 31,31 0,31</code>.
       </p>
       <textarea
         name="polygon[points]"
@@ -629,7 +644,8 @@ defmodule BoxlandWeb.AssetLive do
     ~H"""
     <form phx-change="update_colors" class="space-y-2">
       <p class="text-xs text-base-content/60">
-        Collision derived at runtime from these tile colors. Comma-separated <code>#rrggbb</code> values.
+        Collision derived at runtime from these tile colors. Comma-separated <code>#rrggbb</code>
+        values.
       </p>
       <input
         type="text"
@@ -645,7 +661,10 @@ defmodule BoxlandWeb.AssetLive do
           :for={color <- @colors_list}
           class="inline-flex items-center gap-1 rounded border border-base-300 px-2 py-1 text-xs font-mono"
         >
-          <span class="inline-block h-3 w-3 rounded border border-base-300" style={"background: #{color};"} />
+          <span
+            class="inline-block h-3 w-3 rounded border border-base-300"
+            style={"background: #{color};"}
+          />
           {color}
         </span>
       </div>

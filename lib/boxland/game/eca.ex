@@ -25,10 +25,16 @@ defmodule Boxland.Game.Eca do
 
   @max_cascade_depth 16
 
+  # Properties prefixed with underscore are runtime bookkeeping (auto-mover
+  # state) and should be filtered out of designer-facing inspectors.
+  @movement_state_keys ~w(_waypoint_index _waypoint_dir _wait_remaining _tick_counter)
+  def movement_state_keys, do: @movement_state_keys
+
   @doc """
-  Tick the world once: evaluate triggers, apply functions, return the
-  new world. `event` is `:tick | {:spawn, id} | {:despawn, id}` — for
-  forcing a lifecycle trigger directly.
+  Tick the world once: evaluate triggers, apply functions, run the
+  auto-mover (entities with waypoints + non-`off` mode move one step),
+  return the new world. `event` is `:tick | {:spawn, id} | {:despawn, id}` —
+  for forcing a lifecycle trigger directly.
   """
   def tick(world, event \\ :tick)
 
@@ -50,12 +56,12 @@ defmodule Boxland.Game.Eca do
     world
     |> Elixir.Map.put(:fired, MapSet.new())
     |> cascade(0)
+    |> auto_move()
+    |> snapshot_prev()
   end
 
   defp cascade(world, depth) when depth > @max_cascade_depth do
-    world
-    |> Elixir.Map.put(:warnings, [:max_depth_reached | world[:warnings] || []])
-    |> snapshot_prev()
+    Elixir.Map.put(world, :warnings, [:max_depth_reached | world[:warnings] || []])
   end
 
   defp cascade(world, depth) do
@@ -64,7 +70,7 @@ defmodule Boxland.Game.Eca do
     if fired_any? do
       cascade(world, depth + 1)
     else
-      snapshot_prev(world)
+      world
     end
   end
 
@@ -298,29 +304,6 @@ defmodule Boxland.Game.Eca do
     end)
   end
 
-  defp apply_function(world, self_entity, %{"kind" => "move_to_waypoint"}) do
-    entity = world.entities[self_entity.id]
-    waypoints = entity.waypoints || []
-
-    case waypoints do
-      [] ->
-        world
-
-      _ ->
-        idx = Elixir.Map.get(entity.properties || %{}, "_waypoint_index", 0)
-        target = Enum.at(waypoints, rem(idx, length(waypoints)))
-        tgt = {Elixir.Map.get(target, "x", 0), Elixir.Map.get(target, "y", 0)}
-        cur = {entity.cell_x, entity.cell_y}
-
-        if cur == tgt do
-          # Already on this waypoint — advance the index for the next tick.
-          bump_waypoint_index(world, entity, idx, length(waypoints))
-        else
-          step_along_path(world, entity, cur, tgt, idx, length(waypoints))
-        end
-    end
-  end
-
   defp apply_function(world, self_entity, %{"kind" => "modify_property"} = f) do
     targets = resolve_targets(world, self_entity, f["target"] || %{"kind" => "self"})
     key = f["key"]
@@ -336,15 +319,97 @@ defmodule Boxland.Game.Eca do
 
   defp apply_function(world, _self_entity, _), do: world
 
-  defp bump_waypoint_index(world, entity, idx, len) do
-    new_idx = rem(idx + 1, len)
+  # === Auto-mover ===
+  #
+  # Runs after triggers in every tick. Any alive entity with a non-empty
+  # `waypoints` list and a movement.mode other than "off" advances along
+  # its A* path toward the current target waypoint. Patterns:
+  #
+  #   - loop:      wp[0] → wp[1] → ... → wp[N-1] → wp[0] → ...
+  #   - ping_pong: bounce at endpoints
+  #   - once:      walk to wp[N-1] and stop
+  #   - random:    after each waypoint, pick a different one at random
+  #
+  # `ticks_per_step` slows motion (entity moves every Nth tick).
+  # `wait_at_waypoint` pauses for N ticks after arrival.
+  #
+  # Bookkeeping lives in entity.properties under reserved underscore keys
+  # so it survives ticks without needing schema changes.
 
-    update_in(world, [:entities, entity.id, :properties], fn props ->
-      Elixir.Map.put(props || %{}, "_waypoint_index", new_idx)
+  defp auto_move(world) do
+    Enum.reduce(world.entities, world, fn {id, _e}, acc ->
+      entity = acc.entities[id]
+
+      if movable?(entity) do
+        step_entity(acc, entity)
+      else
+        acc
+      end
     end)
   end
 
-  defp step_along_path(world, entity, cur, tgt, idx, len) do
+  defp movable?(%{alive: true, waypoints: [_ | _]} = entity) do
+    mode = movement_mode(entity)
+    mode != "off"
+  end
+
+  defp movable?(_), do: false
+
+  defp movement_mode(entity) do
+    case Elixir.Map.get(entity, :movement) || %{} do
+      %{"mode" => m} when m in ~w(off loop ping_pong once random) -> m
+      _ -> "loop"
+    end
+  end
+
+  defp movement_int(entity, key, default) do
+    raw = Elixir.Map.get(entity, :movement) || %{}
+
+    case Elixir.Map.get(raw, key) do
+      n when is_integer(n) and n >= 0 -> n
+      _ -> default
+    end
+  end
+
+  defp step_entity(world, entity) do
+    props = entity.properties || %{}
+    waypoints = entity.waypoints
+    len = length(waypoints)
+    mode = movement_mode(entity)
+    ticks_per_step = max(1, movement_int(entity, "ticks_per_step", 1))
+    wait = movement_int(entity, "wait_at_waypoint", 0)
+
+    counter = Elixir.Map.get(props, "_tick_counter", 0) + 1
+
+    if rem(counter, ticks_per_step) != 0 do
+      put_props(world, entity.id, Elixir.Map.put(props, "_tick_counter", counter))
+    else
+      props = Elixir.Map.put(props, "_tick_counter", 0)
+      remaining = Elixir.Map.get(props, "_wait_remaining", 0)
+
+      if remaining > 0 do
+        put_props(world, entity.id, Elixir.Map.put(props, "_wait_remaining", remaining - 1))
+      else
+        idx = Elixir.Map.get(props, "_waypoint_index", 0) |> normalize_idx(len)
+        dir = Elixir.Map.get(props, "_waypoint_dir", 1)
+
+        target_wp = Enum.at(waypoints, idx)
+        tgt = {Elixir.Map.get(target_wp, "x", 0), Elixir.Map.get(target_wp, "y", 0)}
+        cur = {entity.cell_x, entity.cell_y}
+
+        if cur == tgt do
+          # Already on the current waypoint — advance the index. No step
+          # this tick so designers can see the entity "land" between
+          # legs. (Mirrors the original move_to_waypoint behavior.)
+          advance(world, entity, props, idx, dir, len, mode, wait)
+        else
+          move_one_step(world, entity, cur, tgt, props, idx, dir, len, mode, wait)
+        end
+      end
+    end
+  end
+
+  defp move_one_step(world, entity, cur, tgt, props, idx, dir, len, mode, wait) do
     bounds = world[:bounds] || {1_000_000, 1_000_000}
     blocked_set = dig(world, [:blocked_by_z, entity.z]) || MapSet.new()
 
@@ -360,14 +425,72 @@ defmodule Boxland.Game.Eca do
           |> put_in([:entities, entity.id, :cell_y], elem(next, 1))
 
         if next == tgt do
-          bump_waypoint_index(world, entity, idx, len)
+          # Arrived in the same tick — advance index now so the next tick
+          # heads to the next waypoint without an idle "arrive" step.
+          advance(world, entity, props, idx, dir, len, mode, wait)
         else
-          world
+          put_props(world, entity.id, ensure_dir(props, idx, dir))
         end
 
       _ ->
-        world
+        # Path is blocked; remember bookkeeping and stay put.
+        put_props(world, entity.id, ensure_dir(props, idx, dir))
     end
+  end
+
+  defp advance(world, entity, props, idx, dir, len, mode, wait) do
+    {new_idx, new_dir} = next_waypoint(mode, idx, dir, len)
+
+    props =
+      props
+      |> Elixir.Map.put("_waypoint_index", new_idx)
+      |> Elixir.Map.put("_waypoint_dir", new_dir)
+      |> Elixir.Map.put("_wait_remaining", wait)
+
+    put_props(world, entity.id, props)
+  end
+
+  defp next_waypoint("loop", idx, _dir, len), do: {rem(idx + 1, len), 1}
+
+  defp next_waypoint("ping_pong", _idx, _dir, len) when len <= 1, do: {0, 1}
+
+  defp next_waypoint("ping_pong", idx, dir, len) do
+    nxt = idx + dir
+
+    cond do
+      nxt >= len -> {len - 2, -1}
+      nxt < 0 -> {1, 1}
+      true -> {nxt, dir}
+    end
+  end
+
+  defp next_waypoint("once", idx, _dir, len) do
+    if idx + 1 >= len, do: {idx, 0}, else: {idx + 1, 1}
+  end
+
+  defp next_waypoint("random", _idx, _dir, 1), do: {0, 1}
+
+  defp next_waypoint("random", idx, _dir, len) do
+    pick =
+      Stream.repeatedly(fn -> :rand.uniform(len) - 1 end)
+      |> Enum.find(fn n -> n != idx end)
+
+    {pick, 1}
+  end
+
+  defp next_waypoint(_, idx, _, len), do: {rem(idx + 1, len), 1}
+
+  defp normalize_idx(idx, len) when len > 0, do: rem(max(idx, 0), len)
+  defp normalize_idx(_, _), do: 0
+
+  defp ensure_dir(props, idx, dir) do
+    props
+    |> Elixir.Map.put("_waypoint_index", idx)
+    |> Elixir.Map.put("_waypoint_dir", dir)
+  end
+
+  defp put_props(world, id, props) do
+    put_in(world, [:entities, id, :properties], props)
   end
 
   defp apply_op(_old, "set", v), do: v
@@ -453,6 +576,7 @@ defmodule Boxland.Game.Eca do
            z: e.z_index_override || type.default_z_index,
            properties: Boxland.Entities.merge_properties(type, e.properties),
            waypoints: Elixir.Map.get(e, :waypoints, []) || [],
+           movement: Elixir.Map.get(e, :movement, %{}) || %{},
            alive: Elixir.Map.get(e.script_state || %{}, "alive", true),
            actions: type.actions || [],
            size: type.size || %{"w" => 1, "h" => 1}

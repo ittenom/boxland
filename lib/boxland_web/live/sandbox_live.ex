@@ -332,7 +332,9 @@ defmodule BoxlandWeb.SandboxLive do
         </div>
 
         <div :if={(@entity.waypoints || []) != []}>
-          <p class="font-semibold text-base-content/80">Waypoints</p>
+          <p class="font-semibold text-base-content/80">
+            Path · {movement_label(@entity)}
+          </p>
           <ol class="ml-4 list-decimal font-mono text-[11px]">
             <li
               :for={{wp, idx} <- Enum.with_index(@entity.waypoints || [])}
@@ -345,10 +347,10 @@ defmodule BoxlandWeb.SandboxLive do
           </ol>
         </div>
 
-        <div :if={(@entity.properties || %{}) != %{}}>
+        <div :if={visible_props(@entity.properties) != %{}}>
           <p class="font-semibold text-base-content/80">Properties</p>
           <ul class="ml-2 font-mono text-[11px]">
-            <li :for={{k, v} <- @entity.properties || %{}}>
+            <li :for={{k, v} <- visible_props(@entity.properties)}>
               {k} = {inspect(v)}
             </li>
           </ul>
@@ -468,6 +470,33 @@ defmodule BoxlandWeb.SandboxLive do
       end
     end
   end
+
+  defp movement_label(entity) do
+    movement = Elixir.Map.get(entity, :movement) || %{}
+    mode = Elixir.Map.get(movement, "mode", "loop")
+    ticks = Elixir.Map.get(movement, "ticks_per_step", 1)
+    wait = Elixir.Map.get(movement, "wait_at_waypoint", 0)
+
+    extras =
+      [
+        ticks > 1 && "step ÷ #{ticks}",
+        wait > 0 && "wait #{wait}"
+      ]
+      |> Enum.filter(& &1)
+
+    case extras do
+      [] -> mode
+      _ -> "#{mode} · #{Enum.join(extras, ", ")}"
+    end
+  end
+
+  defp visible_props(props) when is_map(props) do
+    props
+    |> Enum.reject(fn {k, _} -> is_binary(k) and String.starts_with?(k, "_") end)
+    |> Enum.into(%{})
+  end
+
+  defp visible_props(_), do: %{}
 
   defp current_waypoint_index(entity) do
     waypoints = entity.waypoints || []

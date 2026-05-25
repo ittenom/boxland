@@ -178,7 +178,11 @@ defmodule BoxlandWeb.MapmakerLiveTest do
       refute Map.has_key?(ground.tiles, "2,1")
     end
 
-    test "selection_rotate on a 1×1 only rotates the tile in place", %{conn: conn, map: map, ground: ground} do
+    test "selection_rotate on a 1×1 only rotates the tile in place", %{
+      conn: conn,
+      map: map,
+      ground: ground
+    } do
       {:ok, view, _html} = live(conn, ~p"/app/maps/#{map.id}")
 
       render_hook(view, "select_area_drag", %{"x1" => 1, "y1" => 1, "x2" => 1, "y2" => 1})
@@ -460,6 +464,7 @@ defmodule BoxlandWeb.MapmakerLiveTest do
       # cross-layer group in one shot.
       render_click(view, "add_layer")
       [_, upper] = Maps.list_layers(map.id) |> Enum.sort_by(& &1.z_index)
+
       {:ok, _} =
         Maps.update_layer_tiles(
           upper,
@@ -504,12 +509,13 @@ defmodule BoxlandWeb.MapmakerLiveTest do
 
       # Clipboard should hold BOTH group members.
       html = render(view)
-      assert html =~ ~s|id="clone-ghost"| or html =~ "select_area"  # render OK
+      # render OK
+      assert html =~ ~s|id="clone-ghost"| or html =~ "select_area"
       # State check via render_hook to expose internals isn't direct;
       # paste it and verify the destination gains both cells.
       render_click(view, "cell", %{"x" => "3", "y" => "3"})
 
-      [ground] = Maps.list_layers(map.id) |> Enum.filter(& &1.name == "ground")
+      [ground] = Maps.list_layers(map.id) |> Enum.filter(&(&1.name == "ground"))
       assert Map.has_key?(ground.tiles, "3,3")
       assert Map.has_key?(ground.tiles, "4,3")
     end
@@ -540,7 +546,11 @@ defmodule BoxlandWeb.MapmakerLiveTest do
       assert html =~ "extend past the map edge"
     end
 
-    test "selection_move_up moves tiles to the next layer up", %{conn: conn, map: map, ground: ground} do
+    test "selection_move_up moves tiles to the next layer up", %{
+      conn: conn,
+      map: map,
+      ground: ground
+    } do
       {:ok, view, _html} = live(conn, ~p"/app/maps/#{map.id}")
       render_click(view, "add_layer")
       # Re-select ground so the move-up source is the layer that has the tiles.
@@ -586,6 +596,7 @@ defmodule BoxlandWeb.MapmakerLiveTest do
       |> Boxland.Repo.insert()
 
     [ground] = Maps.list_layers(map.id)
+
     tiles =
       %{}
       |> Maps.put_tile(1, 1, %{asset_id: tileset.id, tile_index: 0, rotation: 0})

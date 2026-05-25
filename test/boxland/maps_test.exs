@@ -98,7 +98,12 @@ defmodule Boxland.MapsTest do
 
     test "duplicate_layer copies tiles and metadata", %{map: map} do
       primary = Boxland.Maps.primary_layer(map)
-      {:ok, primary} = Boxland.Maps.update_layer_tiles(primary, %{"0,0" => %{"asset_id" => 1, "tile_index" => 0, "rotation" => 0}})
+
+      {:ok, primary} =
+        Boxland.Maps.update_layer_tiles(primary, %{
+          "0,0" => %{"asset_id" => 1, "tile_index" => 0, "rotation" => 0}
+        })
+
       {:ok, dup} = Boxland.Maps.duplicate_layer(primary)
 
       assert dup.tiles == primary.tiles

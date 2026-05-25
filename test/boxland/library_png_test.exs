@@ -20,7 +20,9 @@ defmodule Boxland.LibraryPngTest do
   end
 
   test "visible_tile_indexes drops fully transparent tiles" do
-    path = Path.join(System.tmp_dir!(), "boxland-alpha-test-#{System.unique_integer([:positive])}.png")
+    path =
+      Path.join(System.tmp_dir!(), "boxland-alpha-test-#{System.unique_integer([:positive])}.png")
+
     File.write!(path, rgba_png_bytes(64, 32, fn x, _y -> if x < 32, do: 0, else: 255 end))
 
     try do

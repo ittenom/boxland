@@ -57,9 +57,14 @@ defmodule BoxlandWeb.MapmakerLive do
 
       key == "Escape" ->
         cond do
-          socket.assigns.move != nil -> cancel_move(socket)
-          socket.assigns.tool == "clone" -> {:noreply, assign(socket, tool: "select_area", cursor_cell: nil)}
-          true -> {:noreply, assign(socket, :selection, nil)}
+          socket.assigns.move != nil ->
+            cancel_move(socket)
+
+          socket.assigns.tool == "clone" ->
+            {:noreply, assign(socket, tool: "select_area", cursor_cell: nil)}
+
+          true ->
+            {:noreply, assign(socket, :selection, nil)}
         end
 
       key in ["z", "Z"] and truthy?(params["metaKey"] || params["ctrlKey"]) and
@@ -152,8 +157,11 @@ defmodule BoxlandWeb.MapmakerLive do
         block = Maps.effective_block(socket.assigns.map, selection_cells(selection), layer.id)
 
         case Maps.delete_cells_across_layers(socket.assigns.map, block) do
-          {:ok, updates} -> {:noreply, socket |> apply_layer_updates(updates) |> push_undo_for(updates)}
-          {:error, _} -> {:noreply, socket}
+          {:ok, updates} ->
+            {:noreply, socket |> apply_layer_updates(updates) |> push_undo_for(updates)}
+
+          {:error, _} ->
+            {:noreply, socket}
         end
     end
   end
@@ -192,7 +200,8 @@ defmodule BoxlandWeb.MapmakerLive do
             {:noreply, put_flash(socket, :error, "Rotation would extend past the map edge.")}
 
           {:error, :layer_not_editable} ->
-            {:noreply, put_flash(socket, :error, "One of the affected layers is locked or hidden.")}
+            {:noreply,
+             put_flash(socket, :error, "One of the affected layers is locked or hidden.")}
 
           {:error, _} ->
             {:noreply, socket}
@@ -229,8 +238,11 @@ defmodule BoxlandWeb.MapmakerLive do
       cells = selection_cells(selection)
 
       case Maps.ungroup_cells(socket.assigns.map, cells) do
-        {:ok, []} -> {:noreply, socket}
-        {:ok, _gids} -> {:noreply, socket |> refresh_map() |> put_flash(:info, "Tiles ungrouped.")}
+        {:ok, []} ->
+          {:noreply, socket}
+
+        {:ok, _gids} ->
+          {:noreply, socket |> refresh_map() |> put_flash(:info, "Tiles ungrouped.")}
       end
     end
   end
@@ -425,7 +437,11 @@ defmodule BoxlandWeb.MapmakerLive do
           <div
             id="mapmaker-canvas"
             phx-hook="MapmakerCanvas"
-            data-tool={if active_layer(@map, @selected_layer_id) |> layer_editable?(), do: @tool, else: "select"}
+            data-tool={
+              if active_layer(@map, @selected_layer_id) |> layer_editable?(),
+                do: @tool,
+                else: "select"
+            }
             class="overflow-auto rounded-box bg-base-200 p-2"
           >
             <div
@@ -565,8 +581,12 @@ defmodule BoxlandWeb.MapmakerLive do
   attr :selected_layer, :any, required: true
 
   defp selection_menu(assigns) do
-    can_up = assigns.selected_layer && neighbor_layer(assigns.map, assigns.selected_layer, :up) != nil
-    can_down = assigns.selected_layer && neighbor_layer(assigns.map, assigns.selected_layer, :down) != nil
+    can_up =
+      assigns.selected_layer && neighbor_layer(assigns.map, assigns.selected_layer, :up) != nil
+
+    can_down =
+      assigns.selected_layer && neighbor_layer(assigns.map, assigns.selected_layer, :down) != nil
+
     w = assigns.selection.x2 - assigns.selection.x1 + 1
     h = assigns.selection.y2 - assigns.selection.y1 + 1
 
@@ -576,7 +596,12 @@ defmodule BoxlandWeb.MapmakerLive do
       |> Kernel.!=([])
 
     assigns =
-      assign(assigns, can_up: can_up, can_down: can_down, dims: "#{w}×#{h}", has_groups: has_groups)
+      assign(assigns,
+        can_up: can_up,
+        can_down: can_down,
+        dims: "#{w}×#{h}",
+        has_groups: has_groups
+      )
 
     ~H"""
     <div
@@ -1028,7 +1053,9 @@ defmodule BoxlandWeb.MapmakerLive do
       end
 
     case entries do
-      [] -> socket
+      [] ->
+        socket
+
       _ ->
         socket
         |> assign(:undo_stack, entries ++ socket.assigns.undo_stack)
@@ -1130,7 +1157,14 @@ defmodule BoxlandWeb.MapmakerLive do
 
         records =
           Enum.map(block, fn {lid, x, y, tile} ->
-            %{layer_id: lid, source_x: x, source_y: y, dx: x - origin_x, dy: y - origin_y, tile: tile}
+            %{
+              layer_id: lid,
+              source_x: x,
+              source_y: y,
+              dx: x - origin_x,
+              dy: y - origin_y,
+              tile: tile
+            }
           end)
 
         move = %{
@@ -1185,7 +1219,7 @@ defmodule BoxlandWeb.MapmakerLive do
         source_layers = move.records |> Enum.map(& &1.layer_id) |> Enum.uniq()
 
         place_records =
-          if length(source_layers) == 1 and active && hd(source_layers) != active.id do
+          if (length(source_layers) == 1 and active) && hd(source_layers) != active.id do
             Enum.map(move.records, fn r ->
               %{layer_id: active.id, dx: r.dx, dy: r.dy, tile: r.tile}
             end)
@@ -1488,7 +1522,10 @@ defmodule BoxlandWeb.MapmakerLive do
 
   defp replace_layer(socket, updated_layer) do
     map = socket.assigns.map
-    new_layers = Enum.map(map.layers, fn l -> if l.id == updated_layer.id, do: updated_layer, else: l end)
+
+    new_layers =
+      Enum.map(map.layers, fn l -> if l.id == updated_layer.id, do: updated_layer, else: l end)
+
     assign(socket, :map, %{map | layers: new_layers})
   end
 end

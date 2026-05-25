@@ -158,4 +158,54 @@ defmodule BoxlandWeb.SandboxLiveTest do
     html = render_click(view, "move", %{"dx" => "1", "dy" => "0"})
     assert html =~ "Blocked"
   end
+
+  test "entity with waypoints walks its route when the user clicks Step", %{
+    conn: conn,
+    designer: d,
+    level: level
+  } do
+    # Spawn a sign-preset entity at (0,0) with a waypoint at (2,0). The
+    # auto-mover should step it one cell per tick toward the waypoint.
+    {:ok, walker} = Levels.create_preset_entity(d.id, level.id, "sign", 0, 0)
+
+    {:ok, walker} =
+      Levels.update_entity(walker, %{
+        "waypoints" => [%{"x" => 2, "y" => 0}],
+        "movement" => %{"mode" => "loop"}
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}/sandbox")
+
+    # Click Step a few times; the walker should be at (2,0) after 2 ticks.
+    render_click(view, "step")
+    render_click(view, "step")
+
+    html = render(view)
+    assert html =~ "sandbox-entity-#{walker.id}-cell-2-0"
+  end
+
+  test "movement.mode == off keeps an entity with waypoints stationary", %{
+    conn: conn,
+    designer: d,
+    level: level
+  } do
+    {:ok, e} = Levels.create_preset_entity(d.id, level.id, "sign", 0, 0)
+
+    {:ok, _e} =
+      Levels.update_entity(e, %{
+        "waypoints" => [%{"x" => 3, "y" => 0}],
+        "movement" => %{"mode" => "off"}
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}/sandbox")
+
+    render_click(view, "step")
+    render_click(view, "step")
+    render_click(view, "step")
+
+    html = render(view)
+    # Still anchored at (0,0); never moved to (1,0).
+    assert html =~ "sandbox-entity-#{e.id}-cell-0-0"
+    refute html =~ "sandbox-entity-#{e.id}-cell-1-0"
+  end
 end
