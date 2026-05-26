@@ -17,6 +17,8 @@ defmodule BoxlandWeb.SandboxLive do
       |> Elixir.Map.update!(:map, &Repo.preload(&1, layers: layer_order()))
 
     tilesets = Library.list_tilesets(designer.id)
+    sprites = list_sprites(designer.id)
+    assets_by_id = Elixir.Map.new(tilesets ++ sprites, &{&1.id, &1})
 
     {player, player_z} = spawn_state(level)
     blocked_by_z = Levels.blocked_cells_by_z(level, tilesets)
@@ -26,6 +28,7 @@ defmodule BoxlandWeb.SandboxLive do
      socket
      |> assign(:level, level)
      |> assign(:tilesets, tilesets)
+     |> assign(:assets_by_id, assets_by_id)
      |> assign(:player, player)
      |> assign(:player_z, player_z)
      |> assign(:world, world)
@@ -151,6 +154,7 @@ defmodule BoxlandWeb.SandboxLive do
     entity_cell_index = build_world_entity_cell_index(world_entities)
     selected = selected_world_entity(assigns)
     path_cells = path_cells_for(selected, assigns)
+    entity_sprite_styles = compute_entity_sprite_styles(assigns.level, assigns.assets_by_id)
 
     assigns =
       assigns
@@ -159,6 +163,7 @@ defmodule BoxlandWeb.SandboxLive do
       |> assign(:entity_cell_index, entity_cell_index)
       |> assign(:selected, selected)
       |> assign(:path_cells, path_cells)
+      |> assign(:entity_sprite_styles, entity_sprite_styles)
       |> assign(:min_tick_rate_ms, @min_tick_rate_ms)
       |> assign(:max_tick_rate_ms, @max_tick_rate_ms)
 
@@ -260,14 +265,22 @@ defmodule BoxlandWeb.SandboxLive do
                   phx-click="select_entity"
                   phx-value-id={covering.entity.id}
                   class={[
-                    "absolute inset-0 z-20 flex items-center justify-center text-[10px] font-bold opacity-90 transition-all duration-150",
-                    world_entity_color(covering.entity),
+                    "absolute inset-0 z-20 flex items-center justify-center text-[10px] font-bold transition-all duration-150",
+                    is_nil(@entity_sprite_styles[covering.entity.id]) &&
+                      ["opacity-90", world_entity_color(covering.entity)],
                     @selected_entity_id == covering.entity.id && "ring-2 ring-accent z-30"
                   ]}
                   aria-label={"entity #{covering.entity.id}"}
                   title={world_entity_title(covering.entity)}
                 >
-                  <span :if={covering.anchor?}>{world_entity_label(covering.entity)}</span>
+                  <span
+                    :if={@entity_sprite_styles[covering.entity.id]}
+                    class="pointer-events-none absolute inset-0 bg-no-repeat"
+                    style={@entity_sprite_styles[covering.entity.id]}
+                  />
+                  <span :if={covering.anchor? and is_nil(@entity_sprite_styles[covering.entity.id])}>
+                    {world_entity_label(covering.entity)}
+                  </span>
                 </button>
 
                 <span
@@ -629,6 +642,71 @@ defmodule BoxlandWeb.SandboxLive do
     y = div(index, columns) * 32
 
     "background-image: url('#{asset.content_url}'); background-position: -#{x}px -#{y}px;"
+  end
+
+  defp compute_entity_sprite_styles(level, assets_by_id) do
+    Elixir.Map.new(level.entities, fn e ->
+      {e.id, world_entity_sprite_style(e.entity_type.visual_ref, assets_by_id, level)}
+    end)
+  end
+
+  defp world_entity_sprite_style(%{"kind" => "tile"} = ref, assets_by_id, _level) do
+    asset_id = ref["asset_id"]
+    index = ref["tile_index"]
+    rotation = Elixir.Map.get(ref, "rotation", 0)
+
+    case Elixir.Map.get(assets_by_id, asset_id) do
+      nil -> nil
+      asset -> tile_style(asset, index) <> " transform: rotate(#{rotation}deg);"
+    end
+  end
+
+  defp world_entity_sprite_style(%{"kind" => "sprite", "asset_id" => asset_id}, assets_by_id, _level) do
+    case Elixir.Map.get(assets_by_id, asset_id) do
+      nil -> nil
+      asset -> sprite_full_style(asset)
+    end
+  end
+
+  defp world_entity_sprite_style(%{"kind" => "group", "group_id" => gid}, assets_by_id, level) do
+    case group_anchor_tile(gid, level) do
+      nil ->
+        nil
+
+      tile ->
+        rotation = Elixir.Map.get(tile, "rotation", 0)
+
+        case Elixir.Map.get(assets_by_id, tile["asset_id"]) do
+          nil -> nil
+          asset -> tile_style(asset, tile["tile_index"]) <> " transform: rotate(#{rotation}deg);"
+        end
+    end
+  end
+
+  defp world_entity_sprite_style(_ref, _assets_by_id, _level), do: nil
+
+  defp group_anchor_tile(gid, level) do
+    Enum.find_value(level.map.layers, fn layer ->
+      Enum.find_value(layer.tiles, fn
+        {_k, %{"group_id" => ^gid} = tile} -> tile
+        _ -> nil
+      end)
+    end)
+  end
+
+  defp sprite_full_style(asset) do
+    "background-image: url('#{asset.content_url}');" <>
+      " background-size: contain;" <>
+      " background-position: center;" <>
+      " image-rendering: pixelated;"
+  end
+
+  defp list_sprites(owner_id) do
+    import Ecto.Query
+
+    Boxland.Library.Asset
+    |> where([a], a.owner_id == ^owner_id and a.kind == "sprite")
+    |> Repo.all()
   end
 
   defp safe_int(v, default) when is_binary(v) do
