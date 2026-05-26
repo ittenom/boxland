@@ -151,10 +151,10 @@ defmodule BoxlandWeb.SandboxLive do
   def render(assigns) do
     layers = visible_layers(assigns.level.map)
     world_entities = alive_world_entities(assigns.world)
-    entity_cell_index = build_world_entity_cell_index(world_entities)
+    entity_sprite_styles = compute_entity_sprite_styles(assigns.level, assigns.assets_by_id)
+    entity_cell_index = build_world_entity_cell_index(world_entities, entity_sprite_styles)
     selected = selected_world_entity(assigns)
     path_cells = path_cells_for(selected, assigns)
-    entity_sprite_styles = compute_entity_sprite_styles(assigns.level, assigns.assets_by_id)
     entity_design_tiles = build_entity_design_tile_index(assigns.level)
 
     assigns =
@@ -254,12 +254,12 @@ defmodule BoxlandWeb.SandboxLive do
                         class="pointer-events-none absolute inset-0 bg-no-repeat"
                         style={layer_cell_style(@tilesets, layer, x, y)}
                       />
-                    <% {:entity_sprite, entity} -> %>
+                    <% {:entity_sprite, entity, offset} -> %>
                       <span
-                        :if={@entity_sprite_styles[entity.id]}
-                        id={"sandbox-entity-sprite-#{entity.id}"}
+                        :if={entity_sprite_at(@entity_sprite_styles, entity.id, offset)}
+                        id={sprite_dom_id(entity.id, offset)}
                         class="pointer-events-none absolute inset-0 bg-no-repeat"
-                        style={@entity_sprite_styles[entity.id]}
+                        style={entity_sprite_at(@entity_sprite_styles, entity.id, offset)}
                       />
                   <% end %>
                 <% end %>
@@ -273,21 +273,21 @@ defmodule BoxlandWeb.SandboxLive do
                 </span>
 
                 <button
-                  :for={covering <- Elixir.Map.get(@entity_cell_index, {x, y}, [])}
+                  :for={covering <- anchor_entities_in_cell(@entity_cell_index, x, y)}
                   id={"sandbox-entity-#{covering.entity.id}"}
                   data-cell={"#{x}-#{y}"}
                   phx-click="select_entity"
                   phx-value-id={covering.entity.id}
                   class={[
                     "absolute inset-0 z-20 flex items-center justify-center text-[10px] font-bold",
-                    is_nil(@entity_sprite_styles[covering.entity.id]) &&
+                    entity_sprite_empty?(@entity_sprite_styles, covering.entity.id) &&
                       ["opacity-90", world_entity_color(covering.entity)],
                     @selected_entity_id == covering.entity.id && "ring-2 ring-accent z-30"
                   ]}
                   aria-label={"entity #{covering.entity.id}"}
                   title={world_entity_title(covering.entity)}
                 >
-                  <span :if={covering.anchor? and is_nil(@entity_sprite_styles[covering.entity.id])}>
+                  <span :if={entity_sprite_empty?(@entity_sprite_styles, covering.entity.id)}>
                     {world_entity_label(covering.entity)}
                   </span>
                 </button>
@@ -449,24 +449,46 @@ defmodule BoxlandWeb.SandboxLive do
     |> Enum.sort_by(& &1.z)
   end
 
-  defp build_world_entity_cell_index(world_entities) do
+  # Builds a cell-keyed index of which entities are visible on each cell.
+  # A group-bound entity covers every cell its sprite footprint reaches
+  # (anchor plus member-tile offsets), so we register an entry at each
+  # `(cell_x + dx, cell_y + dy)` and tag only the anchor with `anchor?: true`.
+  defp build_world_entity_cell_index(world_entities, sprite_styles) do
     Enum.reduce(world_entities, %{}, fn entity, acc ->
-      cell = {entity.cell_x, entity.cell_y}
+      offsets =
+        case sprite_styles |> Elixir.Map.get(entity.id, %{}) |> Elixir.Map.keys() do
+          [] -> [{0, 0}]
+          keys -> keys
+        end
 
-      Elixir.Map.update(acc, cell, [%{entity: entity, anchor?: true}], fn list ->
-        [%{entity: entity, anchor?: true} | list]
+      Enum.reduce(offsets, acc, fn {dx, dy} = offset, acc ->
+        cell = {entity.cell_x + dx, entity.cell_y + dy}
+        entry = %{entity: entity, anchor?: offset == {0, 0}, offset: offset}
+        Elixir.Map.update(acc, cell, [entry], &[entry | &1])
       end)
     end)
   end
 
-  # Maps each level entity's *design* cell to its visual_ref. Lets the
-  # sandbox suppress a layer tile that is logically "owned" by an entity
-  # so the entity's sprite can move freely instead of leaving a stale
-  # tile behind.
+  # Maps each level entity's *design* cell(s) to its visual_ref. For a
+  # group-bound entity this expands to every cell the group occupies on
+  # the map, so the sandbox can suppress every painted layer tile that
+  # belongs to that group — not just the anchor — and the moving entity
+  # leaves no body parts behind.
   defp build_entity_design_tile_index(level) do
-    Elixir.Map.new(level.entities, fn e ->
-      cell = {div(e.pos_x, 32), div(e.pos_y, 32)}
-      {cell, e.entity_type.visual_ref}
+    Enum.reduce(level.entities, %{}, fn e, acc ->
+      case e.entity_type.visual_ref do
+        %{"kind" => "group", "group_id" => gid} = ref ->
+          Enum.reduce(group_members_indexed(gid, level), acc, fn {x, y, _tile}, acc ->
+            Elixir.Map.put(acc, {x, y}, ref)
+          end)
+
+        nil ->
+          acc
+
+        ref ->
+          cell = {div(e.pos_x, 32), div(e.pos_y, 32)}
+          Elixir.Map.put(acc, cell, ref)
+      end
     end)
   end
 
@@ -476,10 +498,7 @@ defmodule BoxlandWeb.SandboxLive do
   # whole canvas. A layer tile that matches an entity's design-position
   # visual_ref is suppressed — the entity's sprite replaces it.
   defp cell_stack(layers, tilesets, entity_cell_index, design_tiles, x, y) do
-    cell_entities =
-      entity_cell_index
-      |> Elixir.Map.get({x, y}, [])
-      |> Enum.map(& &1.entity)
+    cell_entries = Elixir.Map.get(entity_cell_index, {x, y}, [])
 
     layer_items =
       Enum.map(layers, fn layer ->
@@ -490,8 +509,8 @@ defmodule BoxlandWeb.SandboxLive do
       end)
 
     entity_items =
-      Enum.map(cell_entities, fn entity ->
-        {entity.z || 0, :entity_order, {:entity_sprite, entity}}
+      Enum.map(cell_entries, fn %{entity: entity, offset: offset} ->
+        {entity.z || 0, :entity_order, {:entity_sprite, entity, offset}}
       end)
 
     (layer_items ++ entity_items)
@@ -715,15 +734,50 @@ defmodule BoxlandWeb.SandboxLive do
     "background-image: url('#{asset.content_url}'); background-position: -#{x}px -#{y}px;"
   end
 
+  # For each level entity, returns a per-offset map of sprite CSS styles.
+  # Single-cell entities have one entry at offset {0, 0}; group-bound
+  # entities have one entry per member tile, keyed by `(dx, dy)` relative
+  # to the entity's design (anchor) cell.
   defp compute_entity_sprite_styles(level, assets_by_id) do
     Elixir.Map.new(level.entities, fn e ->
-      {e.id, world_entity_sprite_style(e.entity_type.visual_ref, assets_by_id, level)}
+      {e.id, entity_sprite_offsets(e, assets_by_id, level)}
     end)
   end
 
-  defp world_entity_sprite_style(%{"kind" => "tile"} = ref, assets_by_id, _level) do
-    asset_id = ref["asset_id"]
-    index = ref["tile_index"]
+  defp entity_sprite_offsets(e, assets_by_id, level) do
+    case e.entity_type.visual_ref do
+      %{"kind" => "group", "group_id" => gid} ->
+        anchor_x = div(e.pos_x, 32)
+        anchor_y = div(e.pos_y, 32)
+
+        gid
+        |> group_members_indexed(level)
+        |> Enum.flat_map(fn {x, y, tile} ->
+          case tile_sprite_style(tile, assets_by_id) do
+            nil -> []
+            style -> [{{x - anchor_x, y - anchor_y}, style}]
+          end
+        end)
+        |> Elixir.Map.new()
+
+      %{"kind" => "tile"} = ref ->
+        case tile_sprite_style(ref, assets_by_id) do
+          nil -> %{}
+          style -> %{{0, 0} => style}
+        end
+
+      %{"kind" => "sprite", "asset_id" => asset_id} ->
+        case Elixir.Map.get(assets_by_id, asset_id) do
+          nil -> %{}
+          asset -> %{{0, 0} => sprite_full_style(asset)}
+        end
+
+      _ ->
+        %{}
+    end
+  end
+
+  defp tile_sprite_style(%{"asset_id" => asset_id, "tile_index" => index} = ref, assets_by_id) do
     rotation = Elixir.Map.get(ref, "rotation", 0)
 
     case Elixir.Map.get(assets_by_id, asset_id) do
@@ -732,38 +786,39 @@ defmodule BoxlandWeb.SandboxLive do
     end
   end
 
-  defp world_entity_sprite_style(%{"kind" => "sprite", "asset_id" => asset_id}, assets_by_id, _level) do
-    case Elixir.Map.get(assets_by_id, asset_id) do
-      nil -> nil
-      asset -> sprite_full_style(asset)
+  defp tile_sprite_style(_ref, _assets_by_id), do: nil
+
+  defp group_members_indexed(gid, level) do
+    for layer <- level.map.layers || [],
+        {k, tile} <- layer.tiles || %{},
+        tile["group_id"] == gid do
+      {x, y} = Maps.parse_key(k)
+      {x, y, tile}
     end
   end
 
-  defp world_entity_sprite_style(%{"kind" => "group", "group_id" => gid}, assets_by_id, level) do
-    case group_anchor_tile(gid, level) do
-      nil ->
-        nil
+  defp anchor_entities_in_cell(entity_cell_index, x, y) do
+    entity_cell_index
+    |> Elixir.Map.get({x, y}, [])
+    |> Enum.filter(& &1.anchor?)
+  end
 
-      tile ->
-        rotation = Elixir.Map.get(tile, "rotation", 0)
+  defp entity_sprite_at(styles, entity_id, offset) do
+    styles
+    |> Elixir.Map.get(entity_id, %{})
+    |> Elixir.Map.get(offset)
+  end
 
-        case Elixir.Map.get(assets_by_id, tile["asset_id"]) do
-          nil -> nil
-          asset -> tile_style(asset, tile["tile_index"]) <> " transform: rotate(#{rotation}deg);"
-        end
+  defp entity_sprite_empty?(styles, entity_id) do
+    case Elixir.Map.get(styles, entity_id) do
+      nil -> true
+      m when map_size(m) == 0 -> true
+      _ -> false
     end
   end
 
-  defp world_entity_sprite_style(_ref, _assets_by_id, _level), do: nil
-
-  defp group_anchor_tile(gid, level) do
-    Enum.find_value(level.map.layers, fn layer ->
-      Enum.find_value(layer.tiles, fn
-        {_k, %{"group_id" => ^gid} = tile} -> tile
-        _ -> nil
-      end)
-    end)
-  end
+  defp sprite_dom_id(entity_id, {0, 0}), do: "sandbox-entity-sprite-#{entity_id}"
+  defp sprite_dom_id(entity_id, {dx, dy}), do: "sandbox-entity-sprite-#{entity_id}-#{dx}-#{dy}"
 
   defp sprite_full_style(asset) do
     "background-image: url('#{asset.content_url}');" <>
