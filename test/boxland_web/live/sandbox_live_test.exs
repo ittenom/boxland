@@ -181,7 +181,7 @@ defmodule BoxlandWeb.SandboxLiveTest do
     render_click(view, "step")
 
     html = render(view)
-    assert html =~ "sandbox-entity-#{walker.id}-cell-2-0"
+    assert html =~ ~s(id="sandbox-entity-#{walker.id}" data-cell="2-0")
   end
 
   test "movement.mode == off keeps an entity with waypoints stationary", %{
@@ -205,7 +205,73 @@ defmodule BoxlandWeb.SandboxLiveTest do
 
     html = render(view)
     # Still anchored at (0,0); never moved to (1,0).
-    assert html =~ "sandbox-entity-#{e.id}-cell-0-0"
-    refute html =~ "sandbox-entity-#{e.id}-cell-1-0"
+    assert html =~ ~s(id="sandbox-entity-#{e.id}" data-cell="0-0")
+    refute html =~ ~s(id="sandbox-entity-#{e.id}" data-cell="1-0")
+  end
+
+  test "layer tile at an entity's design cell is suppressed so the entity moves alone",
+       %{conn: conn, designer: d, level: level} do
+    # Upload a tileset asset and paint one tile into a layer at (0,0).
+    {:ok, tileset} =
+      %Boxland.Library.Asset{}
+      |> Boxland.Library.Asset.changeset(%{
+        owner_id: d.id,
+        kind: "tileset",
+        name: "ts",
+        sha256: :crypto.hash(:sha256, "ts-bytes"),
+        content_url: "https://cdn.example.com/ts.png",
+        byte_size: 100,
+        mime_type: "image/png",
+        metadata: %{
+          "tile_size" => 32,
+          "width" => 32,
+          "height" => 32,
+          "rows" => 1,
+          "columns" => 1,
+          "tile_count" => 1,
+          "tile_indexes" => [0],
+          "collisions" => %{}
+        }
+      })
+      |> Repo.insert()
+
+    level = Repo.preload(level, map: :layers)
+    [layer | _] = level.map.layers
+
+    {:ok, layer} =
+      Maps.update_layer_tiles(
+        layer,
+        Maps.put_tile(%{}, 0, 0, %{asset_id: tileset.id, tile_index: 0, rotation: 0})
+      )
+
+    # Spawn a kind:tile entity at the same cell whose visual_ref matches
+    # the painted tile. The sandbox should hide the layer tile so only
+    # the entity (which can move) is rendered there.
+    {:ok, type} = Levels.ensure_entity_type_for(d.id, {:tile, tileset.id, 0})
+
+    {:ok, walker} =
+      Levels.spawn_entity(d.id, level.id, %{
+        "entity_type_id" => type.id,
+        "pos_x" => 0,
+        "pos_y" => 0,
+        "z_index_override" => layer.z_index
+      })
+
+    {:ok, _walker} =
+      Levels.update_entity(walker, %{
+        "waypoints" => [%{"x" => 2, "y" => 0}],
+        "movement" => %{"mode" => "loop"}
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}/sandbox")
+    render_click(view, "step")
+    render_click(view, "step")
+
+    html = render(view)
+    # The entity sprite span must only appear once.
+    sprite_id = "sandbox-entity-sprite-#{walker.id}"
+    occurrences = html |> String.split(~s(id="#{sprite_id}")) |> length()
+    # length - 1 == number of occurrences
+    assert occurrences - 1 == 1, "expected exactly one entity sprite, got #{occurrences - 1}"
   end
 end

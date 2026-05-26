@@ -155,6 +155,7 @@ defmodule BoxlandWeb.SandboxLive do
     selected = selected_world_entity(assigns)
     path_cells = path_cells_for(selected, assigns)
     entity_sprite_styles = compute_entity_sprite_styles(assigns.level, assigns.assets_by_id)
+    entity_design_tiles = build_entity_design_tile_index(assigns.level)
 
     assigns =
       assigns
@@ -164,6 +165,7 @@ defmodule BoxlandWeb.SandboxLive do
       |> assign(:selected, selected)
       |> assign(:path_cells, path_cells)
       |> assign(:entity_sprite_styles, entity_sprite_styles)
+      |> assign(:entity_design_tiles, entity_design_tiles)
       |> assign(:min_tick_rate_ms, @min_tick_rate_ms)
       |> assign(:max_tick_rate_ms, @max_tick_rate_ms)
 
@@ -245,11 +247,22 @@ defmodule BoxlandWeb.SandboxLive do
                 id={"sandbox-cell-#{x}-#{y}"}
                 class="relative h-8 w-8 border border-base-300 bg-base-100"
               >
-                <span
-                  :for={layer <- @layers}
-                  class="pointer-events-none absolute inset-0 bg-no-repeat"
-                  style={layer_cell_style(@tilesets, layer, x, y)}
-                />
+                <%= for item <- cell_stack(@layers, @tilesets, @entity_cell_index, @entity_design_tiles, x, y) do %>
+                  <%= case item do %>
+                    <% {:layer, layer} -> %>
+                      <span
+                        class="pointer-events-none absolute inset-0 bg-no-repeat"
+                        style={layer_cell_style(@tilesets, layer, x, y)}
+                      />
+                    <% {:entity_sprite, entity} -> %>
+                      <span
+                        :if={@entity_sprite_styles[entity.id]}
+                        id={"sandbox-entity-sprite-#{entity.id}"}
+                        class="pointer-events-none absolute inset-0 bg-no-repeat"
+                        style={@entity_sprite_styles[entity.id]}
+                      />
+                  <% end %>
+                <% end %>
 
                 <span
                   :if={MapSet.member?(@path_cells, {x, y})}
@@ -261,11 +274,12 @@ defmodule BoxlandWeb.SandboxLive do
 
                 <button
                   :for={covering <- Elixir.Map.get(@entity_cell_index, {x, y}, [])}
-                  id={"sandbox-entity-#{covering.entity.id}-cell-#{x}-#{y}"}
+                  id={"sandbox-entity-#{covering.entity.id}"}
+                  data-cell={"#{x}-#{y}"}
                   phx-click="select_entity"
                   phx-value-id={covering.entity.id}
                   class={[
-                    "absolute inset-0 z-20 flex items-center justify-center text-[10px] font-bold transition-all duration-150",
+                    "absolute inset-0 z-20 flex items-center justify-center text-[10px] font-bold",
                     is_nil(@entity_sprite_styles[covering.entity.id]) &&
                       ["opacity-90", world_entity_color(covering.entity)],
                     @selected_entity_id == covering.entity.id && "ring-2 ring-accent z-30"
@@ -273,11 +287,6 @@ defmodule BoxlandWeb.SandboxLive do
                   aria-label={"entity #{covering.entity.id}"}
                   title={world_entity_title(covering.entity)}
                 >
-                  <span
-                    :if={@entity_sprite_styles[covering.entity.id]}
-                    class="pointer-events-none absolute inset-0 bg-no-repeat"
-                    style={@entity_sprite_styles[covering.entity.id]}
-                  />
                   <span :if={covering.anchor? and is_nil(@entity_sprite_styles[covering.entity.id])}>
                     {world_entity_label(covering.entity)}
                   </span>
@@ -448,6 +457,68 @@ defmodule BoxlandWeb.SandboxLive do
         [%{entity: entity, anchor?: true} | list]
       end)
     end)
+  end
+
+  # Maps each level entity's *design* cell to its visual_ref. Lets the
+  # sandbox suppress a layer tile that is logically "owned" by an entity
+  # so the entity's sprite can move freely instead of leaving a stale
+  # tile behind.
+  defp build_entity_design_tile_index(level) do
+    Elixir.Map.new(level.entities, fn e ->
+      cell = {div(e.pos_x, 32), div(e.pos_y, 32)}
+      {cell, e.entity_type.visual_ref}
+    end)
+  end
+
+  # Per-cell list of items to render under the interactive overlays:
+  # interleaves layer tiles with entity sprites by z-index so a moving
+  # entity stays inside its own layer rather than floating above the
+  # whole canvas. A layer tile that matches an entity's design-position
+  # visual_ref is suppressed — the entity's sprite replaces it.
+  defp cell_stack(layers, tilesets, entity_cell_index, design_tiles, x, y) do
+    cell_entities =
+      entity_cell_index
+      |> Elixir.Map.get({x, y}, [])
+      |> Enum.map(& &1.entity)
+
+    layer_items =
+      Enum.map(layers, fn layer ->
+        {layer.z_index, :layer_order, {:layer, layer}}
+      end)
+      |> Enum.reject(fn {_z, _ord, {:layer, layer}} ->
+        layer_tile_owned_by_entity?(layer, tilesets, design_tiles, x, y)
+      end)
+
+    entity_items =
+      Enum.map(cell_entities, fn entity ->
+        {entity.z || 0, :entity_order, {:entity_sprite, entity}}
+      end)
+
+    (layer_items ++ entity_items)
+    |> Enum.sort_by(fn {z, ord, _} -> {z, ord_rank(ord)} end)
+    |> Enum.map(fn {_z, _ord, item} -> item end)
+  end
+
+  defp ord_rank(:layer_order), do: 0
+  defp ord_rank(:entity_order), do: 1
+
+  defp layer_tile_owned_by_entity?(layer, _tilesets, design_tiles, x, y) do
+    case Elixir.Map.get(design_tiles, {x, y}) do
+      %{"kind" => "tile", "asset_id" => aid, "tile_index" => idx} ->
+        case Maps.tile_at(layer.tiles, x, y) do
+          %{"asset_id" => ^aid, "tile_index" => ^idx} -> true
+          _ -> false
+        end
+
+      %{"kind" => "group", "group_id" => gid} ->
+        case Maps.tile_at(layer.tiles, x, y) do
+          %{"group_id" => ^gid} -> true
+          _ -> false
+        end
+
+      _ ->
+        false
+    end
   end
 
   defp selected_world_entity(%{selected_entity_id: nil}), do: nil
