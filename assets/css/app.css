@@ -130,3 +130,102 @@
 .entity-pulse {
   animation: boxland-entity-pulse 1.6s ease-in-out infinite;
 }
+
+/* ===================================================================
+   IDE shell — dark-first chrome shared by the Asset Manager, Mapmaker,
+   and Level Editor. Chrome surfaces are intentionally dark regardless of
+   the daisyUI light/dark theme (like VS Code / Godot); accent/selection
+   colors still come from the daisyUI `--color-*` tokens so they track the
+   active theme.
+   =================================================================== */
+.ide-shell {
+  --ide-bg: #0f141c;
+  --ide-rail: #0b0f16;
+  --ide-panel: #141b26;
+  --ide-header: #0d121b;
+  --ide-elev: #1b2330;
+  --ide-border: #232c3a;
+  --ide-text: #c6d0dd;
+  --ide-dim: #8a97a8;
+  --ide-heading: #e8eef6;
+  --ide-accent: var(--color-primary, #fad223);
+  background: var(--ide-bg);
+  color: var(--ide-text);
+}
+
+.ide-rail { background: var(--ide-rail); border-right: 1px solid var(--ide-border); }
+.ide-rail-item {
+  display: flex; align-items: center; justify-content: center;
+  width: 2.5rem; height: 2.5rem; border-radius: 0.5rem;
+  color: var(--ide-dim); cursor: pointer;
+  transition: background .12s ease, color .12s ease;
+}
+.ide-rail-item:hover { color: var(--ide-heading); background: var(--ide-elev); }
+.ide-rail-item-active {
+  color: #fff; background: var(--ide-elev);
+  box-shadow: inset 2px 0 0 0 var(--ide-accent);
+}
+
+.ide-panel { background: var(--ide-panel); border-color: var(--ide-border); }
+.ide-panel-title {
+  font-size: .66rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--ide-dim); border-bottom: 1px solid var(--ide-border);
+}
+.ide-viewport { background: #0a0e14; }
+
+.ide-section + .ide-section { border-top: 1px solid color-mix(in oklab, var(--ide-border) 60%, transparent); }
+.ide-section-toggle {
+  font-size: .66rem; font-weight: 600; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--ide-dim); padding: .4rem .5rem; cursor: pointer;
+}
+.ide-section-toggle:hover { color: var(--ide-heading); }
+.ide-section-body { padding: .25rem .5rem .6rem; }
+
+.ide-tree { display: flex; flex-direction: column; gap: 1px; }
+.ide-node {
+  position: relative; display: flex; align-items: center; gap: .25rem;
+  min-height: 1.75rem; border-radius: .3rem; color: var(--ide-text);
+  transition: background .1s ease;
+}
+.ide-node:hover { background: var(--ide-elev); }
+.ide-node-selected {
+  background: color-mix(in oklab, var(--ide-accent) 22%, transparent);
+  color: var(--ide-heading);
+  box-shadow: inset 2px 0 0 0 var(--ide-accent);
+}
+.ide-node-main {
+  padding: .25rem .25rem; font-size: .8rem; cursor: pointer; color: inherit;
+}
+.ide-node-handle { cursor: grab; color: var(--ide-dim); opacity: 0; transition: opacity .1s ease; }
+.ide-node:hover .ide-node-handle { opacity: .65; }
+.ide-node-affected { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-accent, #ffa5a5) 70%, transparent); }
+.ide-node.ide-drop-before { box-shadow: inset 0 2px 0 0 var(--ide-accent); }
+.ide-node.ide-drop-after  { box-shadow: inset 0 -2px 0 0 var(--ide-accent); }
+.ide-node-dragging { opacity: .4; }
+
+.ide-status { background: var(--ide-header); border-color: var(--ide-border); color: var(--ide-dim); }
+.ide-toolbar { background: var(--ide-header); border-bottom: 1px solid var(--ide-border); }
+.ide-toolbtn {
+  display: inline-flex; align-items: center; gap: .35rem;
+  padding: .3rem .55rem; border-radius: .4rem; color: var(--ide-dim);
+  border: 1px solid transparent; cursor: pointer; transition: background .1s ease, color .1s ease;
+}
+.ide-toolbtn:hover { color: var(--ide-heading); background: var(--ide-elev); }
+.ide-toolbtn-active { color: #fff; background: var(--ide-elev); border-color: var(--ide-accent); }
+.ide-toolbtn[disabled] { opacity: .4; cursor: not-allowed; }
+
+.ide-prop-label { width: 5.5rem; font-size: .7rem; color: var(--ide-dim); }
+
+.ide-context-menu {
+  position: fixed; z-index: 60; min-width: 11rem;
+  background: var(--ide-panel); border: 1px solid var(--ide-border);
+  border-radius: .5rem; box-shadow: 0 12px 34px rgba(0,0,0,.55); padding: .25rem;
+}
+.ide-context-item {
+  padding: .35rem .5rem; border-radius: .35rem; font-size: .8rem; color: var(--ide-text); cursor: pointer;
+}
+.ide-context-item:hover { background: var(--ide-elev); color: var(--ide-heading); }
+.ide-context-danger { color: var(--color-error, #ffa5a5); }
+
+.ide-modal-overlay { background: rgba(3, 6, 12, .66); }
+.ide-modal { background: var(--ide-panel); color: var(--ide-text); border: 1px solid var(--ide-border); }

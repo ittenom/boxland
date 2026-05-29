@@ -379,10 +379,224 @@ const TileMaskPainter = {
   },
 }
 
+// === IDE shell hooks ===============================================
+
+// Right-click context menus. Place on a wrapper; any descendant carrying
+// [data-context-menu] becomes a target. Pushes coords so the server renders
+// <.context_menu> at the cursor.
+type ContextMenuHook = {
+  el: HTMLElement;
+  pushEvent(event: string, payload: Record<string, unknown>): void;
+  onContext: (event: MouseEvent) => void;
+}
+
+const ContextMenu = {
+  mounted(this: ContextMenuHook) {
+    this.onContext = event => {
+      const target = event.target instanceof Element ? event.target : null
+      const node = target?.closest<HTMLElement>("[data-context-menu]")
+      if (!node || !this.el.contains(node)) return
+      event.preventDefault()
+      this.pushEvent("open_context_menu", {
+        kind: node.dataset["contextMenu"] ?? null,
+        id: node.dataset["contextId"] ?? null,
+        x: event.clientX,
+        y: event.clientY,
+      })
+    }
+    this.el.addEventListener("contextmenu", this.onContext)
+  },
+
+  destroyed(this: ContextMenuHook) {
+    this.el.removeEventListener("contextmenu", this.onContext)
+  },
+}
+
+// Drag-to-reorder tree nodes. Place on the <ul role="tree" data-tree-group>.
+// Each reorderable child carries [data-tree-item="<id>"]. On drop, pushes
+// {group, id, before_id} (before_id null = move to end).
+type TreeDnDHook = {
+  el: HTMLElement;
+  pushEvent(event: string, payload: Record<string, unknown>): void;
+  dragId: string | null;
+  overEl: HTMLElement | null;
+  before: boolean;
+  enableDrag: () => void;
+  clearMarks: () => void;
+  onDragStart: (event: DragEvent) => void;
+  onDragOver: (event: DragEvent) => void;
+  onDrop: (event: DragEvent) => void;
+  onDragEnd: () => void;
+}
+
+const TreeDnD = {
+  mounted(this: TreeDnDHook) {
+    this.dragId = null
+    this.overEl = null
+    this.before = true
+
+    this.enableDrag = () => {
+      this.el.querySelectorAll<HTMLElement>("[data-tree-item]").forEach(li => {
+        li.draggable = true
+      })
+    }
+
+    this.clearMarks = () => {
+      this.el.querySelectorAll(".ide-drop-before, .ide-drop-after").forEach(n =>
+        n.classList.remove("ide-drop-before", "ide-drop-after"),
+      )
+    }
+
+    this.onDragStart = event => {
+      const target = event.target instanceof Element ? event.target : null
+      const li = target?.closest<HTMLElement>("[data-tree-item]")
+      if (!li) return
+      this.dragId = li.dataset["treeItem"] ?? null
+      li.classList.add("ide-node-dragging")
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "move"
+        event.dataTransfer.setData("text/plain", this.dragId ?? "")
+      }
+    }
+
+    this.onDragOver = event => {
+      if (this.dragId === null) return
+      const target = event.target instanceof Element ? event.target : null
+      const li = target?.closest<HTMLElement>("[data-tree-item]")
+      if (!li) return
+      event.preventDefault()
+      const rect = li.getBoundingClientRect()
+      const before = event.clientY < rect.top + rect.height / 2
+      if (this.overEl !== li || this.before !== before) {
+        this.clearMarks()
+        this.overEl = li
+        this.before = before
+        li.classList.add(before ? "ide-drop-before" : "ide-drop-after")
+      }
+    }
+
+    this.onDrop = event => {
+      if (this.dragId === null || !this.overEl) return
+      event.preventDefault()
+      let beforeId: string | null = this.overEl.dataset["treeItem"] ?? null
+      if (!this.before) {
+        const next = this.overEl.nextElementSibling
+        beforeId = next instanceof HTMLElement ? next.dataset["treeItem"] ?? null : null
+      }
+      if (this.dragId !== beforeId) {
+        this.pushEvent("tree_reorder", {
+          group: this.el.dataset["treeGroup"] ?? null,
+          id: this.dragId,
+          before_id: beforeId,
+        })
+      }
+      this.onDragEnd()
+    }
+
+    this.onDragEnd = () => {
+      this.clearMarks()
+      this.el
+        .querySelectorAll(".ide-node-dragging")
+        .forEach(n => n.classList.remove("ide-node-dragging"))
+      this.dragId = null
+      this.overEl = null
+    }
+
+    this.enableDrag()
+    this.el.addEventListener("dragstart", this.onDragStart)
+    this.el.addEventListener("dragover", this.onDragOver)
+    this.el.addEventListener("drop", this.onDrop)
+    this.el.addEventListener("dragend", this.onDragEnd)
+  },
+
+  updated(this: TreeDnDHook) {
+    this.enableDrag()
+  },
+
+  destroyed(this: TreeDnDHook) {
+    this.el.removeEventListener("dragstart", this.onDragStart)
+    this.el.removeEventListener("dragover", this.onDragOver)
+    this.el.removeEventListener("drop", this.onDrop)
+    this.el.removeEventListener("dragend", this.onDragEnd)
+  },
+}
+
+// Drag numbered waypoint markers on the canvas. Place on the canvas wrapper.
+// Markers carry [data-waypoint-index]; cells carry [data-cell-x]/[data-cell-y].
+// Drop on a cell -> waypoint_move; drop off-grid -> waypoint_remove.
+type WaypointDragHook = {
+  el: HTMLElement;
+  pushEvent(event: string, payload: Record<string, unknown>): void;
+  dragging: HTMLElement | null;
+  index: number | null;
+  onDown: (event: PointerEvent) => void;
+  onMove: (event: PointerEvent) => void;
+  onUp: (event: PointerEvent) => void;
+  cellAt: (x: number, y: number) => {x: number; y: number} | null;
+}
+
+const WaypointDrag = {
+  mounted(this: WaypointDragHook) {
+    this.dragging = null
+    this.index = null
+
+    this.onDown = event => {
+      if (event.button !== 0) return
+      const target = event.target instanceof Element ? event.target : null
+      const marker = target?.closest<HTMLElement>("[data-waypoint-index]")
+      if (!marker) return
+      event.preventDefault()
+      event.stopPropagation()
+      this.dragging = marker
+      this.index = Number(marker.dataset["waypointIndex"])
+      marker.setPointerCapture(event.pointerId)
+      marker.classList.add("opacity-60")
+    }
+
+    this.onMove = event => {
+      if (this.dragging) event.preventDefault()
+    }
+
+    this.onUp = event => {
+      if (!this.dragging || this.index === null) return
+      event.preventDefault()
+      this.dragging.classList.remove("opacity-60")
+      const cell = this.cellAt(event.clientX, event.clientY)
+      if (cell) {
+        this.pushEvent("waypoint_move", {index: this.index, x: cell.x, y: cell.y})
+      } else {
+        this.pushEvent("waypoint_remove", {index: this.index})
+      }
+      this.dragging = null
+      this.index = null
+    }
+
+    this.cellAt = (x, y) => {
+      const cell = document
+        .elementsFromPoint(x, y)
+        .find((node): node is HTMLElement => node instanceof HTMLElement && node.dataset["cellX"] !== undefined)
+      if (!cell) return null
+      return {x: Number(cell.dataset["cellX"]), y: Number(cell.dataset["cellY"])}
+    }
+
+    this.el.addEventListener("pointerdown", this.onDown)
+    this.el.addEventListener("pointermove", this.onMove)
+    this.el.addEventListener("pointerup", this.onUp)
+    this.el.addEventListener("pointercancel", this.onUp)
+  },
+
+  destroyed(this: WaypointDragHook) {
+    this.el.removeEventListener("pointerdown", this.onDown)
+    this.el.removeEventListener("pointermove", this.onMove)
+    this.el.removeEventListener("pointerup", this.onUp)
+    this.el.removeEventListener("pointercancel", this.onUp)
+  },
+}
+
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, MapmakerCanvas, TileMaskPainter},
+  hooks: {...colocatedHooks, MapmakerCanvas, TileMaskPainter, ContextMenu, TreeDnD, WaypointDrag},
 })
 
 // Show progress bar on live navigation and form submits

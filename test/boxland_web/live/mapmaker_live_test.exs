@@ -408,16 +408,16 @@ defmodule BoxlandWeb.MapmakerLiveTest do
 
       # Before lock: both layers should appear in the affected set.
       html = render(view)
-      assert html =~ ~r{id="layer-row-#{ground.id}"[^>]*ring-accent}
-      assert html =~ ~r{id="layer-row-#{upper.id}"[^>]*ring-accent}
+      assert html =~ ~r{id="layer-row-#{ground.id}"[^>]*ide-node-affected}
+      assert html =~ ~r{id="layer-row-#{upper.id}"[^>]*ide-node-affected}
 
       # Lock upper.
       render_click(view, "toggle_lock", %{"id" => to_string(upper.id)})
 
       # After lock: upper should drop out of the affected set; ground stays.
       html = render(view)
-      assert html =~ ~r{id="layer-row-#{ground.id}"[^>]*ring-accent}
-      refute html =~ ~r{id="layer-row-#{upper.id}"[^>]*ring-accent}
+      assert html =~ ~r{id="layer-row-#{ground.id}"[^>]*ide-node-affected}
+      refute html =~ ~r{id="layer-row-#{upper.id}"[^>]*ide-node-affected}
 
       # And a delete should not touch the locked layer.
       render_click(view, "selection_delete")
@@ -629,8 +629,8 @@ defmodule BoxlandWeb.MapmakerLiveTest do
     html = render(view)
 
     # Both layer rows should carry the accent ring.
-    assert html =~ ~r{id="layer-row-#{ground.id}"[^>]*ring-accent}
-    assert html =~ ~r{id="layer-row-#{upper.id}"[^>]*ring-accent}
+    assert html =~ ~r{id="layer-row-#{ground.id}"[^>]*ide-node-affected}
+    assert html =~ ~r{id="layer-row-#{upper.id}"[^>]*ide-node-affected}
   end
 
   test "clicking a tile in the palette switches to P and clears the selection",
@@ -644,7 +644,7 @@ defmodule BoxlandWeb.MapmakerLiveTest do
     html = render_click(view, "select_tile", %{"tile" => "3"})
 
     # P tool active, selection rect gone.
-    assert html =~ ~r{id="map-tool-place"[^>]*btn-primary}
+    assert html =~ ~r{id="map-tool-place"[^>]*ide-toolbtn-active}
     refute html =~ ~r{id="map-cell-0-0"[^>]*ring-primary}
   end
 
@@ -656,5 +656,53 @@ defmodule BoxlandWeb.MapmakerLiveTest do
 
     [primary] = Maps.list_layers(map.id)
     assert primary.opacity == 50
+  end
+
+  describe "IDE shell" do
+    test "renders the shell with the layers tree and inspector", %{conn: conn, map: map} do
+      {:ok, _view, html} = live(conn, ~p"/app/maps/#{map.id}")
+      assert html =~ "mapmaker-root"
+      assert html =~ ~s(id="layers-tree")
+      assert html =~ ~s(id="map-toolbar")
+      [primary] = Maps.list_layers(map.id)
+      assert html =~ ~s(id="layer-inspector-#{primary.id}")
+    end
+
+    test "collapsing the Layers section hides the tree", %{conn: conn, map: map} do
+      {:ok, view, _html} = live(conn, ~p"/app/maps/#{map.id}")
+      html = render_click(view, "toggle_section", %{"id" => "layers"})
+      refute html =~ ~s(id="layers-tree")
+    end
+
+    test "tree_reorder reorders layers", %{conn: conn, map: map} do
+      {:ok, view, _html} = live(conn, ~p"/app/maps/#{map.id}")
+      render_click(view, "add_layer")
+      [ground, upper] = Maps.list_layers(map.id) |> Enum.sort_by(& &1.z_index)
+
+      render_hook(view, "tree_reorder", %{
+        "group" => "layers",
+        "id" => to_string(ground.id),
+        "before_id" => to_string(upper.id)
+      })
+
+      [_lo, hi] = Maps.list_layers(map.id) |> Enum.sort_by(& &1.z_index)
+      assert hi.id == ground.id
+    end
+
+    test "right-click opens a layer context menu", %{conn: conn, map: map} do
+      [primary] = Maps.list_layers(map.id)
+      {:ok, view, _html} = live(conn, ~p"/app/maps/#{map.id}")
+
+      html =
+        render_hook(view, "open_context_menu", %{
+          "kind" => "layer",
+          "id" => to_string(primary.id),
+          "x" => 40,
+          "y" => 40
+        })
+
+      assert html =~ ~s(id="ide-context-menu")
+      assert html =~ "Duplicate"
+    end
   end
 end

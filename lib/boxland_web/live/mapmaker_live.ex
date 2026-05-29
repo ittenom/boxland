@@ -1,6 +1,8 @@
 defmodule BoxlandWeb.MapmakerLive do
   use BoxlandWeb, :live_view
 
+  import BoxlandWeb.Components.Ide
+
   alias Boxland.{Library, Maps, Repo}
 
   @tools ~w(place delete rotate select_area clone select)
@@ -25,7 +27,9 @@ defmodule BoxlandWeb.MapmakerLive do
      |> assign(:move, nil)
      |> assign(:cursor_cell, nil)
      |> assign(:undo_stack, [])
-     |> assign(:redo_stack, [])}
+     |> assign(:redo_stack, [])
+     |> assign(:closed_sections, MapSet.new())
+     |> assign(:context_menu, nil)}
   end
 
   def handle_event("tool", %{"tool" => tool}, socket) when tool in @tools do
@@ -34,6 +38,38 @@ defmodule BoxlandWeb.MapmakerLive do
 
   def handle_event("undo", _params, socket), do: undo(socket)
   def handle_event("redo", _params, socket), do: redo(socket)
+
+  def handle_event("toggle_section", %{"id" => id}, socket) do
+    closed = socket.assigns.closed_sections
+
+    closed =
+      if MapSet.member?(closed, id), do: MapSet.delete(closed, id), else: MapSet.put(closed, id)
+
+    {:noreply, assign(socket, :closed_sections, closed)}
+  end
+
+  def handle_event("open_context_menu", %{"kind" => kind, "id" => id, "x" => x, "y" => y}, socket) do
+    socket =
+      if kind == "layer", do: assign(socket, :selected_layer_id, safe_int(id, nil)), else: socket
+
+    {:noreply, assign(socket, :context_menu, %{kind: kind, id: id, x: trunc(x), y: trunc(y)})}
+  end
+
+  def handle_event("close_context_menu", _params, socket) do
+    {:noreply, assign(socket, :context_menu, nil)}
+  end
+
+  def handle_event(
+        "tree_reorder",
+        %{"group" => "layers", "id" => id, "before_id" => before_id},
+        socket
+      ) do
+    ids = reordered_layer_ids(socket.assigns.map, id, before_id)
+    {:ok, _} = Maps.reorder_layers(socket.assigns.map.id, ids)
+    {:noreply, refresh_map(socket)}
+  end
+
+  def handle_event("tree_reorder", _params, socket), do: {:noreply, socket}
 
   def handle_event("hotkey", %{"key" => key} = params, socket) do
     cond do
@@ -364,75 +400,181 @@ defmodule BoxlandWeb.MapmakerLive do
       |> assign(:affected_layer_ids, affected)
 
     ~H"""
-    <Layouts.app flash={@flash} width="wide" current_scope={%{designer: @current_designer}}>
-      <section phx-window-keydown="hotkey" class="space-y-4">
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p class="text-sm font-semibold text-primary">Mapmaker</p>
-            <h1 class="text-3xl font-semibold tracking-tight">{@map.name}</h1>
-          </div>
-          <div class="flex gap-2">
-            <.link navigate={~p"/app/maps"} class="btn btn-ghost">Maps</.link>
-            <.link navigate={~p"/app/levels"} class="btn btn-primary">Make level</.link>
-          </div>
-        </div>
+    <div id="mapmaker-root" phx-hook="ContextMenu" phx-window-keydown="hotkey">
+      <.ide_shell flash={@flash}>
+        <:activity>
+          <.ide_rail_nav active={:maps} />
+          <div class="flex-1"></div>
+          <.rail_item icon="hero-cube" label="Make level" navigate={~p"/app/levels"} />
+        </:activity>
 
-        <div class="flex flex-wrap gap-2">
-          <.tool_button icon="hero-pencil" label="P" tool="place" active={@tool == "place"} />
-          <.tool_button icon="hero-x-mark" label="X" tool="delete" active={@tool == "delete"} />
-          <.tool_button icon="hero-arrow-path" label="R" tool="rotate" active={@tool == "rotate"} />
-          <.tool_button
-            icon="hero-square-2-stack"
-            label="S"
-            tool="select_area"
-            active={@tool == "select_area"}
-          />
-          <.tool_button
-            icon="hero-cursor-arrow-rays"
-            label="V"
-            tool="select"
-            active={@tool == "select"}
-          />
-          <button
-            id="map-copy-button"
-            phx-click="copy_selection"
-            class={["btn btn-sm", @tool == "clone" && "btn-primary"]}
-            title="Copy selection"
-          >
-            <.icon name="hero-clipboard-document" class="size-4" /> Copy
-          </button>
-          <button
-            id="map-paste-button"
-            phx-click="paste_selection"
-            class={["btn btn-sm", @tool == "clone" && "btn-primary"]}
-            title="Paste copied selection"
-          >
-            <.icon name="hero-clipboard-document-check" class="size-4" /> Paste
-          </button>
-          <button id="map-undo-button" phx-click="undo" class="btn btn-sm" title="Undo (⌘Z)">
-            <.icon name="hero-arrow-uturn-left" class="size-4" />
-          </button>
-          <button id="map-redo-button" phx-click="redo" class="btn btn-sm" title="Redo (⇧⌘Z)">
-            <.icon name="hero-arrow-uturn-right" class="size-4" />
-          </button>
-        </div>
+        <:explorer>
+          <.panel title="Explorer">
+            <:actions>
+              <button
+                id="add-layer-button"
+                phx-click="add_layer"
+                class="ide-toolbtn !p-1"
+                title="Add layer"
+              >
+                <.icon name="hero-plus" class="size-3.5" />
+              </button>
+            </:actions>
 
-        <div class="grid gap-4 lg:grid-cols-[16rem_1fr_18rem]">
-          <aside class="space-y-3">
-            <.input
-              id="tileset-select"
-              name="asset_id"
-              type="select"
-              label="Tileset"
-              value={@selected_asset_id}
-              options={Enum.map(@tilesets, &{&1.name, &1.id})}
-              phx-change="select_asset"
+            <.panel_section
+              title="Layers"
+              open={section_open?(@closed_sections, "layers")}
+              phx-click="toggle_section"
+              phx-value-id="layers"
+            >
+              <.tree id="layers-tree" phx-hook="TreeDnD" data-tree-group="layers">
+                <.tree_node
+                  :for={layer <- display_layers(@map)}
+                  id={"layer-row-#{layer.id}"}
+                  label={layer.name}
+                  icon="hero-square-3-stack-3d"
+                  draggable
+                  dnd_id={layer.id}
+                  context_kind="layer"
+                  context_id={layer.id}
+                  selected={layer.id == @selected_layer_id}
+                  affected={MapSet.member?(@affected_layer_ids, layer.id)}
+                  phx-click="select_layer"
+                  phx-value-id={layer.id}
+                >
+                  <:trailing>
+                    <button
+                      phx-click="toggle_visibility"
+                      phx-value-id={layer.id}
+                      class="ide-toolbtn !p-0.5"
+                      title="Toggle visibility"
+                    >
+                      <.icon
+                        name={if layer.visible, do: "hero-eye", else: "hero-eye-slash"}
+                        class="size-3.5"
+                      />
+                    </button>
+                    <button
+                      phx-click="toggle_lock"
+                      phx-value-id={layer.id}
+                      class="ide-toolbtn !p-0.5"
+                      title="Toggle lock"
+                    >
+                      <.icon
+                        name={if layer.locked, do: "hero-lock-closed", else: "hero-lock-open"}
+                        class="size-3.5"
+                      />
+                    </button>
+                  </:trailing>
+                </.tree_node>
+              </.tree>
+            </.panel_section>
+
+            <.panel_section
+              title="Tilesets"
+              open={section_open?(@closed_sections, "tilesets")}
+              phx-click="toggle_section"
+              phx-value-id="tilesets"
+            >
+              <.input
+                id="tileset-select"
+                name="asset_id"
+                type="select"
+                label="Tileset"
+                value={@selected_asset_id}
+                options={Enum.map(@tilesets, &{&1.name, &1.id})}
+                phx-change="select_asset"
+              />
+              <.tile_palette
+                asset={selected_asset(@tilesets, @selected_asset_id)}
+                selected_tile={@selected_tile}
+              />
+            </.panel_section>
+          </.panel>
+        </:explorer>
+
+        <:viewport>
+          <.ide_toolbar id="map-toolbar">
+            <h1 class="mr-2 text-sm font-semibold text-base-content">{@map.name}</h1>
+            <.ide_tool_button
+              id="map-tool-place"
+              icon="hero-pencil"
+              label="Place"
+              active={@tool == "place"}
+              phx-click="tool"
+              phx-value-tool="place"
+              title="Place (P)"
             />
-            <.tile_palette
-              asset={selected_asset(@tilesets, @selected_asset_id)}
-              selected_tile={@selected_tile}
+            <.ide_tool_button
+              id="map-tool-delete"
+              icon="hero-x-mark"
+              label="Delete"
+              active={@tool == "delete"}
+              phx-click="tool"
+              phx-value-tool="delete"
+              title="Delete (X)"
             />
-          </aside>
+            <.ide_tool_button
+              id="map-tool-rotate"
+              icon="hero-arrow-path"
+              label="Rotate"
+              active={@tool == "rotate"}
+              phx-click="tool"
+              phx-value-tool="rotate"
+              title="Rotate (R)"
+            />
+            <.ide_tool_button
+              id="map-tool-select_area"
+              icon="hero-square-2-stack"
+              label="Area"
+              active={@tool == "select_area"}
+              phx-click="tool"
+              phx-value-tool="select_area"
+              title="Select area (S)"
+            />
+            <.ide_tool_button
+              id="map-tool-select"
+              icon="hero-cursor-arrow-rays"
+              label="Select"
+              active={@tool == "select"}
+              phx-click="tool"
+              phx-value-tool="select"
+              title="Select (V)"
+            />
+            <span class="mx-1 h-5 w-px bg-base-content/15"></span>
+            <.ide_tool_button
+              id="map-copy-button"
+              icon="hero-clipboard-document"
+              label="Copy"
+              active={@tool == "clone"}
+              phx-click="copy_selection"
+              title="Copy selection"
+            />
+            <.ide_tool_button
+              id="map-paste-button"
+              icon="hero-clipboard-document-check"
+              label="Paste"
+              active={@tool == "clone"}
+              phx-click="paste_selection"
+              title="Paste copied selection"
+            />
+            <.ide_tool_button
+              id="map-undo-button"
+              icon="hero-arrow-uturn-left"
+              phx-click="undo"
+              title="Undo (⌘Z)"
+            />
+            <.ide_tool_button
+              id="map-redo-button"
+              icon="hero-arrow-uturn-right"
+              phx-click="redo"
+              title="Redo (⇧⌘Z)"
+            />
+            <div class="flex-1"></div>
+            <.link navigate={~p"/app/levels"} class="ide-toolbtn ide-toolbtn-active">
+              <.icon name="hero-cube" class="size-4" /> Make level
+            </.link>
+          </.ide_toolbar>
 
           <div
             id="mapmaker-canvas"
@@ -442,7 +584,7 @@ defmodule BoxlandWeb.MapmakerLive do
                 do: @tool,
                 else: "select"
             }
-            class="overflow-auto rounded-box bg-base-200 p-2"
+            class="min-h-0 flex-1 overflow-auto p-3"
           >
             <div
               :if={@move}
@@ -452,11 +594,7 @@ defmodule BoxlandWeb.MapmakerLive do
                 Moving {length(@move.records)} tile{if length(@move.records) == 1, do: "", else: "s"} —
                 click to drop, Esc to cancel.
               </span>
-              <button
-                type="button"
-                phx-click="selection_move_cancel"
-                class="btn btn-ghost btn-xs"
-              >
+              <button type="button" phx-click="selection_move_cancel" class="btn btn-ghost btn-xs">
                 Cancel
               </button>
             </div>
@@ -474,9 +612,9 @@ defmodule BoxlandWeb.MapmakerLive do
                 phx-value-x={x}
                 phx-value-y={y}
                 class={[
-                  "relative h-8 w-8 touch-none border border-base-300/60 bg-base-100 transition-[filter] hover:brightness-105",
-                  cell_highlighted?(@highlighted_cells, x, y) && "border-primary ring-1 ring-primary",
-                  !cell_highlighted?(@highlighted_cells, x, y) && "border-base-300/60"
+                  "relative h-8 w-8 touch-none bg-base-100 transition-[filter] hover:brightness-105",
+                  cell_highlighted?(@highlighted_cells, x, y) &&
+                    "border-primary ring-1 ring-primary z-10"
                 ]}
               >
                 <span
@@ -515,34 +653,57 @@ defmodule BoxlandWeb.MapmakerLive do
               />
             </div>
           </div>
+        </:viewport>
 
-          <.layers_panel
-            layers={display_layers(@map)}
-            selected_layer_id={@selected_layer_id}
-            renaming_layer_id={@renaming_layer_id}
-            affected_layer_ids={@affected_layer_ids}
-          />
-        </div>
-      </section>
-    </Layouts.app>
-    """
-  end
+        <:inspector>
+          <.layer_inspector layer={active_layer(@map, @selected_layer_id)} />
+        </:inspector>
 
-  attr :icon, :string, required: true
-  attr :label, :string, required: true
-  attr :tool, :string, required: true
-  attr :active, :boolean, required: true
+        <:status>
+          <span class="font-mono">tool: {@tool}</span>
+          <span :if={@selection} class="font-mono">
+            sel: {@selection.x2 - @selection.x1 + 1}×{@selection.y2 - @selection.y1 + 1}
+          </span>
+          <span class="flex-1"></span>
+          <span class="text-base-content/50">
+            Right-click a layer for actions · drag layers to reorder
+          </span>
+        </:status>
+      </.ide_shell>
 
-  defp tool_button(assigns) do
-    ~H"""
-    <button
-      id={"map-tool-#{@tool}"}
-      phx-click="tool"
-      phx-value-tool={@tool}
-      class={["btn btn-sm", @active && "btn-primary"]}
-    >
-      <.icon name={@icon} class="size-4" /> {@label}
-    </button>
+      <.context_menu open={@context_menu != nil} x={ctx(@context_menu, :x)} y={ctx(@context_menu, :y)}>
+        <.context_item
+          icon="hero-document-duplicate"
+          phx-click="duplicate_layer"
+          phx-value-id={ctx(@context_menu, :id)}
+        >
+          Duplicate
+        </.context_item>
+        <.context_item
+          icon="hero-eye"
+          phx-click="toggle_visibility"
+          phx-value-id={ctx(@context_menu, :id)}
+        >
+          Toggle visibility
+        </.context_item>
+        <.context_item
+          icon="hero-lock-closed"
+          phx-click="toggle_lock"
+          phx-value-id={ctx(@context_menu, :id)}
+        >
+          Toggle lock
+        </.context_item>
+        <.context_item
+          icon="hero-trash"
+          danger
+          phx-click="delete_layer"
+          phx-value-id={ctx(@context_menu, :id)}
+          data-confirm="Delete this layer?"
+        >
+          Delete
+        </.context_item>
+      </.context_menu>
+    </div>
     """
   end
 
@@ -726,183 +887,6 @@ defmodule BoxlandWeb.MapmakerLive do
         style={ghost_record_style(@tilesets, rec)}
       />
     </div>
-    """
-  end
-
-  attr :layers, :list, required: true
-  attr :selected_layer_id, :any, required: true
-  attr :renaming_layer_id, :any, required: true
-  attr :affected_layer_ids, :any, required: true
-
-  defp layers_panel(assigns) do
-    ~H"""
-    <aside class="space-y-2 rounded-box bg-base-200 p-3" id="layers-panel">
-      <div class="flex items-center justify-between">
-        <h2 class="text-sm font-semibold uppercase tracking-wide text-base-content/70">Layers</h2>
-        <button
-          id="add-layer-button"
-          phx-click="add_layer"
-          class="btn btn-xs btn-primary"
-          title="Add layer"
-        >
-          <.icon name="hero-plus" class="size-3" /> Add
-        </button>
-      </div>
-
-      <ul class="space-y-1" role="listbox" aria-label="Layers">
-        <li
-          :for={{layer, position} <- Enum.with_index(@layers)}
-          id={"layer-row-#{layer.id}"}
-          role="option"
-          aria-selected={to_string(layer.id == @selected_layer_id)}
-          phx-click="select_layer"
-          phx-value-id={layer.id}
-          class={[
-            "group flex flex-col gap-1 rounded-md border p-2 transition cursor-pointer",
-            layer.id == @selected_layer_id && "border-primary bg-primary/10",
-            layer.id != @selected_layer_id && "border-base-300 bg-base-100 hover:bg-base-100/70",
-            MapSet.member?(@affected_layer_ids, layer.id) && "ring-2 ring-accent/60"
-          ]}
-        >
-          <div class="flex items-center gap-1">
-            <button
-              type="button"
-              phx-click="toggle_visibility"
-              phx-value-id={layer.id}
-              class="btn btn-ghost btn-xs px-1"
-              title={if layer.visible, do: "Hide layer", else: "Show layer"}
-              aria-label={if layer.visible, do: "Hide layer", else: "Show layer"}
-            >
-              <.icon
-                name={if layer.visible, do: "hero-eye", else: "hero-eye-slash"}
-                class={["size-4", !layer.visible && "text-base-content/40"]}
-              />
-            </button>
-            <button
-              type="button"
-              phx-click="toggle_lock"
-              phx-value-id={layer.id}
-              class="btn btn-ghost btn-xs px-1"
-              title={if layer.locked, do: "Unlock layer", else: "Lock layer"}
-              aria-label={if layer.locked, do: "Unlock layer", else: "Lock layer"}
-            >
-              <.icon
-                name={if layer.locked, do: "hero-lock-closed", else: "hero-lock-open"}
-                class={["size-4", layer.locked && "text-warning"]}
-              />
-            </button>
-
-            <%= if @renaming_layer_id == layer.id do %>
-              <form
-                phx-submit="rename_layer"
-                phx-click-away="rename_layer_cancel"
-                phx-value-id={layer.id}
-                class="flex flex-1 items-center gap-1"
-              >
-                <input
-                  type="text"
-                  name="name"
-                  value={layer.name}
-                  autofocus
-                  phx-keydown="rename_layer_cancel"
-                  phx-key="Escape"
-                  class="input input-xs input-bordered flex-1"
-                />
-              </form>
-            <% else %>
-              <span
-                class={[
-                  "flex-1 truncate text-sm",
-                  !layer.visible && "text-base-content/40 line-through decoration-base-content/30"
-                ]}
-                phx-click="rename_layer_start"
-                phx-value-id={layer.id}
-                title="Rename"
-              >
-                {layer.name}
-              </span>
-            <% end %>
-
-            <span class="font-mono text-[10px] text-base-content/50" title="z-index">
-              z={layer.z_index}
-            </span>
-          </div>
-
-          <form
-            phx-change="set_opacity"
-            phx-value-id={layer.id}
-            class="flex items-center gap-1"
-          >
-            <.icon name="hero-adjustments-horizontal" class="size-3 text-base-content/50" />
-            <input
-              type="range"
-              min="0"
-              max="100"
-              step="5"
-              value={layer.opacity}
-              name="opacity"
-              phx-debounce="150"
-              class="range range-xs flex-1"
-              aria-label="Layer opacity"
-            />
-            <span class="w-8 text-right font-mono text-[10px] text-base-content/50">
-              {layer.opacity}%
-            </span>
-          </form>
-
-          <div class="flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100">
-            <button
-              type="button"
-              phx-click="move_layer_up"
-              phx-value-id={layer.id}
-              class="btn btn-ghost btn-xs px-1"
-              title="Move up (higher z)"
-              disabled={position == 0}
-              aria-label="Move layer up"
-            >
-              <.icon name="hero-chevron-up" class="size-3" />
-            </button>
-            <button
-              type="button"
-              phx-click="move_layer_down"
-              phx-value-id={layer.id}
-              class="btn btn-ghost btn-xs px-1"
-              title="Move down (lower z)"
-              disabled={position == length(@layers) - 1}
-              aria-label="Move layer down"
-            >
-              <.icon name="hero-chevron-down" class="size-3" />
-            </button>
-            <button
-              type="button"
-              phx-click="duplicate_layer"
-              phx-value-id={layer.id}
-              class="btn btn-ghost btn-xs px-1"
-              title="Duplicate"
-              aria-label="Duplicate layer"
-            >
-              <.icon name="hero-document-duplicate" class="size-3" />
-            </button>
-            <button
-              type="button"
-              phx-click="delete_layer"
-              phx-value-id={layer.id}
-              data-confirm={"Delete layer \"#{layer.name}\"?"}
-              class="btn btn-ghost btn-xs px-1 text-error"
-              title="Delete"
-              aria-label="Delete layer"
-              disabled={length(@layers) <= 1}
-            >
-              <.icon name="hero-trash" class="size-3" />
-            </button>
-          </div>
-        </li>
-      </ul>
-
-      <p :if={@layers == []} class="rounded-box bg-base-100 p-3 text-xs text-base-content/60">
-        No layers yet. Click Add to create one.
-      </p>
-    </aside>
     """
   end
 
@@ -1372,6 +1356,35 @@ defmodule BoxlandWeb.MapmakerLive do
   # Display order: highest z first (top of stack).
   defp display_layers(map) do
     Enum.sort_by(map.layers, fn l -> {-l.z_index, l.id} end)
+  end
+
+  defp section_open?(closed_sections, key), do: not MapSet.member?(closed_sections, key)
+
+  defp ctx(nil, _key), do: nil
+  defp ctx(menu, key), do: Map.get(menu, key)
+
+  defp safe_int(v, _default) when is_integer(v), do: v
+
+  defp safe_int(v, default) when is_binary(v) do
+    case Integer.parse(v) do
+      {n, _} -> n
+      :error -> default
+    end
+  end
+
+  defp safe_int(_, default), do: default
+
+  # New display order (top→bottom) after dropping layer `id` before `before_id`
+  # (nil = move to the bottom). Returns ids in display order for reorder_layers.
+  defp reordered_layer_ids(map, id, before_id) do
+    id = safe_int(id, 0)
+    before = before_id && safe_int(before_id, nil)
+    ordered = display_layers(map) |> Enum.map(& &1.id) |> Enum.reject(&(&1 == id))
+
+    case before && Enum.find_index(ordered, &(&1 == before)) do
+      nil -> ordered ++ [id]
+      idx -> List.insert_at(ordered, idx, id)
+    end
   end
 
   # Render order: lowest z first (bottom of stack drawn first, so higher z paints on top).

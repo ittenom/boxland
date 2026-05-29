@@ -1,6 +1,8 @@
 defmodule BoxlandWeb.MapIndexLive do
   use BoxlandWeb, :live_view
 
+  import BoxlandWeb.Components.Ide
+
   alias Boxland.Maps
 
   def mount(_params, _session, socket) do
@@ -24,42 +26,53 @@ defmodule BoxlandWeb.MapIndexLive do
 
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} current_scope={%{designer: @current_designer}}>
-      <section class="space-y-6">
-        <div class="flex items-center justify-between">
-          <div>
-            <p class="text-sm font-semibold text-primary">Mapmaker</p>
-            <h1 class="text-3xl font-semibold tracking-tight">Maps</h1>
-          </div>
-          <.link navigate={~p"/app"} class="btn btn-ghost">Dashboard</.link>
-        </div>
+    <div id="map-index-root">
+      <.ide_shell flash={@flash}>
+        <:activity>
+          <.ide_rail_nav active={:maps} />
+        </:activity>
 
-        <.form for={@form} id="map-create-form" phx-submit="create" class="card bg-base-200">
-          <div class="card-body grid gap-4 md:grid-cols-5">
-            <.input field={@form[:name]} type="text" label="Name" required />
-            <.input field={@form[:slug]} type="text" label="Slug" required />
-            <.input field={@form[:width]} type="number" label="Width cells" required min="1" />
-            <.input field={@form[:height]} type="number" label="Height cells" required min="1" />
-            <div class="flex items-end">
-              <.button class="btn btn-primary w-full">Create map</.button>
-            </div>
-          </div>
-        </.form>
+        <:viewport>
+          <div class="min-h-0 flex-1 overflow-auto p-8">
+            <section class="mx-auto max-w-5xl space-y-6">
+              <div>
+                <p class="text-sm font-semibold text-primary">Mapmaker</p>
+                <h1 class="text-3xl font-semibold tracking-tight">Maps</h1>
+              </div>
 
-        <div class="grid gap-4 md:grid-cols-3">
-          <.link
-            :for={map <- @maps}
-            navigate={~p"/app/maps/#{map.id}"}
-            class="card bg-base-200 hover:bg-base-300"
-          >
-            <div class="card-body">
-              <h2 class="card-title">{map.name}</h2>
-              <p class="text-sm text-base-content/60">{map.width} x {map.height} cells</p>
-            </div>
-          </.link>
-        </div>
-      </section>
-    </Layouts.app>
+              <.form for={@form} id="map-create-form" phx-submit="create" class="card bg-base-200">
+                <div class="card-body grid gap-4 md:grid-cols-5">
+                  <.input field={@form[:name]} type="text" label="Name" required />
+                  <.input field={@form[:slug]} type="text" label="Slug" required />
+                  <.input field={@form[:width]} type="number" label="Width cells" required min="1" />
+                  <.input field={@form[:height]} type="number" label="Height cells" required min="1" />
+                  <div class="flex items-end">
+                    <.button class="btn btn-primary w-full">Create map</.button>
+                  </div>
+                </div>
+              </.form>
+
+              <div class="grid gap-4 md:grid-cols-3">
+                <.link
+                  :for={map <- @maps}
+                  navigate={~p"/app/maps/#{map.id}"}
+                  class="card bg-base-200 hover:bg-base-300"
+                >
+                  <div class="card-body">
+                    <h2 class="card-title">{map.name}</h2>
+                    <p class="text-sm text-base-content/60">{map.width} x {map.height} cells</p>
+                  </div>
+                </.link>
+              </div>
+            </section>
+          </div>
+        </:viewport>
+
+        <:status>
+          <span class="font-mono">{length(@maps)} map{if length(@maps) == 1, do: "", else: "s"}</span>
+        </:status>
+      </.ide_shell>
+    </div>
     """
   end
 end

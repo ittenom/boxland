@@ -1,6 +1,8 @@
 defmodule BoxlandWeb.LevelIndexLive do
   use BoxlandWeb, :live_view
 
+  import BoxlandWeb.Components.Ide
+
   alias Boxland.{Levels, Maps}
 
   def mount(_params, _session, socket) do
@@ -29,53 +31,70 @@ defmodule BoxlandWeb.LevelIndexLive do
 
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} current_scope={%{designer: @current_designer}}>
-      <section class="space-y-6">
-        <div class="flex items-center justify-between">
-          <div>
-            <p class="text-sm font-semibold text-primary">Level Editor</p>
-            <h1 class="text-3xl font-semibold tracking-tight">Levels</h1>
-          </div>
-          <.link navigate={~p"/app"} class="btn btn-ghost">Dashboard</.link>
-        </div>
+    <div id="level-index-root">
+      <.ide_shell flash={@flash}>
+        <:activity>
+          <.ide_rail_nav active={:levels} />
+        </:activity>
 
-        <.form for={@form} id="level-create-form" phx-submit="create" class="card bg-base-200">
-          <div class="card-body grid gap-4 md:grid-cols-5">
-            <.input field={@form[:name]} type="text" label="Name" required />
-            <.input field={@form[:slug]} type="text" label="Slug" required />
-            <.input
-              field={@form[:map_id]}
-              type="select"
-              label="Map"
-              options={Enum.map(@maps, &{&1.name, &1.id})}
-              required
-            />
-            <.input
-              field={@form[:instancing]}
-              type="select"
-              label="Instancing"
-              options={[{"Shared", "shared"}, {"Per user", "per_user"}, {"Per party", "per_party"}]}
-            />
-            <div class="flex items-end">
-              <.button class="btn btn-primary w-full">Create level</.button>
-            </div>
-          </div>
-        </.form>
+        <:viewport>
+          <div class="min-h-0 flex-1 overflow-auto p-8">
+            <section class="mx-auto max-w-5xl space-y-6">
+              <div>
+                <p class="text-sm font-semibold text-primary">Level Editor</p>
+                <h1 class="text-3xl font-semibold tracking-tight">Levels</h1>
+              </div>
 
-        <div class="grid gap-4 md:grid-cols-3">
-          <.link
-            :for={level <- @levels}
-            navigate={~p"/app/levels/#{level.id}"}
-            class="card bg-base-200 hover:bg-base-300"
-          >
-            <div class="card-body">
-              <h2 class="card-title">{level.name}</h2>
-              <p class="text-sm text-base-content/60">{level.map.name}</p>
-            </div>
-          </.link>
-        </div>
-      </section>
-    </Layouts.app>
+              <.form for={@form} id="level-create-form" phx-submit="create" class="card bg-base-200">
+                <div class="card-body grid gap-4 md:grid-cols-5">
+                  <.input field={@form[:name]} type="text" label="Name" required />
+                  <.input field={@form[:slug]} type="text" label="Slug" required />
+                  <.input
+                    field={@form[:map_id]}
+                    type="select"
+                    label="Map"
+                    options={Enum.map(@maps, &{&1.name, &1.id})}
+                    required
+                  />
+                  <.input
+                    field={@form[:instancing]}
+                    type="select"
+                    label="Instancing"
+                    options={[
+                      {"Shared", "shared"},
+                      {"Per user", "per_user"},
+                      {"Per party", "per_party"}
+                    ]}
+                  />
+                  <div class="flex items-end">
+                    <.button class="btn btn-primary w-full">Create level</.button>
+                  </div>
+                </div>
+              </.form>
+
+              <div class="grid gap-4 md:grid-cols-3">
+                <.link
+                  :for={level <- @levels}
+                  navigate={~p"/app/levels/#{level.id}"}
+                  class="card bg-base-200 hover:bg-base-300"
+                >
+                  <div class="card-body">
+                    <h2 class="card-title">{level.name}</h2>
+                    <p class="text-sm text-base-content/60">{level.map.name}</p>
+                  </div>
+                </.link>
+              </div>
+            </section>
+          </div>
+        </:viewport>
+
+        <:status>
+          <span class="font-mono">
+            {length(@levels)} level{if length(@levels) == 1, do: "", else: "s"}
+          </span>
+        </:status>
+      </.ide_shell>
+    </div>
     """
   end
 end

@@ -1,6 +1,8 @@
 defmodule BoxlandWeb.AssetLive do
   use BoxlandWeb, :live_view
 
+  import BoxlandWeb.Components.Ide
+
   alias Boxland.Library
   alias Boxland.Library.CollisionMask
 
@@ -213,32 +215,68 @@ defmodule BoxlandWeb.AssetLive do
 
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} current_scope={%{designer: @current_designer}} width="wide">
-      <section class="space-y-4">
-        <header class="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <p class="text-sm font-semibold text-primary">Library</p>
-            <h1 class="text-2xl font-semibold tracking-tight">Tilesets</h1>
-          </div>
-          <.link navigate={~p"/app"} class="btn btn-ghost btn-sm">Dashboard</.link>
-        </header>
+    <div id="asset-root">
+      <.ide_shell flash={@flash}>
+        <:activity>
+          <.ide_rail_nav active={:assets} />
+        </:activity>
 
-        <div class="grid gap-4 lg:grid-cols-[16rem_minmax(0,1fr)_22rem] xl:grid-cols-[18rem_minmax(0,1fr)_24rem]">
-          <.library_panel
-            tilesets={@tilesets}
-            selected_asset={@selected_asset}
-            rename_id={@rename_id}
-          />
-          <.workspace_panel selected_asset={@selected_asset} selected_tile={@selected_tile} />
-          <.editor_panel
-            selected_asset={@selected_asset}
-            selected_tile={@selected_tile}
-          />
-        </div>
-      </section>
+        <:explorer>
+          <.panel title="Library">
+            <:actions>
+              <button
+                id="asset-upload-button"
+                phx-click="open_upload"
+                class="ide-toolbtn !p-1"
+                title="Upload tileset"
+              >
+                <.icon name="hero-arrow-up-tray" class="size-3.5" />
+              </button>
+            </:actions>
+            <.library_panel
+              tilesets={@tilesets}
+              selected_asset={@selected_asset}
+              rename_id={@rename_id}
+            />
+          </.panel>
+        </:explorer>
+
+        <:viewport>
+          <.ide_toolbar id="asset-toolbar">
+            <h1 class="mr-2 text-sm font-semibold text-base-content">
+              {(@selected_asset && @selected_asset.name) || "Tilesets"}
+            </h1>
+            <div class="flex-1"></div>
+            <button
+              id="asset-upload-button-2"
+              phx-click="open_upload"
+              class="ide-toolbtn ide-toolbtn-active"
+            >
+              <.icon name="hero-arrow-up-tray" class="size-4" /> Upload
+            </button>
+          </.ide_toolbar>
+
+          <div class="min-h-0 flex-1 overflow-auto p-4">
+            <.workspace_panel selected_asset={@selected_asset} selected_tile={@selected_tile} />
+          </div>
+        </:viewport>
+
+        <:inspector>
+          <.editor_panel selected_asset={@selected_asset} selected_tile={@selected_tile} />
+        </:inspector>
+
+        <:status>
+          <span class="font-mono">
+            {length(@tilesets)} tileset{if length(@tilesets) == 1, do: "", else: "s"}
+          </span>
+          <span :if={@selected_asset} class="font-mono">tile: {@selected_tile}</span>
+          <span class="flex-1"></span>
+          <span class="text-base-content/50">Upload PNG tilesets · paint per-tile collision</span>
+        </:status>
+      </.ide_shell>
 
       <.upload_modal :if={@upload_open?} form={@form} uploads={@uploads} />
-    </Layouts.app>
+    </div>
     """
   end
 
@@ -248,21 +286,8 @@ defmodule BoxlandWeb.AssetLive do
 
   defp library_panel(assigns) do
     ~H"""
-    <aside class="rounded-box bg-base-200/60 p-3">
-      <div class="mb-3 flex items-center justify-between">
-        <h2 class="text-sm font-semibold uppercase tracking-wide text-base-content/70">
-          {length(@tilesets)} tileset{if length(@tilesets) == 1, do: "", else: "s"}
-        </h2>
-        <button
-          type="button"
-          class="btn btn-primary btn-sm"
-          phx-click="open_upload"
-        >
-          <.icon name="hero-plus" class="size-4" /> Upload
-        </button>
-      </div>
-
-      <p :if={@tilesets == []} class="rounded-box bg-base-300/40 p-4 text-sm text-base-content/70">
+    <div class="px-1.5">
+      <p :if={@tilesets == []} class="rounded-box bg-base-300/40 p-4 text-xs text-base-content/60">
         No tilesets yet. Upload a 32×32 tileset PNG to start editing collisions.
       </p>
 
@@ -275,7 +300,7 @@ defmodule BoxlandWeb.AssetLive do
           />
         </li>
       </ul>
-    </aside>
+    </div>
     """
   end
 

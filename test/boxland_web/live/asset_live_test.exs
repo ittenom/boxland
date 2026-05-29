@@ -61,6 +61,26 @@ defmodule BoxlandWeb.AssetLiveTest do
     assert Enum.at(Enum.at(rows, 2), 2) == false
   end
 
+  test "renders inside the IDE shell with the library and a selected asset", %{
+    conn: conn,
+    designer: designer
+  } do
+    {:ok, asset} = create_tileset(designer, "Forest")
+    {:ok, _view, html} = live(conn, ~p"/app/assets")
+
+    assert html =~ "asset-root"
+    assert html =~ ~s(id="asset-toolbar")
+    assert html =~ ~s(id="asset-#{asset.id}")
+  end
+
+  test "upload button opens the modal", %{conn: conn, designer: designer} do
+    {:ok, _asset} = create_tileset(designer, "Forest")
+    {:ok, view, _html} = live(conn, ~p"/app/assets")
+
+    html = render_click(view, "open_upload")
+    assert html =~ ~s(id="upload-modal")
+  end
+
   defp create_tileset(designer, name) do
     Library.create_tileset(designer.id, %{
       name: name,

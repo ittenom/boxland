@@ -46,7 +46,7 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
   test "renders the three-pane layout", %{conn: conn, level: level} do
     {:ok, _view, html} = live(conn, ~p"/app/levels/#{level.id}")
 
-    assert html =~ "Level Editor"
+    assert html =~ "level-editor-root"
     assert html =~ "level-palette"
     assert html =~ "level-canvas"
     assert html =~ "level-inspector"
@@ -271,11 +271,11 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
     level: level
   } do
     {:ok, view, html} = live(conn, ~p"/app/levels/#{level.id}")
-    assert html =~ ~r{id="level-tool-select"[^>]*btn-primary}
+    assert html =~ ~r{id="level-tool-select"[^>]*ide-toolbtn-active}
 
     html = render_click(view, "tool", %{"tool" => "delete"})
-    assert html =~ ~r{id="level-tool-delete"[^>]*btn-primary}
-    refute html =~ ~r{id="level-tool-select"[^>]*btn-primary}
+    assert html =~ ~r{id="level-tool-delete"[^>]*ide-toolbtn-active}
+    refute html =~ ~r{id="level-tool-select"[^>]*ide-toolbtn-active}
   end
 
   test "V click on a group cell selects (no entity created) and shows Promote", %{
@@ -400,7 +400,7 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
     assert new.z_index == 1
 
     html = render(view)
-    assert html =~ ~r{id="layer-row-#{new.id}"[^>]*border-primary}
+    assert html =~ ~r{id="layer-row-#{new.id}"[^>]*ide-node-selected}
   end
 
   test "select_layer marks the row as selected and updates place_z", %{
@@ -414,8 +414,8 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
 
     render_click(view, "select_layer", %{"id" => to_string(primary.id)})
     html = render(view)
-    assert html =~ ~r{id="layer-row-#{primary.id}"[^>]*border-primary}
-    refute html =~ ~r{id="layer-row-#{upper.id}"[^>]*border-primary}
+    assert html =~ ~r{id="layer-row-#{primary.id}"[^>]*ide-node-selected}
+    refute html =~ ~r{id="layer-row-#{upper.id}"[^>]*ide-node-selected}
   end
 
   test "toggles layer visibility and lock", %{conn: conn, map: map, level: level} do
@@ -477,8 +477,8 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
     render_click(view, "cell", %{"x" => "1", "y" => "1"})
 
     html = render(view)
-    assert html =~ ~r{id="layer-row-#{ground.id}"[^>]*ring-accent}
-    assert html =~ ~r{id="layer-row-#{upper.id}"[^>]*ring-accent}
+    assert html =~ ~r{id="layer-row-#{ground.id}"[^>]*ide-node-affected}
+    assert html =~ ~r{id="layer-row-#{upper.id}"[^>]*ide-node-affected}
   end
 
   test "Path tool: clicking cells appends waypoints, clicking a waypoint cell removes it", %{
@@ -633,7 +633,7 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
     render_click(view, "cell", %{"x" => "0", "y" => "0"})
 
     html = render(view)
-    assert html =~ ~r{id="layer-row-#{ground.id}"[^>]*ring-accent}
+    assert html =~ ~r{id="layer-row-#{ground.id}"[^>]*ide-node-affected}
   end
 
   describe "rendering chrome" do
@@ -727,6 +727,113 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
 
       assert html =~ ~s(id="level-toolbar")
       refute html =~ ~s(id="play-root")
+    end
+  end
+
+  describe "IDE shell: tree, sections, context menu, drag" do
+    test "explorer renders an object tree; clicking a node selects the entity", %{
+      conn: conn,
+      designer: d,
+      level: level
+    } do
+      {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+      render_click(view, "preset", %{"preset" => "sign"})
+      render_click(view, "cell", %{"x" => "0", "y" => "0"})
+      [e] = Levels.get_level!(d.id, level.id).entities
+
+      html = render(view)
+      assert html =~ ~s(id="object-row-#{e.id}")
+
+      # Selecting from the tree drives the inspector.
+      html = render_click(view, "select_entity", %{"id" => to_string(e.id)})
+      assert html =~ "Identity"
+      assert html =~ ~r{id="object-row-#{e.id}"[^>]*ide-node-selected}
+    end
+
+    test "selecting a layer node shows the layer inspector", %{
+      conn: conn,
+      map: map,
+      level: level
+    } do
+      [layer] = Maps.list_layers(map.id)
+      {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+
+      html = render_click(view, "select_layer", %{"id" => to_string(layer.id)})
+      assert html =~ ~s(id="layer-inspector-#{layer.id}")
+    end
+
+    test "collapsing a section hides its body", %{conn: conn, level: level} do
+      {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+      assert render(view) =~ ~s(id="layers-tree")
+
+      html = render_click(view, "toggle_section", %{"id" => "layers"})
+      refute html =~ ~s(id="layers-tree")
+
+      html = render_click(view, "toggle_section", %{"id" => "layers"})
+      assert html =~ ~s(id="layers-tree")
+    end
+
+    test "tree_reorder reorders layers", %{conn: conn, map: map, level: level} do
+      {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+      render_click(view, "add_layer")
+      [ground, upper] = Maps.list_layers(map.id) |> Enum.sort_by(& &1.z_index)
+      # ground is lowest z (bottom of the display order). Drop it before `upper`
+      # (the top) → ground becomes the top layer (highest z).
+      render_hook(view, "tree_reorder", %{
+        "group" => "layers",
+        "id" => to_string(ground.id),
+        "before_id" => to_string(upper.id)
+      })
+
+      [_lo, hi] = Maps.list_layers(map.id) |> Enum.sort_by(& &1.z_index)
+      assert hi.id == ground.id
+    end
+
+    test "right-click opens a context menu for the entity", %{
+      conn: conn,
+      designer: d,
+      level: level
+    } do
+      {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+      render_click(view, "preset", %{"preset" => "sign"})
+      render_click(view, "cell", %{"x" => "0", "y" => "0"})
+      [e] = Levels.get_level!(d.id, level.id).entities
+
+      html =
+        render_hook(view, "open_context_menu", %{
+          "kind" => "entity",
+          "id" => to_string(e.id),
+          "x" => 120,
+          "y" => 80
+        })
+
+      assert html =~ ~s(id="ide-context-menu")
+      assert html =~ "Delete entity"
+
+      html = render_click(view, "close_context_menu")
+      refute html =~ ~s(id="ide-context-menu")
+    end
+
+    test "dragging a waypoint moves it; dragging off-grid removes it", %{
+      conn: conn,
+      designer: d,
+      level: level
+    } do
+      {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+      render_click(view, "preset", %{"preset" => "sign"})
+      render_click(view, "cell", %{"x" => "1", "y" => "1"})
+      [e] = Levels.get_level!(d.id, level.id).entities
+      render_click(view, "select_entity", %{"id" => to_string(e.id)})
+      render_click(view, "tool", %{"tool" => "path"})
+      render_click(view, "cell", %{"x" => "5", "y" => "4"})
+
+      # Drag waypoint 1 (index 0) to a new cell.
+      render_hook(view, "waypoint_move", %{"index" => 0, "x" => 6, "y" => 6})
+      assert [%{"x" => 6, "y" => 6}] = Levels.get_entity(d.id, level.id, e.id).waypoints
+
+      # Drag it off-grid → removed.
+      render_hook(view, "waypoint_remove", %{"index" => 0})
+      assert Levels.get_entity(d.id, level.id, e.id).waypoints == []
     end
   end
 end

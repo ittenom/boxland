@@ -2,6 +2,7 @@ defmodule BoxlandWeb.LevelEditorLive do
   use BoxlandWeb, :live_view
 
   import BoxlandWeb.LevelRender, only: [entity_sprite_styles: 2, group_members_indexed: 2]
+  import BoxlandWeb.Components.Ide
 
   alias Boxland.{Entities, Levels, Library, Maps, Repo}
   alias Boxland.Entities.EntityType
@@ -42,6 +43,9 @@ defmodule BoxlandWeb.LevelEditorLive do
      |> assign(:show_paths, true)
      |> assign(:show_grid, false)
      |> assign(:publish_error, nil)
+     # === IDE shell (collapsible sections + context menu) ===
+     |> assign(:closed_sections, MapSet.new())
+     |> assign(:context_menu, nil)
      # === Play mode (deterministic simulation) ===
      |> assign(:mode, :edit)
      |> assign(:sim, nil)
@@ -153,6 +157,100 @@ defmodule BoxlandWeb.LevelEditorLive do
   def handle_event("toggle_show_grid", _params, socket) do
     {:noreply, assign(socket, :show_grid, not socket.assigns.show_grid)}
   end
+
+  # === IDE shell: tree selection, sections, context menu, drag ===
+
+  def handle_event("select_layer", %{"id" => id}, socket) do
+    lid = String.to_integer(id)
+    layer = Enum.find(socket.assigns.level.map.layers, &(&1.id == lid))
+
+    socket =
+      socket
+      |> assign(:selected_layer_id, lid)
+      |> assign(:selection, {:layer, lid})
+      |> then(fn s -> if layer, do: assign(s, :place_z, layer.z_index), else: s end)
+
+    {:noreply, socket}
+  end
+
+  def handle_event("select_group", %{"id" => gid}, socket) do
+    {:noreply, assign(socket, :selection, {:group, gid})}
+  end
+
+  def handle_event("toggle_section", %{"id" => id}, socket) do
+    closed = socket.assigns.closed_sections
+
+    closed =
+      if MapSet.member?(closed, id), do: MapSet.delete(closed, id), else: MapSet.put(closed, id)
+
+    {:noreply, assign(socket, :closed_sections, closed)}
+  end
+
+  def handle_event("open_context_menu", %{"kind" => kind, "id" => id, "x" => x, "y" => y}, socket) do
+    # Right-click focuses the object, then the menu acts on the selection.
+    socket = focus_for_context(socket, kind, id)
+
+    {:noreply,
+     assign(socket, :context_menu, %{kind: kind, id: id, x: trunc_num(x), y: trunc_num(y)})}
+  end
+
+  def handle_event("close_context_menu", _params, socket) do
+    {:noreply, assign(socket, :context_menu, nil)}
+  end
+
+  def handle_event(
+        "tree_reorder",
+        %{"group" => "layers", "id" => id, "before_id" => before_id},
+        socket
+      ) do
+    ids = reordered_layer_ids(socket.assigns.level.map, id, before_id)
+    {:ok, _} = Maps.reorder_layers(socket.assigns.level.map.id, ids)
+    {:noreply, refresh_level(socket)}
+  end
+
+  def handle_event(
+        "tree_reorder",
+        %{"group" => "waypoints", "id" => id, "before_id" => before_id},
+        socket
+      ) do
+    case selected_entity(socket) do
+      nil ->
+        {:noreply, socket}
+
+      entity ->
+        wps = reorder_waypoints(entity.waypoints || [], id, before_id)
+        {:ok, _} = Levels.update_entity(entity, %{"waypoints" => wps})
+        {:noreply, refresh_level(socket)}
+    end
+  end
+
+  def handle_event("tree_reorder", _params, socket), do: {:noreply, socket}
+
+  def handle_event("waypoint_move", %{"index" => index, "x" => x, "y" => y}, socket) do
+    case selected_entity(socket) do
+      nil ->
+        {:noreply, socket}
+
+      entity ->
+        idx = trunc_num(index)
+        wps = entity.waypoints || []
+
+        case Enum.at(wps, idx) do
+          nil ->
+            {:noreply, socket}
+
+          wp ->
+            new_wp = wp |> Elixir.Map.put("x", trunc_num(x)) |> Elixir.Map.put("y", trunc_num(y))
+
+            {:ok, _} =
+              Levels.update_entity(entity, %{"waypoints" => List.replace_at(wps, idx, new_wp)})
+
+            {:noreply, refresh_level(socket)}
+        end
+    end
+  end
+
+  # (waypoint_remove is handled by the existing clause in the Waypoint events section)
 
   # === Tool events ===
 
@@ -287,18 +385,6 @@ defmodule BoxlandWeb.LevelEditorLive do
   end
 
   # === Layer events ===
-
-  def handle_event("select_layer", %{"id" => id}, socket) do
-    lid = String.to_integer(id)
-    layer = Enum.find(socket.assigns.level.map.layers, &(&1.id == lid))
-
-    socket =
-      socket
-      |> assign(:selected_layer_id, lid)
-      |> then(fn s -> if layer, do: assign(s, :place_z, layer.z_index), else: s end)
-
-    {:noreply, socket}
-  end
 
   def handle_event("add_layer", _params, socket) do
     {:ok, layer} = Maps.create_layer(socket.assigns.level.map)
@@ -649,7 +735,8 @@ defmodule BoxlandWeb.LevelEditorLive do
         {:noreply, socket}
 
       entity ->
-        idx = String.to_integer(index)
+        # `index` may be a string (inspector button) or a number (drag hook).
+        idx = trunc_num(index)
         wps = entity.waypoints || []
         new_wps = List.delete_at(wps, idx)
         {:ok, _} = Levels.update_entity(entity, %{"waypoints" => new_wps})
@@ -760,6 +847,62 @@ defmodule BoxlandWeb.LevelEditorLive do
 
   defp display_layers(map) do
     Enum.sort_by(map.layers, fn l -> {-l.z_index, l.id} end)
+  end
+
+  # === IDE tree/context/reorder helpers ===
+
+  defp trunc_num(n) when is_integer(n), do: n
+  defp trunc_num(n) when is_float(n), do: trunc(n)
+  defp trunc_num(n) when is_binary(n), do: safe_int(n, 0)
+  defp trunc_num(_), do: 0
+
+  # Right-clicking an object focuses it so context-menu items act on the selection.
+  defp focus_for_context(socket, "layer", id) do
+    lid = safe_int(id, 0)
+    socket |> assign(:selected_layer_id, lid) |> assign(:selection, {:layer, lid})
+  end
+
+  defp focus_for_context(socket, "entity", id),
+    do: assign(socket, :selection, {:entity, safe_int(id, 0)})
+
+  defp focus_for_context(socket, "group", gid), do: assign(socket, :selection, {:group, gid})
+  defp focus_for_context(socket, _kind, _id), do: socket
+
+  # New display order (top→bottom) after dropping layer `id` before `before_id`
+  # (nil = move to the end/bottom). Returns ids in display order for reorder_layers.
+  defp reordered_layer_ids(map, id, before_id) do
+    id = safe_int(id, 0)
+    before = before_id && safe_int(before_id, nil)
+
+    ordered = display_layers(map) |> Enum.map(& &1.id) |> Enum.reject(&(&1 == id))
+
+    case before && Enum.find_index(ordered, &(&1 == before)) do
+      nil -> ordered ++ [id]
+      idx -> List.insert_at(ordered, idx, id)
+    end
+  end
+
+  # Reorder a waypoint list. `id`/`before_id` are stringified indices from TreeDnD.
+  defp reorder_waypoints(waypoints, id, before_id) do
+    from = safe_int(id, 0)
+
+    case Enum.at(waypoints, from) do
+      nil ->
+        waypoints
+
+      wp ->
+        rest = List.delete_at(waypoints, from)
+        before = before_id && safe_int(before_id, nil)
+        # before_id indexes into the ORIGINAL list; map it onto `rest`.
+        insert_at =
+          cond do
+            is_nil(before) -> length(rest)
+            before > from -> before - 1
+            true -> before
+          end
+
+        List.insert_at(rest, insert_at, wp)
+    end
   end
 
   # === Cell-click dispatch helpers ===
@@ -1252,10 +1395,16 @@ defmodule BoxlandWeb.LevelEditorLive do
         do: compute_path_overlay(selection_entity, assigns.level, assigns.tilesets),
         else: {MapSet.new(), %{}, nil}
 
+    promoted_gids = for(e <- assigns.level.entities, e.group_id, do: e.group_id) |> MapSet.new()
+    unpromoted_groups = Enum.reject(assigns.groups, &MapSet.member?(promoted_gids, &1))
+    selected_layer = selected_layer_struct(assigns)
+
     assigns =
       assigns
       |> assign(:layers, layers)
       |> assign(:selected, selection_entity)
+      |> assign(:selected_layer, selected_layer)
+      |> assign(:unpromoted_groups, unpromoted_groups)
       |> assign(:selection_highlight, selection_highlight)
       |> assign(:affected_layer_ids, affected_layers)
       |> assign(:entity_cell_index, entity_cell_index)
@@ -1265,72 +1414,102 @@ defmodule BoxlandWeb.LevelEditorLive do
       |> assign(:unreachable_leg, unreachable_leg)
 
     ~H"""
-    <Layouts.app flash={@flash} current_scope={%{designer: @current_designer}}>
-      <section class="space-y-4">
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p class="text-sm font-semibold text-primary">Level Editor</p>
-            <h1 class="text-3xl font-semibold tracking-tight">{@level.name}</h1>
-          </div>
-          <div class="flex gap-2">
-            <.link navigate={~p"/app/levels"} class="btn btn-ghost">Levels</.link>
-            <button id="enter-play-button" phx-click="enter_play" class="btn btn-secondary">
-              <.icon name="hero-play" class="size-4" /> Play
-            </button>
-            <.link navigate={~p"/play/#{@level.id}"} class="btn btn-ghost">Live</.link>
-            <button id="publish-level-button" phx-click="publish" class="btn btn-primary">
-              Publish
-            </button>
-          </div>
-        </div>
+    <div id="level-editor-root" phx-hook="ContextMenu">
+      <.ide_shell flash={@flash}>
+        <:activity>
+          <.ide_rail_nav active={:levels} />
+          <div class="flex-1"></div>
+          <.rail_item icon="hero-play" label="Play (Space)" phx-click="enter_play" />
+        </:activity>
 
-        <div :if={@publish_error} class="alert alert-error">{@publish_error}</div>
-
-        <div id="level-toolbar" class="flex flex-wrap gap-2">
-          <.tool_button
-            icon="hero-cursor-arrow-rays"
-            label="V"
-            tool="select"
-            active={@tool == "select"}
-          />
-          <.tool_button icon="hero-pencil" label="P" tool="place" active={@tool == "place"} />
-          <.tool_button icon="hero-x-mark" label="X" tool="delete" active={@tool == "delete"} />
-          <.tool_button icon="hero-map-pin" label="Path" tool="path" active={@tool == "path"} />
-
-          <label class="ml-2 flex cursor-pointer items-center gap-1 text-xs text-base-content/70">
-            <input
-              id="toggle-show-paths"
-              type="checkbox"
-              class="checkbox checkbox-xs"
-              checked={@show_paths}
-              phx-click="toggle_show_paths"
-            /> Show paths
-          </label>
-
-          <label class="flex cursor-pointer items-center gap-1 text-xs text-base-content/70">
-            <input
-              id="toggle-show-grid"
-              type="checkbox"
-              class="checkbox checkbox-xs"
-              checked={@show_grid}
-              phx-click="toggle_show_grid"
-            /> Show grid
-          </label>
-        </div>
-
-        <div class="grid gap-4 lg:grid-cols-[14rem_1fr_20rem]">
-          <.palette
-            mode={@palette_mode}
+        <:explorer>
+          <.explorer_tree
+            layers={display_layers(@level.map)}
+            entities={@level.entities}
+            groups={@unpromoted_groups}
+            selection={@selection}
+            selected_layer_id={@selected_layer_id}
+            affected_layer_ids={@affected_layer_ids}
+            closed_sections={@closed_sections}
+            palette_mode={@palette_mode}
             preset={@preset}
             tilesets={@tilesets}
             sprites={@sprites}
-            groups={@groups}
+            palette_groups={@groups}
             selected_tile={@selected_tile}
             selected_sprite_id={@selected_sprite_id}
             selected_group_id={@selected_group_id}
             invisible_size={@invisible_size}
             place_z={@place_z}
           />
+        </:explorer>
+
+        <:viewport>
+          <.ide_toolbar id="level-toolbar">
+            <h1 class="mr-2 text-sm font-semibold text-base-content">{@level.name}</h1>
+            <.ide_tool_button
+              id="level-tool-select"
+              icon="hero-cursor-arrow-rays"
+              label="Select"
+              active={@tool == "select"}
+              phx-click="tool"
+              phx-value-tool="select"
+              title="Select (V)"
+            />
+            <.ide_tool_button
+              id="level-tool-place"
+              icon="hero-pencil"
+              label="Place"
+              active={@tool == "place"}
+              phx-click="tool"
+              phx-value-tool="place"
+              title="Place (P)"
+            />
+            <.ide_tool_button
+              id="level-tool-delete"
+              icon="hero-x-mark"
+              label="Delete"
+              active={@tool == "delete"}
+              phx-click="tool"
+              phx-value-tool="delete"
+              title="Delete (X)"
+            />
+            <.ide_tool_button
+              id="level-tool-path"
+              icon="hero-map-pin"
+              label="Path"
+              active={@tool == "path"}
+              phx-click="tool"
+              phx-value-tool="path"
+              title="Path"
+            />
+            <span class="mx-1 h-5 w-px bg-base-content/15"></span>
+            <.ide_tool_button
+              icon="hero-arrows-pointing-out"
+              label="Paths"
+              active={@show_paths}
+              phx-click="toggle_show_paths"
+              title="Toggle path overlay"
+            />
+            <.ide_tool_button
+              icon="hero-squares-2x2"
+              label="Grid"
+              active={@show_grid}
+              phx-click="toggle_show_grid"
+              title="Toggle gridlines"
+            />
+            <div class="flex-1"></div>
+            <.link navigate={~p"/play/#{@level.id}"} class="ide-toolbtn">Live</.link>
+            <button
+              id="publish-level-button"
+              phx-click="publish"
+              class="ide-toolbtn ide-toolbtn-active"
+            >
+              <.icon name="hero-rocket-launch" class="size-4" /> Publish
+            </button>
+          </.ide_toolbar>
+
+          <div :if={@publish_error} class="alert alert-error m-3">{@publish_error}</div>
 
           <.canvas
             level={@level}
@@ -1346,19 +1525,248 @@ defmodule BoxlandWeb.LevelEditorLive do
             path_directions={@path_directions}
             unreachable_leg={@unreachable_leg}
           />
+        </:viewport>
 
-          <div class="space-y-3">
-            <.inspector selection={@selection} entity={@selected} tool={@tool} />
-            <.layers_panel
-              layers={display_layers(@level.map)}
-              selected_layer_id={@selected_layer_id}
-              renaming_layer_id={@renaming_layer_id}
-              affected_layer_ids={@affected_layer_ids}
-            />
-          </div>
-        </div>
-      </section>
-    </Layouts.app>
+        <:inspector>
+          <%= case @selection do %>
+            <% {:layer, _} -> %>
+              <.layer_inspector layer={@selected_layer} />
+            <% _ -> %>
+              <.inspector selection={@selection} entity={@selected} tool={@tool} />
+          <% end %>
+        </:inspector>
+
+        <:status>
+          <span class="font-mono">tool: {@tool}</span>
+          <span class="font-mono">z: {@place_z}</span>
+          <span class="flex-1"></span>
+          <span class="text-base-content/50">
+            Right-click for actions · drag waypoints on the canvas
+          </span>
+        </:status>
+      </.ide_shell>
+
+      <.context_menu open={@context_menu != nil} x={ctx(@context_menu, :x)} y={ctx(@context_menu, :y)}>
+        <%= case ctx(@context_menu, :kind) do %>
+          <% "layer" -> %>
+            <.context_item
+              icon="hero-pencil"
+              phx-click="rename_layer_start"
+              phx-value-id={ctx(@context_menu, :id)}
+            >
+              Rename
+            </.context_item>
+            <.context_item
+              icon="hero-document-duplicate"
+              phx-click="duplicate_layer"
+              phx-value-id={ctx(@context_menu, :id)}
+            >
+              Duplicate
+            </.context_item>
+            <.context_item
+              icon="hero-eye"
+              phx-click="toggle_visibility"
+              phx-value-id={ctx(@context_menu, :id)}
+            >
+              Toggle visibility
+            </.context_item>
+            <.context_item
+              icon="hero-trash"
+              danger
+              phx-click="delete_layer"
+              phx-value-id={ctx(@context_menu, :id)}
+              data-confirm="Delete this layer?"
+            >
+              Delete
+            </.context_item>
+          <% "entity" -> %>
+            <.context_item
+              icon="hero-trash"
+              danger
+              phx-click="delete_entity"
+              phx-value-id={ctx(@context_menu, :id)}
+            >
+              Delete entity
+            </.context_item>
+          <% "group" -> %>
+            <.context_item icon="hero-arrow-up-circle" phx-click="promote_selection">
+              Promote to entity
+            </.context_item>
+          <% _ -> %>
+        <% end %>
+      </.context_menu>
+    </div>
+    """
+  end
+
+  defp ctx(nil, _key), do: nil
+  defp ctx(menu, key), do: Elixir.Map.get(menu, key)
+
+  defp selected_layer_struct(%{selection: {:layer, id}, level: level}),
+    do: Enum.find(level.map.layers, &(&1.id == id))
+
+  defp selected_layer_struct(_), do: nil
+
+  defp section_open?(closed_sections, key), do: not MapSet.member?(closed_sections, key)
+
+  defp object_label(entity) do
+    entity.tag || entity.entity_type.name || entity.entity_type.slug
+  end
+
+  defp object_icon(entity) do
+    case entity.entity_type.visual_ref do
+      %{"kind" => "preset"} -> "hero-bolt"
+      %{"kind" => "invisible"} -> "hero-cube-transparent"
+      %{"kind" => "group"} -> "hero-rectangle-group"
+      %{"kind" => "sprite"} -> "hero-user"
+      _ -> "hero-square-2-stack"
+    end
+  end
+
+  # === IDE explorer + inspector components ===
+
+  attr :layers, :list, required: true
+  attr :entities, :list, required: true
+  attr :groups, :list, required: true
+  attr :selection, :any, required: true
+  attr :selected_layer_id, :any, required: true
+  attr :affected_layer_ids, :any, required: true
+  attr :closed_sections, :any, required: true
+  attr :palette_mode, :string, required: true
+  attr :preset, :string, required: true
+  attr :tilesets, :list, required: true
+  attr :sprites, :list, required: true
+  attr :palette_groups, :list, required: true
+  attr :selected_tile, :any, required: true
+  attr :selected_sprite_id, :any, required: true
+  attr :selected_group_id, :any, required: true
+  attr :invisible_size, :map, required: true
+  attr :place_z, :integer, required: true
+
+  defp explorer_tree(assigns) do
+    ~H"""
+    <.panel title="Explorer">
+      <:actions>
+        <button id="add-layer-button" phx-click="add_layer" class="ide-toolbtn !p-1" title="Add layer">
+          <.icon name="hero-plus" class="size-3.5" />
+        </button>
+      </:actions>
+
+      <.panel_section
+        title="Layers"
+        open={section_open?(@closed_sections, "layers")}
+        phx-click="toggle_section"
+        phx-value-id="layers"
+      >
+        <.tree id="layers-tree" phx-hook="TreeDnD" data-tree-group="layers">
+          <.tree_node
+            :for={layer <- @layers}
+            id={"layer-row-#{layer.id}"}
+            label={layer.name}
+            icon="hero-square-3-stack-3d"
+            draggable
+            dnd_id={layer.id}
+            context_kind="layer"
+            context_id={layer.id}
+            selected={layer.id == @selected_layer_id}
+            affected={MapSet.member?(@affected_layer_ids, layer.id)}
+            phx-click="select_layer"
+            phx-value-id={layer.id}
+          >
+            <:trailing>
+              <button
+                phx-click="toggle_visibility"
+                phx-value-id={layer.id}
+                class="ide-toolbtn !p-0.5"
+                title="Toggle visibility"
+              >
+                <.icon
+                  name={if layer.visible, do: "hero-eye", else: "hero-eye-slash"}
+                  class="size-3.5"
+                />
+              </button>
+              <button
+                phx-click="toggle_lock"
+                phx-value-id={layer.id}
+                class="ide-toolbtn !p-0.5"
+                title="Toggle lock"
+              >
+                <.icon
+                  name={if layer.locked, do: "hero-lock-closed", else: "hero-lock-open"}
+                  class="size-3.5"
+                />
+              </button>
+            </:trailing>
+          </.tree_node>
+        </.tree>
+      </.panel_section>
+
+      <.panel_section
+        title="Objects"
+        open={section_open?(@closed_sections, "objects")}
+        phx-click="toggle_section"
+        phx-value-id="objects"
+      >
+        <p :if={@entities == []} class="px-2 py-1 text-xs text-base-content/40">
+          No entities placed.
+        </p>
+        <.tree id="objects-tree">
+          <.tree_node
+            :for={e <- @entities}
+            id={"object-row-#{e.id}"}
+            label={object_label(e)}
+            icon={object_icon(e)}
+            context_kind="entity"
+            context_id={e.id}
+            selected={@selection == {:entity, e.id}}
+            phx-click="select_entity"
+            phx-value-id={e.id}
+          />
+        </.tree>
+      </.panel_section>
+
+      <.panel_section
+        :if={@groups != []}
+        title="Groups"
+        open={section_open?(@closed_sections, "groups")}
+        phx-click="toggle_section"
+        phx-value-id="groups"
+      >
+        <.tree id="groups-tree">
+          <.tree_node
+            :for={gid <- @groups}
+            id={"group-row-#{gid}"}
+            label={String.slice(gid, 0, 12)}
+            icon="hero-rectangle-group"
+            context_kind="group"
+            context_id={gid}
+            selected={@selection == {:group, gid}}
+            phx-click="select_group"
+            phx-value-id={gid}
+          />
+        </.tree>
+      </.panel_section>
+
+      <.panel_section
+        title="Palette"
+        open={section_open?(@closed_sections, "palette")}
+        phx-click="toggle_section"
+        phx-value-id="palette"
+      >
+        <.palette
+          mode={@palette_mode}
+          preset={@preset}
+          tilesets={@tilesets}
+          sprites={@sprites}
+          groups={@palette_groups}
+          selected_tile={@selected_tile}
+          selected_sprite_id={@selected_sprite_id}
+          selected_group_id={@selected_group_id}
+          invisible_size={@invisible_size}
+          place_z={@place_z}
+        />
+      </.panel_section>
+    </.panel>
     """
   end
 
@@ -1385,6 +1793,10 @@ defmodule BoxlandWeb.LevelEditorLive do
   end
 
   defp selection_cells({:tile, _layer_id, x, y}, _level), do: MapSet.new([{x, y}])
+
+  defp selection_cells({:layer, _id}, _level), do: MapSet.new()
+
+  defp affected_layer_ids({:layer, id}, _level), do: MapSet.new([id])
 
   defp affected_layer_ids(nil, _level), do: MapSet.new()
 
@@ -1688,197 +2100,6 @@ defmodule BoxlandWeb.LevelEditorLive do
     """
   end
 
-  attr :layers, :list, required: true
-  attr :selected_layer_id, :any, required: true
-  attr :renaming_layer_id, :any, required: true
-  attr :affected_layer_ids, :any, required: true
-
-  defp layers_panel(assigns) do
-    ~H"""
-    <aside id="layers-panel" class="space-y-2 rounded-box bg-base-200 p-3">
-      <div class="flex items-center justify-between">
-        <h2 class="text-sm font-semibold uppercase tracking-wide text-base-content/70">Layers</h2>
-        <button
-          id="add-layer-button"
-          phx-click="add_layer"
-          class="btn btn-xs btn-primary"
-          title="Add layer"
-        >
-          <.icon name="hero-plus" class="size-3" /> Add
-        </button>
-      </div>
-
-      <ul class="space-y-1" role="listbox" aria-label="Layers">
-        <li
-          :for={{layer, position} <- Enum.with_index(@layers)}
-          id={"layer-row-#{layer.id}"}
-          role="option"
-          aria-selected={to_string(layer.id == @selected_layer_id)}
-          phx-click="select_layer"
-          phx-value-id={layer.id}
-          class={[
-            "group flex flex-col gap-1 rounded-md border p-2 transition cursor-pointer",
-            layer.id == @selected_layer_id && "border-primary bg-primary/10",
-            layer.id != @selected_layer_id && "border-base-300 bg-base-100 hover:bg-base-100/70",
-            MapSet.member?(@affected_layer_ids, layer.id) && "ring-2 ring-accent/60"
-          ]}
-        >
-          <div class="flex items-center gap-1">
-            <button
-              type="button"
-              phx-click="toggle_visibility"
-              phx-value-id={layer.id}
-              class="btn btn-ghost btn-xs px-1"
-              title={if layer.visible, do: "Hide layer", else: "Show layer"}
-              aria-label={if layer.visible, do: "Hide layer", else: "Show layer"}
-            >
-              <.icon
-                name={if layer.visible, do: "hero-eye", else: "hero-eye-slash"}
-                class={["size-4", !layer.visible && "text-base-content/40"]}
-              />
-            </button>
-            <button
-              type="button"
-              phx-click="toggle_lock"
-              phx-value-id={layer.id}
-              class="btn btn-ghost btn-xs px-1"
-              title={if layer.locked, do: "Unlock layer", else: "Lock layer"}
-              aria-label={if layer.locked, do: "Unlock layer", else: "Lock layer"}
-            >
-              <.icon
-                name={if layer.locked, do: "hero-lock-closed", else: "hero-lock-open"}
-                class={["size-4", layer.locked && "text-warning"]}
-              />
-            </button>
-
-            <%= if @renaming_layer_id == layer.id do %>
-              <form
-                phx-submit="rename_layer"
-                phx-click-away="rename_layer_cancel"
-                phx-value-id={layer.id}
-                class="flex flex-1 items-center gap-1"
-              >
-                <input
-                  type="text"
-                  name="name"
-                  value={layer.name}
-                  autofocus
-                  phx-keydown="rename_layer_cancel"
-                  phx-key="Escape"
-                  class="input input-xs input-bordered flex-1"
-                />
-              </form>
-            <% else %>
-              <span
-                class={[
-                  "flex-1 truncate text-sm",
-                  !layer.visible && "text-base-content/40 line-through decoration-base-content/30"
-                ]}
-                phx-click="rename_layer_start"
-                phx-value-id={layer.id}
-                title="Rename"
-              >
-                {layer.name}
-              </span>
-            <% end %>
-
-            <span class="font-mono text-[10px] text-base-content/50" title="z-index">
-              z={layer.z_index}
-            </span>
-          </div>
-
-          <form
-            phx-change="set_opacity"
-            phx-value-id={layer.id}
-            class="flex items-center gap-1"
-          >
-            <.icon name="hero-adjustments-horizontal" class="size-3 text-base-content/50" />
-            <input
-              type="range"
-              min="0"
-              max="100"
-              step="5"
-              value={layer.opacity}
-              name="opacity"
-              phx-debounce="150"
-              class="range range-xs flex-1"
-              aria-label="Layer opacity"
-            />
-            <span class="w-8 text-right font-mono text-[10px] text-base-content/50">
-              {layer.opacity}%
-            </span>
-          </form>
-
-          <div class="flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100">
-            <button
-              type="button"
-              phx-click="move_layer_up"
-              phx-value-id={layer.id}
-              class="btn btn-ghost btn-xs px-1"
-              title="Move up (higher z)"
-              disabled={position == 0}
-              aria-label="Move layer up"
-            >
-              <.icon name="hero-chevron-up" class="size-3" />
-            </button>
-            <button
-              type="button"
-              phx-click="move_layer_down"
-              phx-value-id={layer.id}
-              class="btn btn-ghost btn-xs px-1"
-              title="Move down (lower z)"
-              disabled={position == length(@layers) - 1}
-              aria-label="Move layer down"
-            >
-              <.icon name="hero-chevron-down" class="size-3" />
-            </button>
-            <button
-              type="button"
-              phx-click="duplicate_layer"
-              phx-value-id={layer.id}
-              class="btn btn-ghost btn-xs px-1"
-              title="Duplicate"
-              aria-label="Duplicate layer"
-            >
-              <.icon name="hero-document-duplicate" class="size-3" />
-            </button>
-            <button
-              type="button"
-              phx-click="delete_layer"
-              phx-value-id={layer.id}
-              data-confirm={"Delete layer \"#{layer.name}\"?"}
-              class="btn btn-ghost btn-xs px-1 text-error"
-              title="Delete"
-              aria-label="Delete layer"
-              disabled={length(@layers) <= 1}
-            >
-              <.icon name="hero-trash" class="size-3" />
-            </button>
-          </div>
-        </li>
-      </ul>
-    </aside>
-    """
-  end
-
-  attr :icon, :string, required: true
-  attr :label, :string, required: true
-  attr :tool, :string, required: true
-  attr :active, :boolean, required: true
-
-  defp tool_button(assigns) do
-    ~H"""
-    <button
-      id={"level-tool-#{@tool}"}
-      phx-click="tool"
-      phx-value-tool={@tool}
-      class={["btn btn-sm", @active && "btn-primary"]}
-    >
-      <.icon name={@icon} class="size-4" /> {@label}
-    </button>
-    """
-  end
-
   attr :level, :any
   attr :layers, :list
   attr :tilesets, :list
@@ -1909,6 +2130,8 @@ defmodule BoxlandWeb.LevelEditorLive do
         class="overflow-auto rounded-box bg-base-200 p-4"
       >
         <div
+          id="level-canvas-grid"
+          phx-hook="WaypointDrag"
           class={[
             "relative grid w-fit",
             @show_grid && "gap-px bg-base-300",
@@ -1924,6 +2147,8 @@ defmodule BoxlandWeb.LevelEditorLive do
             phx-click="cell"
             phx-value-x={x}
             phx-value-y={y}
+            data-cell-x={x}
+            data-cell-y={y}
             class={[
               "relative h-8 w-8 bg-base-100",
               @show_grid && "border border-base-300",
@@ -1977,8 +2202,9 @@ defmodule BoxlandWeb.LevelEditorLive do
             <span
               :for={marker <- Elixir.Map.get(@waypoint_markers, {x, y}, [])}
               id={"waypoint-marker-#{marker.entity_id}-#{marker.index}"}
+              data-waypoint-index={marker.index - 1}
               class={[
-                "pointer-events-none absolute -right-1 -top-1 z-30 flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold shadow ring-2 ring-base-100",
+                "absolute -right-1 -top-1 z-30 flex h-5 w-5 cursor-grab touch-none items-center justify-center rounded-full text-[10px] font-bold shadow ring-2 ring-base-100",
                 if(waypoint_unreachable?(@unreachable_leg, marker.index),
                   do: "bg-error text-error-content",
                   else: "bg-warning text-warning-content"
@@ -1987,8 +2213,8 @@ defmodule BoxlandWeb.LevelEditorLive do
               aria-label={"waypoint #{marker.index}"}
               title={
                 if(waypoint_unreachable?(@unreachable_leg, marker.index),
-                  do: "waypoint #{marker.index} unreachable",
-                  else: "waypoint #{marker.index}"
+                  do: "drag to move · drag off-grid to remove (waypoint #{marker.index})",
+                  else: "drag to move · drag off-grid to remove (waypoint #{marker.index})"
                 )
               }
             >
@@ -2225,38 +2451,40 @@ defmodule BoxlandWeb.LevelEditorLive do
             </p>
           </div>
 
-          <ol
+          <.tree
             :if={(@entity.waypoints || []) != []}
-            class="space-y-1 text-xs"
-            aria-label="waypoint list"
+            id="waypoint-tree"
+            phx-hook="TreeDnD"
+            data-tree-group="waypoints"
           >
-            <li
+            <.tree_node
               :for={{wp, idx} <- Enum.with_index(@entity.waypoints || [])}
               id={"waypoint-row-#{idx}"}
-              class="flex items-center gap-2 rounded bg-base-100 px-2 py-1 font-mono"
+              label={"#{idx + 1}.  (#{Map.get(wp, "x", 0)}, #{Map.get(wp, "y", 0)})"}
+              icon="hero-map-pin"
+              draggable
+              dnd_id={idx}
             >
-              <span class="w-5 text-right text-base-content/50">{idx + 1}.</span>
-              <span class="flex-1">
-                ({Map.get(wp, "x", 0)}, {Map.get(wp, "y", 0)})
-              </span>
-              <button
-                id={"waypoint-remove-#{idx}"}
-                phx-click="waypoint_remove"
-                phx-value-index={idx}
-                class="btn btn-xs btn-ghost text-error"
-                aria-label={"remove waypoint #{idx + 1}"}
-                title="Remove"
-              >
-                <.icon name="hero-x-mark" class="size-3" />
-              </button>
-            </li>
-          </ol>
+              <:trailing>
+                <button
+                  id={"waypoint-remove-#{idx}"}
+                  phx-click="waypoint_remove"
+                  phx-value-index={idx}
+                  class="ide-toolbtn !p-0.5 text-error"
+                  aria-label={"remove waypoint #{idx + 1}"}
+                  title="Remove"
+                >
+                  <.icon name="hero-x-mark" class="size-3" />
+                </button>
+              </:trailing>
+            </.tree_node>
+          </.tree>
 
           <p
-            :if={@tool != "path" and (@entity.waypoints || []) != []}
+            :if={(@entity.waypoints || []) != []}
             class="mt-2 text-[10px] text-base-content/50"
           >
-            Tip: switch to the Path tool to edit waypoints on the map.
+            Drag waypoints on the canvas to move them; drag handles here to reorder.
           </p>
         </div>
 
@@ -2495,97 +2723,111 @@ defmodule BoxlandWeb.LevelEditorLive do
       |> assign(:px_h, assigns.level.map.height * @cell_px)
 
     ~H"""
-    <Layouts.app flash={@flash} current_scope={%{designer: @current_designer}}>
-      <section id="play-root" phx-window-keydown="play_key" class="space-y-4">
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p class="text-sm font-semibold text-primary">Level Editor · Play</p>
-            <h1 class="text-3xl font-semibold tracking-tight">{@level.name}</h1>
-          </div>
-          <div class="flex gap-2">
-            <button id="exit-play-button" phx-click="exit_play" class="btn btn-ghost">
-              <.icon name="hero-pencil-square" class="size-4" /> Edit
+    <div id="play-root" phx-window-keydown="play_key">
+      <.ide_shell flash={@flash}>
+        <:activity>
+          <.ide_rail_nav active={:levels} />
+          <div class="flex-1"></div>
+          <.rail_item icon="hero-pencil-square" label="Edit" phx-click="exit_play" />
+        </:activity>
+
+        <:explorer>
+          <.panel title="Scene">
+            <p :if={@world_entities == []} class="px-2 py-1 text-xs text-base-content/40">
+              No live entities.
+            </p>
+            <.tree id="play-objects-tree">
+              <.tree_node
+                :for={e <- @world_entities}
+                id={"play-object-#{sim_id(e.id)}"}
+                label={e.tag || e.type_slug}
+                icon="hero-cube"
+                selected={@play_selected_id == e.id}
+                phx-click="play_select_entity"
+                phx-value-id={sim_id(e.id)}
+              />
+            </.tree>
+          </.panel>
+        </:explorer>
+
+        <:viewport>
+          <.ide_toolbar>
+            <.ide_tool_button
+              id="play-toggle"
+              icon={if @running, do: "hero-pause", else: "hero-play"}
+              label={if @running, do: "Pause", else: "Play"}
+              active={@running}
+              phx-click="toggle_play"
+              title="Play/Pause (Space)"
+            />
+            <.ide_tool_button
+              id="play-step"
+              icon="hero-forward"
+              label="Step"
+              phx-click="step"
+              disabled={@running}
+              title="Step (.)"
+            />
+            <.ide_tool_button
+              id="play-reset"
+              icon="hero-arrow-path"
+              label="Reset"
+              phx-click="play_reset"
+              title="Reset"
+            />
+            <span class="mx-1 h-5 w-px bg-base-content/15"></span>
+            <label class="flex items-center gap-2 text-xs text-base-content/60">
+              <span>Rate</span>
+              <form phx-change="set_rate" class="contents">
+                <input
+                  id="play-rate"
+                  type="range"
+                  name="rate"
+                  min={@min_tick_rate_ms}
+                  max={@max_tick_rate_ms}
+                  step="50"
+                  value={@tick_rate_ms}
+                  class="range range-xs w-28"
+                />
+              </form>
+              <span class="w-12 text-right font-mono">{@tick_rate_ms}ms</span>
+            </label>
+            <div class="flex-1"></div>
+            <button
+              id="publish-level-button"
+              phx-click="publish"
+              class="ide-toolbtn ide-toolbtn-active"
+            >
+              <.icon name="hero-rocket-launch" class="size-4" /> Publish
             </button>
-            <button id="publish-level-button" phx-click="publish" class="btn btn-primary">
-              Publish
-            </button>
-          </div>
-        </div>
+          </.ide_toolbar>
 
-        <div id="play-controls" class="flex flex-wrap items-center gap-3 rounded-box bg-base-200 p-3">
-          <button
-            id="play-toggle"
-            phx-click="toggle_play"
-            class={["btn btn-sm", @running && "btn-primary"]}
-            title={if @running, do: "Pause (Space)", else: "Play (Space)"}
+          <div
+            id="play-timeline"
+            class="flex items-center gap-3 border-b border-base-content/10 px-3 py-2"
           >
-            <.icon name={if @running, do: "hero-pause", else: "hero-play"} class="size-4" />
-            {if @running, do: "Pause", else: "Play"}
-          </button>
-
-          <button
-            id="play-step"
-            phx-click="step"
-            class="btn btn-sm"
-            disabled={@running}
-            title="Step one tick (.)"
-          >
-            <.icon name="hero-forward" class="size-4" /> Step
-          </button>
-
-          <button id="play-reset" phx-click="play_reset" class="btn btn-sm btn-ghost">
-            <.icon name="hero-arrow-path" class="size-4" /> Reset
-          </button>
-
-          <label class="flex items-center gap-2 text-xs text-base-content/70">
-            <span>Rate</span>
-            <form phx-change="set_rate" class="contents">
+            <span class="text-[10px] font-semibold uppercase tracking-wide text-base-content/50">
+              Tick
+            </span>
+            <form phx-change="scrub" class="contents">
               <input
-                id="play-rate"
+                id="play-scrubber"
                 type="range"
-                name="rate"
-                min={@min_tick_rate_ms}
-                max={@max_tick_rate_ms}
-                step="50"
-                value={@tick_rate_ms}
-                class="range range-xs w-32"
+                name="tick"
+                min="0"
+                max={max(@sim.max_tick, 1)}
+                step="1"
+                value={@sim.tick}
+                class="range range-xs flex-1"
+                aria-label="Scrub timeline"
               />
             </form>
-            <span class="font-mono w-12 text-right">{@tick_rate_ms}ms</span>
-          </label>
-
-          <div class="ml-auto flex items-center gap-3 text-xs">
-            <span class="font-mono" title="Player z (collisions apply at this z)">
-              player z: {@world.player.z}
-            </span>
-            <span class="font-mono">alive: {length(@world_entities)}</span>
+            <span class="w-20 text-right font-mono text-xs">{@sim.tick} / {@sim.max_tick}</span>
           </div>
-        </div>
 
-        <div id="play-timeline" class="flex items-center gap-3 rounded-box bg-base-200 px-3 py-2">
-          <span class="text-xs font-semibold uppercase tracking-wide text-base-content/60">
-            Tick
-          </span>
-          <form phx-change="scrub" class="contents">
-            <input
-              id="play-scrubber"
-              type="range"
-              name="tick"
-              min="0"
-              max={max(@sim.max_tick, 1)}
-              step="1"
-              value={@sim.tick}
-              class="range range-xs flex-1"
-              aria-label="Scrub timeline"
-            />
-          </form>
-          <span class="w-20 text-right font-mono text-xs">{@sim.tick} / {@sim.max_tick}</span>
-        </div>
+          <p :if={@play_message} class="alert alert-info m-3 py-2 text-sm">{@play_message}</p>
 
-        <p :if={@play_message} class="alert alert-info py-2 text-sm">{@play_message}</p>
-
-        <div class="grid gap-4 lg:grid-cols-[1fr_18rem]">
-          <div id="play-canvas" class="overflow-auto rounded-box bg-base-200 p-4">
+          <div id="play-canvas" class="min-h-0 flex-1 overflow-auto p-4">
             <div class="relative" style={"width: #{@px_w}px; height: #{@px_h}px;"}>
               <%!-- Static map background (z-ordered layers, entity-owned tiles suppressed) --%>
               <div
@@ -2655,37 +2897,65 @@ defmodule BoxlandWeb.LevelEditorLive do
               </div>
             </div>
           </div>
+        </:viewport>
 
-          <aside id="play-side" class="space-y-3">
-            <.play_inspector entity={@play_selected} world={@world} />
+        <:inspector>
+          <.play_inspector entity={@play_selected} world={@world} />
 
-            <div class="rounded-box bg-base-200 p-3 text-xs text-base-content/70">
-              <p class="mb-1 font-semibold text-base-content/80">Controls</p>
-              <p>Arrows = move player</p>
-              <p>Space = play/pause · . = step</p>
-              <p>Drag the timeline to scrub.</p>
-            </div>
-
-            <div class="grid w-32 grid-cols-3 gap-2">
+          <div class="px-3 py-3">
+            <p class="mb-2 text-[10px] font-semibold uppercase tracking-wide text-base-content/50">
+              Move player
+            </p>
+            <div class="grid w-32 grid-cols-3 gap-1">
               <span></span>
-              <button phx-click="play_move" phx-value-dx="0" phx-value-dy="-1" class="btn btn-sm">
+              <button
+                phx-click="play_move"
+                phx-value-dx="0"
+                phx-value-dy="-1"
+                class="ide-toolbtn justify-center"
+              >
                 ↑
               </button>
               <span></span>
-              <button phx-click="play_move" phx-value-dx="-1" phx-value-dy="0" class="btn btn-sm">
+              <button
+                phx-click="play_move"
+                phx-value-dx="-1"
+                phx-value-dy="0"
+                class="ide-toolbtn justify-center"
+              >
                 ←
               </button>
-              <button phx-click="play_move" phx-value-dx="0" phx-value-dy="1" class="btn btn-sm">
+              <button
+                phx-click="play_move"
+                phx-value-dx="0"
+                phx-value-dy="1"
+                class="ide-toolbtn justify-center"
+              >
                 ↓
               </button>
-              <button phx-click="play_move" phx-value-dx="1" phx-value-dy="0" class="btn btn-sm">
+              <button
+                phx-click="play_move"
+                phx-value-dx="1"
+                phx-value-dy="0"
+                class="ide-toolbtn justify-center"
+              >
                 →
               </button>
             </div>
-          </aside>
-        </div>
-      </section>
-    </Layouts.app>
+          </div>
+        </:inspector>
+
+        <:status>
+          <span class="font-mono">tick: {@sim.tick}/{@sim.max_tick}</span>
+          <span class="font-mono">alive: {length(@world_entities)}</span>
+          <span class="font-mono">player z: {@world.player.z}</span>
+          <span class="flex-1"></span>
+          <span class="text-base-content/50">
+            Arrows move · Space play/pause · . step · drag timeline to scrub
+          </span>
+        </:status>
+      </.ide_shell>
+    </div>
     """
   end
 
