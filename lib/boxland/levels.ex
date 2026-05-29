@@ -393,6 +393,10 @@ defmodule Boxland.Levels do
 
   Type slugs are deterministic, so repeated calls reuse the row.
   """
+  def ensure_entity_type_for(owner_id, {:preset, slug}) do
+    {:ok, ensure_preset_entity_type!(owner_id, slug)}
+  end
+
   def ensure_entity_type_for(owner_id, source) do
     {slug, name, visual_ref} = type_descriptor_for(source)
 
@@ -411,11 +415,6 @@ defmodule Boxland.Levels do
       existing ->
         {:ok, existing}
     end
-  end
-
-  defp type_descriptor_for({:preset, slug}) do
-    {name, _} = Enum.find(@preset_entities, fn {s, _} -> s == slug end) || {slug, slug}
-    {"preset-#{slug}", name, %{"kind" => "preset", "slug" => slug}}
   end
 
   defp type_descriptor_for({:tile, asset_id, tile_index}) do
@@ -446,6 +445,8 @@ defmodule Boxland.Levels do
       Enum.find(@preset_entities, fn {slug, _name} -> slug == preset_slug end) ||
         raise ArgumentError, "unknown preset entity #{inspect(preset_slug)}"
 
+    template = preset_template(slug)
+
     Repo.get_by(EntityType, owner_id: owner_id, slug: "preset-#{slug}") ||
       %EntityType{}
       |> EntityType.changeset(%{
@@ -454,10 +455,53 @@ defmodule Boxland.Levels do
         name: name,
         components: [%{"preset" => slug}],
         visual_ref: %{"kind" => "preset", "slug" => slug},
-        default_collision_mask: if(slug == "collision", do: "full", else: "none")
+        default_collision_mask: if(slug == "collision", do: "full", else: "none"),
+        properties: template.properties,
+        actions: template.actions
       })
       |> Repo.insert!()
   end
+
+  @doc """
+  Composable starting point for a preset, expressed entirely in the
+  existing ECA vocabulary (no engine specials). Designers can edit or
+  remove these like any other action/property in the inspector.
+
+  Only behaviors that map cleanly to a simple ECA template are seeded:
+
+    - `collectible` — `proximity{player, 1}` → `despawn_self`
+    - `portal`/`sign` — data-only markers (a `target`/`text` property);
+      the designer wires up any behavior
+    - `spawn`/`collision` — pure markers/collision data, no actions
+  """
+  def preset_template("collectible") do
+    %{
+      properties: [],
+      actions: [
+        %{
+          "id" => "collect-on-touch",
+          "name" => "Collect on touch",
+          "enabled" => true,
+          "trigger" => %{
+            "kind" => "proximity",
+            "target" => %{"kind" => "player"},
+            "distance" => 1
+          },
+          "function" => %{"kind" => "despawn_self"}
+        }
+      ]
+    }
+  end
+
+  def preset_template("portal") do
+    %{properties: [%{"key" => "target", "type" => "string", "default" => ""}], actions: []}
+  end
+
+  def preset_template("sign") do
+    %{properties: [%{"key" => "text", "type" => "string", "default" => ""}], actions: []}
+  end
+
+  def preset_template(_slug), do: %{properties: [], actions: []}
 
   defp validate_publishable(%Level{} = level) do
     if Enum.any?(level.entities, &(preset_slug(&1) == "spawn")) do

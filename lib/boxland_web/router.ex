@@ -42,7 +42,6 @@ defmodule BoxlandWeb.Router do
       live "/maps/:id", MapmakerLive
       live "/levels", LevelIndexLive
       live "/levels/:id", LevelEditorLive
-      live "/levels/:id/sandbox", SandboxLive
     end
   end
 

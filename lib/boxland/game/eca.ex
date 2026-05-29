@@ -54,6 +54,7 @@ defmodule Boxland.Game.Eca do
 
   defp run(world) do
     world
+    |> Elixir.Map.update(:tick, 1, &(&1 + 1))
     |> Elixir.Map.put(:fired, MapSet.new())
     |> cascade(0)
     |> auto_move()
@@ -271,13 +272,17 @@ defmodule Boxland.Game.Eca do
     put_in(world, [:entities, self_entity.id, :alive], false)
   end
 
-  defp apply_function(world, _self_entity, %{"kind" => "spawn_other"} = f) do
+  defp apply_function(world, self_entity, %{"kind" => "spawn_other"} = f) do
     case world.types[f["type_slug"]] do
       nil ->
         world
 
       type ->
-        id = f["id"] || {:spawned, System.unique_integer([:positive])}
+        # Deterministic id so the same (seed, tick, spawner, function) replays
+        # to the same spawned entity — required for scrubbing/replay.
+        id =
+          f["id"] ||
+            {:spawned, :erlang.phash2({world[:seed] || 0, world[:tick] || 0, self_entity.id, f})}
 
         spawned = %{
           id: id,
@@ -439,7 +444,8 @@ defmodule Boxland.Game.Eca do
   end
 
   defp advance(world, entity, props, idx, dir, len, mode, wait) do
-    {new_idx, new_dir} = next_waypoint(mode, idx, dir, len)
+    rand = :erlang.phash2({world[:seed] || 0, world[:tick] || 0, entity.id, idx, len})
+    {new_idx, new_dir} = next_waypoint(mode, idx, dir, len, rand)
 
     props =
       props
@@ -450,11 +456,11 @@ defmodule Boxland.Game.Eca do
     put_props(world, entity.id, props)
   end
 
-  defp next_waypoint("loop", idx, _dir, len), do: {rem(idx + 1, len), 1}
+  defp next_waypoint("loop", idx, _dir, len, _rand), do: {rem(idx + 1, len), 1}
 
-  defp next_waypoint("ping_pong", _idx, _dir, len) when len <= 1, do: {0, 1}
+  defp next_waypoint("ping_pong", _idx, _dir, len, _rand) when len <= 1, do: {0, 1}
 
-  defp next_waypoint("ping_pong", idx, dir, len) do
+  defp next_waypoint("ping_pong", idx, dir, len, _rand) do
     nxt = idx + dir
 
     cond do
@@ -464,21 +470,21 @@ defmodule Boxland.Game.Eca do
     end
   end
 
-  defp next_waypoint("once", idx, _dir, len) do
+  defp next_waypoint("once", idx, _dir, len, _rand) do
     if idx + 1 >= len, do: {idx, 0}, else: {idx + 1, 1}
   end
 
-  defp next_waypoint("random", _idx, _dir, 1), do: {0, 1}
+  defp next_waypoint("random", _idx, _dir, 1, _rand), do: {0, 1}
 
-  defp next_waypoint("random", idx, _dir, len) do
-    pick =
-      Stream.repeatedly(fn -> :rand.uniform(len) - 1 end)
-      |> Enum.find(fn n -> n != idx end)
-
+  # Deterministic pick derived from the tick-seeded `rand` value so replays
+  # reproduce. Guaranteed to differ from the current index (len > 1).
+  defp next_waypoint("random", idx, _dir, len, rand) do
+    pick = rem(rand, len)
+    pick = if pick == idx, do: rem(pick + 1, len), else: pick
     {pick, 1}
   end
 
-  defp next_waypoint(_, idx, _, len), do: {rem(idx + 1, len), 1}
+  defp next_waypoint(_, idx, _, len, _rand), do: {rem(idx + 1, len), 1}
 
   defp normalize_idx(idx, len) when len > 0, do: rem(max(idx, 0), len)
   defp normalize_idx(_, _), do: 0
@@ -539,7 +545,7 @@ defmodule Boxland.Game.Eca do
     end)
   end
 
-  # === World construction helpers (for tests + SandboxLive) ===
+  # === World construction helpers (for tests + the Level Editor play mode) ===
 
   @doc """
   Build a starting world from a list of LevelEntity structs (preloaded
@@ -594,6 +600,8 @@ defmodule Boxland.Game.Eca do
       blocked_by_z: Keyword.get(opts, :blocked_by_z, %{}),
       prev: %{},
       depth: 0,
+      tick: 0,
+      seed: Keyword.get(opts, :seed, 0),
       warnings: []
     }
   end
@@ -602,5 +610,27 @@ defmodule Boxland.Game.Eca do
   def set_player(world, {cell_x, cell_y}) do
     put_in(world, [:player, :cell_x], cell_x)
     |> put_in([:player, :cell_y], cell_y)
+  end
+
+  @doc """
+  Deterministically move the player by `{dx, dy}` cells, respecting the
+  world's `:bounds` and `:blocked_by_z` (at the player's current z). A
+  blocked or out-of-bounds move is a no-op. Does not tick — the caller
+  decides when to advance the world.
+
+  Centralizes player-collision so the editor preview, live sim, and
+  deterministic replay all move the player identically.
+  """
+  def apply_player_move(world, {dx, dy}) do
+    p = world.player
+    {nx, ny} = next = {p.cell_x + dx, p.cell_y + dy}
+    {bw, bh} = world[:bounds] || {1_000_000, 1_000_000}
+    blocked = dig(world, [:blocked_by_z, p.z]) || MapSet.new()
+
+    if nx < 0 or ny < 0 or nx >= bw or ny >= bh or MapSet.member?(blocked, next) do
+      world
+    else
+      set_player(world, next)
+    end
   end
 end

@@ -370,4 +370,57 @@ defmodule Boxland.LevelsTest do
       assert MapSet.size(Boxland.Levels.blocked_at(by_z, 999)) == 0
     end
   end
+
+  describe "composable preset templates" do
+    setup %{designer: d, map: m} do
+      {:ok, level} =
+        %Level{}
+        |> Level.changeset(%{owner_id: d.id, slug: "pt", name: "PT", map_id: m.id})
+        |> Boxland.Repo.insert()
+
+      {:ok, level: level}
+    end
+
+    test "collectible seeds a proximity→despawn_self ECA action", %{designer: d} do
+      {:ok, type} = Boxland.Levels.ensure_entity_type_for(d.id, {:preset, "collectible"})
+
+      assert [action] = type.actions
+      assert action["trigger"]["kind"] == "proximity"
+      assert action["trigger"]["target"] == %{"kind" => "player"}
+      assert action["function"]["kind"] == "despawn_self"
+    end
+
+    test "portal/sign seed marker properties, no actions", %{designer: d} do
+      {:ok, portal} = Boxland.Levels.ensure_entity_type_for(d.id, {:preset, "portal"})
+      {:ok, sign} = Boxland.Levels.ensure_entity_type_for(d.id, {:preset, "sign"})
+
+      assert portal.actions == []
+      assert Enum.any?(portal.properties, &(&1["key"] == "target"))
+      assert sign.actions == []
+      assert Enum.any?(sign.properties, &(&1["key"] == "text"))
+    end
+
+    test "a placed collectible despawns when the player steps adjacent", %{
+      designer: d,
+      level: level
+    } do
+      {:ok, _spawn} = Boxland.Levels.create_preset_entity(d.id, level.id, "spawn", 0, 0)
+      {:ok, _coin} = Boxland.Levels.create_preset_entity(d.id, level.id, "collectible", 2 * 32, 0)
+
+      level =
+        Boxland.Levels.get_level!(d.id, level.id)
+        |> Elixir.Map.update!(:map, &Boxland.Repo.preload(&1, :layers))
+
+      coin = Enum.find(level.entities, &(&1.entity_type.slug == "preset-collectible"))
+
+      # Player starts on the spawn cell {0,0}; coin at {2,0} is out of range.
+      world = Boxland.Game.Eca.init_world(level.entities, {0, 0}, bounds: {32, 32})
+      world = Boxland.Game.Eca.tick(world)
+      assert world.entities[coin.id].alive
+
+      # Step the player adjacent to the coin → proximity fires, coin despawns.
+      world = Boxland.Game.Eca.set_player(world, {1, 0}) |> Boxland.Game.Eca.tick()
+      refute world.entities[coin.id].alive
+    end
+  end
 end

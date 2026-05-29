@@ -187,11 +187,15 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
     })
 
     e_after = Levels.get_entity(d.id, level.id, e.id)
-    assert [%{"key" => "life", "default" => 40}] = e_after.entity_type.properties
+
+    assert Enum.any?(
+             e_after.entity_type.properties,
+             &(&1["key"] == "life" and &1["default"] == 40)
+           )
 
     render_click(view, "type_remove_property", %{"key" => "life"})
     e_after2 = Levels.get_entity(d.id, level.id, e.id)
-    assert e_after2.entity_type.properties == []
+    refute Enum.any?(e_after2.entity_type.properties, &(&1["key"] == "life"))
   end
 
   test "inspector adds an action with default trigger and function", %{
@@ -630,5 +634,99 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
 
     html = render(view)
     assert html =~ ~r{id="layer-row-#{ground.id}"[^>]*ring-accent}
+  end
+
+  describe "rendering chrome" do
+    test "gridlines are off by default and toggle on via Show grid", %{conn: conn, level: level} do
+      {:ok, view, html} = live(conn, ~p"/app/levels/#{level.id}")
+
+      # No per-cell border by default (production look).
+      refute html =~ ~r{id="level-cell-0-0"[^>]*border-base-300}
+
+      html = render_click(view, "toggle_show_grid")
+      assert html =~ ~r{id="level-cell-0-0"[^>]*border-base-300}
+    end
+
+    test "placed sprite-less entities still render a marker overlay", %{
+      conn: conn,
+      level: level
+    } do
+      {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+      render_click(view, "preset", %{"preset" => "spawn"})
+      html = render_click(view, "cell", %{"x" => "1", "y" => "1"})
+
+      assert html =~ ~r{level-entity-\d+-cell-1-1}
+    end
+  end
+
+  describe "play mode" do
+    setup %{designer: d, level: level} do
+      {:ok, _spawn} = Levels.create_preset_entity(d.id, level.id, "spawn", 0, 0)
+      :ok
+    end
+
+    test "Play enters play mode with transport + timeline", %{conn: conn, level: level} do
+      {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+      html = render_click(view, "enter_play")
+
+      assert html =~ ~s(id="play-root")
+      assert html =~ ~s(id="play-toggle")
+      assert html =~ ~s(id="play-step")
+      assert html =~ ~s(id="play-scrubber")
+      # Edit-only toolbar is gone in play mode.
+      refute html =~ ~s(id="level-toolbar")
+    end
+
+    test "step advances the tick and scrub returns to it", %{conn: conn, level: level} do
+      {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+      render_click(view, "enter_play")
+
+      html = render_click(view, "step")
+      assert html =~ "1 / 1"
+
+      html = render_click(view, "step")
+      assert html =~ "2 / 2"
+
+      # Scrub back to tick 0 (head stays at 2).
+      html = render_change(view, "scrub", %{"tick" => "0"})
+      assert html =~ "0 / 2"
+    end
+
+    test "reset returns to the spawn state", %{conn: conn, level: level} do
+      {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+      render_click(view, "enter_play")
+      render_click(view, "step")
+      render_click(view, "step")
+
+      html = render_click(view, "play_reset")
+      assert html =~ "0 / 0"
+    end
+
+    test "a placed sprite entity renders in the keyed sprite layer", %{
+      conn: conn,
+      designer: d,
+      level: level
+    } do
+      {:ok, _coin} = Levels.create_preset_entity(d.id, level.id, "collectible", 3 * 32, 0)
+      {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+
+      [coin] =
+        Enum.filter(
+          Levels.get_level!(d.id, level.id).entities,
+          &(&1.entity_type.slug == "preset-collectible")
+        )
+
+      html = render_click(view, "enter_play")
+      assert html =~ ~s(id="sim-entity-#{coin.id}")
+    end
+
+    test "Edit returns to the editor untouched", %{conn: conn, level: level} do
+      {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+      render_click(view, "enter_play")
+      html = render_click(view, "exit_play")
+
+      assert html =~ ~s(id="level-toolbar")
+      refute html =~ ~s(id="play-root")
+    end
   end
 end

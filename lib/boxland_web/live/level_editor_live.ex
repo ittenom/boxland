@@ -1,22 +1,32 @@
 defmodule BoxlandWeb.LevelEditorLive do
   use BoxlandWeb, :live_view
 
+  import BoxlandWeb.LevelRender, only: [entity_sprite_styles: 2, group_members_indexed: 2]
+
   alias Boxland.{Entities, Levels, Library, Maps, Repo}
   alias Boxland.Entities.EntityType
+  alias Boxland.Game.{Eca, Simulation}
   alias Boxland.Levels.LevelEntity
 
   @cell_px 32
   @tools ~w(select place delete path)
 
+  @default_tick_rate_ms 250
+  @min_tick_rate_ms 50
+  @max_tick_rate_ms 2000
+
   def mount(%{"id" => id}, _session, socket) do
     designer = socket.assigns.current_designer
     level = Levels.get_level!(designer.id, id) |> preload_map_layers()
+    tilesets = Library.list_tilesets(designer.id)
+    sprites = list_sprites(designer.id)
 
     {:ok,
      socket
      |> assign(:level, level)
-     |> assign(:tilesets, Library.list_tilesets(designer.id))
-     |> assign(:sprites, list_sprites(designer.id))
+     |> assign(:tilesets, tilesets)
+     |> assign(:sprites, sprites)
+     |> assign(:assets_by_id, Elixir.Map.new(tilesets ++ sprites, &{&1.id, &1}))
      |> assign(:groups, list_groups(level))
      |> assign(:tool, "select")
      |> assign(:palette_mode, "preset")
@@ -30,7 +40,17 @@ defmodule BoxlandWeb.LevelEditorLive do
      |> assign(:renaming_layer_id, nil)
      |> assign(:selection, nil)
      |> assign(:show_paths, true)
-     |> assign(:publish_error, nil)}
+     |> assign(:show_grid, false)
+     |> assign(:publish_error, nil)
+     # === Play mode (deterministic simulation) ===
+     |> assign(:mode, :edit)
+     |> assign(:sim, nil)
+     |> assign(:running, false)
+     |> assign(:tick_rate_ms, @default_tick_rate_ms)
+     |> assign(:min_tick_rate_ms, @min_tick_rate_ms)
+     |> assign(:max_tick_rate_ms, @max_tick_rate_ms)
+     |> assign(:play_selected_id, nil)
+     |> assign(:play_message, nil)}
   end
 
   defp default_selected_layer_id(level) do
@@ -38,6 +58,100 @@ defmodule BoxlandWeb.LevelEditorLive do
       [] -> nil
       [layer | _] -> layer.id
     end
+  end
+
+  # === Mode + play-mode events ===
+
+  def handle_event("enter_play", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:mode, :play)
+     |> assign(:sim, build_sim(socket))
+     |> assign(:running, false)
+     |> assign(:play_selected_id, nil)
+     |> assign(:play_message, nil)}
+  end
+
+  def handle_event("exit_play", _params, socket) do
+    # Stopping discards the transient simulation; the persisted level is
+    # untouched (Unreal-style play-in-editor).
+    {:noreply,
+     socket
+     |> assign(:mode, :edit)
+     |> assign(:running, false)
+     |> assign(:sim, nil)}
+  end
+
+  def handle_event("toggle_play", _params, socket) do
+    running? = not socket.assigns.running
+    if running?, do: Process.send_after(self(), :tick, socket.assigns.tick_rate_ms)
+    {:noreply, assign(socket, :running, running?)}
+  end
+
+  def handle_event("step", _params, socket) do
+    if socket.assigns.running do
+      {:noreply, socket}
+    else
+      {:noreply, assign(socket, :sim, Simulation.advance(socket.assigns.sim))}
+    end
+  end
+
+  def handle_event("play_reset", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:sim, Simulation.reset(socket.assigns.sim))
+     |> assign(:running, false)
+     |> assign(:play_message, "Reset")}
+  end
+
+  def handle_event("set_rate", %{"rate" => rate}, socket) do
+    n =
+      rate
+      |> safe_int(@default_tick_rate_ms)
+      |> max(@min_tick_rate_ms)
+      |> min(@max_tick_rate_ms)
+
+    {:noreply, assign(socket, :tick_rate_ms, n)}
+  end
+
+  def handle_event("scrub", %{"tick" => t}, socket) do
+    {:noreply,
+     socket
+     |> assign(:sim, Simulation.at(socket.assigns.sim, safe_int(t, 0)))
+     |> assign(:running, false)}
+  end
+
+  def handle_event("play_move", %{"dx" => dx, "dy" => dy}, socket) do
+    move = {safe_int(dx, 0), safe_int(dy, 0)}
+    sim = Simulation.queue_move(socket.assigns.sim, move)
+    # When paused, advance one tick so the queued move is immediately visible
+    # (still deterministic — the move is in the input log).
+    sim = if socket.assigns.running, do: sim, else: Simulation.advance(sim)
+    {:noreply, assign(socket, :sim, sim)}
+  end
+
+  def handle_event("play_key", %{"key" => key}, socket) do
+    case key do
+      "ArrowUp" -> handle_event("play_move", %{"dx" => "0", "dy" => "-1"}, socket)
+      "ArrowDown" -> handle_event("play_move", %{"dx" => "0", "dy" => "1"}, socket)
+      "ArrowLeft" -> handle_event("play_move", %{"dx" => "-1", "dy" => "0"}, socket)
+      "ArrowRight" -> handle_event("play_move", %{"dx" => "1", "dy" => "0"}, socket)
+      " " -> handle_event("toggle_play", %{}, socket)
+      "." -> handle_event("step", %{}, socket)
+      _ -> {:noreply, socket}
+    end
+  end
+
+  def handle_event("play_select_entity", %{"id" => id}, socket) do
+    {:noreply, assign(socket, :play_selected_id, parse_world_id(id))}
+  end
+
+  def handle_event("play_clear_selection", _params, socket) do
+    {:noreply, assign(socket, :play_selected_id, nil)}
+  end
+
+  def handle_event("toggle_show_grid", _params, socket) do
+    {:noreply, assign(socket, :show_grid, not socket.assigns.show_grid)}
   end
 
   # === Tool events ===
@@ -573,6 +687,57 @@ defmodule BoxlandWeb.LevelEditorLive do
     end
   end
 
+  # === Simulation loop + helpers ===
+
+  def handle_info(:tick, socket) do
+    if socket.assigns.mode == :play and socket.assigns.running do
+      Process.send_after(self(), :tick, socket.assigns.tick_rate_ms)
+      {:noreply, assign(socket, :sim, Simulation.advance(socket.assigns.sim))}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  defp build_sim(socket) do
+    level = socket.assigns.level
+    {player, player_z} = spawn_state(level)
+    blocked_by_z = Levels.blocked_cells_by_z(level, socket.assigns.tilesets)
+
+    level.entities
+    |> Eca.init_world(player,
+      bounds: {level.map.width, level.map.height},
+      blocked_by_z: blocked_by_z,
+      player_z: player_z,
+      seed: :erlang.phash2(level.id)
+    )
+    |> Simulation.new()
+  end
+
+  defp spawn_state(level) do
+    case Enum.find(level.entities, &spawn_preset?/1) do
+      nil ->
+        {{0, 0}, 0}
+
+      spawn ->
+        {{div(spawn.pos_x, @cell_px), div(spawn.pos_y, @cell_px)},
+         Levels.entity_effective_z(spawn)}
+    end
+  end
+
+  defp spawn_preset?(entity),
+    do: match?(%{"kind" => "preset", "slug" => "spawn"}, entity.entity_type.visual_ref)
+
+  defp parse_world_id(id) when is_integer(id), do: id
+
+  defp parse_world_id(id) when is_binary(id) do
+    case Integer.parse(id) do
+      {n, ""} -> n
+      _ -> id
+    end
+  end
+
+  defp parse_world_id(other), do: other
+
   # === Layer helpers ===
 
   defp move_layer(socket, layer_id, direction) do
@@ -1071,12 +1236,15 @@ defmodule BoxlandWeb.LevelEditorLive do
 
   # === Render ===
 
+  def render(%{mode: :play} = assigns), do: render_play(assigns)
+
   def render(assigns) do
     layers = visible_layers(assigns.level.map)
     selection_entity = selected_entity_for_render(assigns)
     selection_highlight = selection_cells(assigns.selection, assigns.level)
     affected_layers = affected_layer_ids(assigns.selection, assigns.level)
-    entity_cell_index = build_entity_cell_index(assigns.level)
+    sprite_styles = entity_sprite_styles(assigns.level, assigns.assets_by_id)
+    entity_cell_index = build_entity_cell_index(assigns.level, sprite_styles)
     waypoint_markers = build_waypoint_markers(selection_entity)
 
     {path_cells, path_directions, unreachable_leg} =
@@ -1106,9 +1274,9 @@ defmodule BoxlandWeb.LevelEditorLive do
           </div>
           <div class="flex gap-2">
             <.link navigate={~p"/app/levels"} class="btn btn-ghost">Levels</.link>
-            <.link navigate={~p"/app/levels/#{@level.id}/sandbox"} class="btn btn-secondary">
-              Sandbox
-            </.link>
+            <button id="enter-play-button" phx-click="enter_play" class="btn btn-secondary">
+              <.icon name="hero-play" class="size-4" /> Play
+            </button>
             <.link navigate={~p"/play/#{@level.id}"} class="btn btn-ghost">Live</.link>
             <button id="publish-level-button" phx-click="publish" class="btn btn-primary">
               Publish
@@ -1138,6 +1306,16 @@ defmodule BoxlandWeb.LevelEditorLive do
               phx-click="toggle_show_paths"
             /> Show paths
           </label>
+
+          <label class="flex cursor-pointer items-center gap-1 text-xs text-base-content/70">
+            <input
+              id="toggle-show-grid"
+              type="checkbox"
+              class="checkbox checkbox-xs"
+              checked={@show_grid}
+              phx-click="toggle_show_grid"
+            /> Show grid
+          </label>
         </div>
 
         <div class="grid gap-4 lg:grid-cols-[14rem_1fr_20rem]">
@@ -1159,6 +1337,7 @@ defmodule BoxlandWeb.LevelEditorLive do
             layers={@layers}
             tilesets={@tilesets}
             tool={@tool}
+            show_grid={@show_grid}
             selected_entity_id={selected_entity_id_for_canvas(@selection)}
             highlight_cells={@selection_highlight}
             entity_cell_index={@entity_cell_index}
@@ -1313,16 +1492,24 @@ defmodule BoxlandWeb.LevelEditorLive do
     end)
   end
 
-  defp build_entity_cell_index(level) do
+  # %{{x, y} => [%{entity:, anchor?:, sprite_style:}]}. `sprite_style` is the
+  # entity's real sprite CSS for that cell offset (nil → fall back to the
+  # colored marker letter, e.g. invisible/preset entities).
+  defp build_entity_cell_index(level, sprite_styles) do
     Enum.reduce(level.entities, %{}, fn entity, acc ->
-      anchor = {div(entity.pos_x, @cell_px), div(entity.pos_y, @cell_px)}
+      {ax, ay} = anchor = {div(entity.pos_x, @cell_px), div(entity.pos_y, @cell_px)}
+      offset_styles = Elixir.Map.get(sprite_styles, entity.id, %{})
 
       entity
       |> entity_occupied_cells(level)
-      |> Enum.reduce(acc, fn cell, inner ->
-        Elixir.Map.update(inner, cell, [%{entity: entity, anchor?: cell == anchor}], fn list ->
-          [%{entity: entity, anchor?: cell == anchor} | list]
-        end)
+      |> Enum.reduce(acc, fn {cx, cy} = cell, inner ->
+        entry = %{
+          entity: entity,
+          anchor?: cell == anchor,
+          sprite_style: Elixir.Map.get(offset_styles, {cx - ax, cy - ay})
+        }
+
+        Elixir.Map.update(inner, cell, [entry], &[entry | &1])
       end)
     end)
   end
@@ -1696,6 +1883,7 @@ defmodule BoxlandWeb.LevelEditorLive do
   attr :layers, :list
   attr :tilesets, :list
   attr :tool, :string, default: "select"
+  attr :show_grid, :boolean, default: false
   attr :selected_entity_id, :any
   attr :highlight_cells, :any, default: nil
   attr :entity_cell_index, :map, default: %{}
@@ -1722,7 +1910,8 @@ defmodule BoxlandWeb.LevelEditorLive do
       >
         <div
           class={[
-            "relative grid w-fit gap-px",
+            "relative grid w-fit",
+            @show_grid && "gap-px bg-base-300",
             @tool == "path" && "cursor-crosshair",
             @tool == "delete" && "cursor-not-allowed",
             @tool == "place" && "cursor-pointer"
@@ -1736,7 +1925,8 @@ defmodule BoxlandWeb.LevelEditorLive do
             phx-value-x={x}
             phx-value-y={y}
             class={[
-              "relative h-8 w-8 border border-base-300 bg-base-100",
+              "relative h-8 w-8 bg-base-100",
+              @show_grid && "border border-base-300",
               cell_highlighted?(@highlight_cells, x, y) && "ring-2 ring-accent z-20"
             ]}
           >
@@ -1770,13 +1960,18 @@ defmodule BoxlandWeb.LevelEditorLive do
               :for={covering <- Elixir.Map.get(@entity_cell_index, {x, y}, [])}
               id={"level-entity-#{covering.entity.id}-cell-#{x}-#{y}"}
               class={[
-                "pointer-events-none absolute inset-0 flex items-center justify-center text-[10px] font-bold opacity-40",
-                entity_cell_color_class(covering.entity),
+                "pointer-events-none absolute inset-0 flex items-center justify-center text-[10px] font-bold",
+                covering.sprite_style && "bg-no-repeat",
+                !covering.sprite_style && "opacity-40",
+                !covering.sprite_style && entity_cell_color_class(covering.entity),
                 covering.entity.id == @selected_entity_id && "entity-pulse"
               ]}
+              style={covering.sprite_style}
               aria-label={"entity #{covering.entity.id}"}
             >
-              <span :if={covering.anchor?}>{entity_label(covering.entity)}</span>
+              <span :if={covering.anchor? and is_nil(covering.sprite_style)}>
+                {entity_label(covering.entity)}
+              </span>
             </span>
 
             <span
@@ -2275,5 +2470,445 @@ defmodule BoxlandWeb.LevelEditorLive do
     y = div(index, columns) * 32
 
     "background-image: url('#{asset.content_url}'); background-position: -#{x}px -#{y}px;"
+  end
+
+  # === Play mode (deterministic simulation preview) ===
+
+  defp render_play(assigns) do
+    sim = assigns.sim
+    world = sim.current
+    world_entities = alive_world_entities(world)
+    sprite_styles = entity_sprite_styles(assigns.level, assigns.assets_by_id)
+    design_tiles = build_entity_design_tile_index(assigns.level)
+    selected = play_selected_entity(world, assigns.play_selected_id)
+
+    assigns =
+      assigns
+      |> assign(:world, world)
+      |> assign(:world_entities, world_entities)
+      |> assign(:sprite_styles, sprite_styles)
+      |> assign(:design_tiles, design_tiles)
+      |> assign(:play_selected, selected)
+      |> assign(:path_cells, play_path_cells(selected, world))
+      |> assign(:layers, visible_layers(assigns.level.map))
+      |> assign(:px_w, assigns.level.map.width * @cell_px)
+      |> assign(:px_h, assigns.level.map.height * @cell_px)
+
+    ~H"""
+    <Layouts.app flash={@flash} current_scope={%{designer: @current_designer}}>
+      <section id="play-root" phx-window-keydown="play_key" class="space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p class="text-sm font-semibold text-primary">Level Editor · Play</p>
+            <h1 class="text-3xl font-semibold tracking-tight">{@level.name}</h1>
+          </div>
+          <div class="flex gap-2">
+            <button id="exit-play-button" phx-click="exit_play" class="btn btn-ghost">
+              <.icon name="hero-pencil-square" class="size-4" /> Edit
+            </button>
+            <button id="publish-level-button" phx-click="publish" class="btn btn-primary">
+              Publish
+            </button>
+          </div>
+        </div>
+
+        <div id="play-controls" class="flex flex-wrap items-center gap-3 rounded-box bg-base-200 p-3">
+          <button
+            id="play-toggle"
+            phx-click="toggle_play"
+            class={["btn btn-sm", @running && "btn-primary"]}
+            title={if @running, do: "Pause (Space)", else: "Play (Space)"}
+          >
+            <.icon name={if @running, do: "hero-pause", else: "hero-play"} class="size-4" />
+            {if @running, do: "Pause", else: "Play"}
+          </button>
+
+          <button
+            id="play-step"
+            phx-click="step"
+            class="btn btn-sm"
+            disabled={@running}
+            title="Step one tick (.)"
+          >
+            <.icon name="hero-forward" class="size-4" /> Step
+          </button>
+
+          <button id="play-reset" phx-click="play_reset" class="btn btn-sm btn-ghost">
+            <.icon name="hero-arrow-path" class="size-4" /> Reset
+          </button>
+
+          <label class="flex items-center gap-2 text-xs text-base-content/70">
+            <span>Rate</span>
+            <form phx-change="set_rate" class="contents">
+              <input
+                id="play-rate"
+                type="range"
+                name="rate"
+                min={@min_tick_rate_ms}
+                max={@max_tick_rate_ms}
+                step="50"
+                value={@tick_rate_ms}
+                class="range range-xs w-32"
+              />
+            </form>
+            <span class="font-mono w-12 text-right">{@tick_rate_ms}ms</span>
+          </label>
+
+          <div class="ml-auto flex items-center gap-3 text-xs">
+            <span class="font-mono" title="Player z (collisions apply at this z)">
+              player z: {@world.player.z}
+            </span>
+            <span class="font-mono">alive: {length(@world_entities)}</span>
+          </div>
+        </div>
+
+        <div id="play-timeline" class="flex items-center gap-3 rounded-box bg-base-200 px-3 py-2">
+          <span class="text-xs font-semibold uppercase tracking-wide text-base-content/60">
+            Tick
+          </span>
+          <form phx-change="scrub" class="contents">
+            <input
+              id="play-scrubber"
+              type="range"
+              name="tick"
+              min="0"
+              max={max(@sim.max_tick, 1)}
+              step="1"
+              value={@sim.tick}
+              class="range range-xs flex-1"
+              aria-label="Scrub timeline"
+            />
+          </form>
+          <span class="w-20 text-right font-mono text-xs">{@sim.tick} / {@sim.max_tick}</span>
+        </div>
+
+        <p :if={@play_message} class="alert alert-info py-2 text-sm">{@play_message}</p>
+
+        <div class="grid gap-4 lg:grid-cols-[1fr_18rem]">
+          <div id="play-canvas" class="overflow-auto rounded-box bg-base-200 p-4">
+            <div class="relative" style={"width: #{@px_w}px; height: #{@px_h}px;"}>
+              <%!-- Static map background (z-ordered layers, entity-owned tiles suppressed) --%>
+              <div
+                class="absolute inset-0 grid"
+                style={"grid-template-columns: repeat(#{@level.map.width}, 32px);"}
+              >
+                <div
+                  :for={{x, y} <- cells(@level.map.width, @level.map.height)}
+                  class="relative h-8 w-8"
+                >
+                  <span
+                    :for={layer <- @layers}
+                    :if={not tile_owned_by_entity?(layer, @design_tiles, x, y)}
+                    class="pointer-events-none absolute inset-0 bg-no-repeat"
+                    style={layer_cell_style(@tilesets, layer, x, y)}
+                  />
+                </div>
+              </div>
+
+              <%!-- Keyed sprite layer: only changed sprites diff per tick --%>
+              <div class="absolute inset-0">
+                <span
+                  :for={{x, y} <- @path_cells}
+                  class="pointer-events-none absolute z-10 flex h-8 w-8 items-center justify-center"
+                  style={"transform: translate(#{x * 32}px, #{y * 32}px);"}
+                  aria-hidden="true"
+                >
+                  <span class="block h-2 w-2 rounded-full bg-info/80 shadow-[0_0_4px_rgba(59,130,246,0.6)]" />
+                </span>
+
+                <div
+                  :for={e <- @world_entities}
+                  id={"sim-entity-#{sim_id(e.id)}"}
+                  style={sim_entity_style(e)}
+                >
+                  <span
+                    :for={{{dx, dy}, style} <- Elixir.Map.get(@sprite_styles, e.id, %{})}
+                    class="pointer-events-none absolute h-8 w-8 bg-no-repeat"
+                    style={"left: #{dx * 32}px; top: #{dy * 32}px; #{style}"}
+                  />
+                  <button
+                    phx-click="play_select_entity"
+                    phx-value-id={sim_id(e.id)}
+                    class={[
+                      "absolute left-0 top-0 flex h-8 w-8 items-center justify-center text-[10px] font-bold",
+                      not world_has_sprite?(@sprite_styles, e.id) && world_entity_color(e),
+                      @play_selected_id == e.id && "ring-2 ring-accent"
+                    ]}
+                    title={world_entity_title(e)}
+                    aria-label={"entity #{sim_id(e.id)}"}
+                  >
+                    <span :if={not world_has_sprite?(@sprite_styles, e.id)}>
+                      {world_entity_label(e)}
+                    </span>
+                  </button>
+                </div>
+
+                <div
+                  id="play-player"
+                  class="pointer-events-none absolute z-40 flex items-center justify-center"
+                  style={"transform: translate(#{@world.player.cell_x * 32}px, #{@world.player.cell_y * 32}px); width: 32px; height: 32px;"}
+                >
+                  <span class="flex h-6 w-6 items-center justify-center rounded-full bg-secondary text-xs font-bold text-secondary-content">
+                    @
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <aside id="play-side" class="space-y-3">
+            <.play_inspector entity={@play_selected} world={@world} />
+
+            <div class="rounded-box bg-base-200 p-3 text-xs text-base-content/70">
+              <p class="mb-1 font-semibold text-base-content/80">Controls</p>
+              <p>Arrows = move player</p>
+              <p>Space = play/pause · . = step</p>
+              <p>Drag the timeline to scrub.</p>
+            </div>
+
+            <div class="grid w-32 grid-cols-3 gap-2">
+              <span></span>
+              <button phx-click="play_move" phx-value-dx="0" phx-value-dy="-1" class="btn btn-sm">
+                ↑
+              </button>
+              <span></span>
+              <button phx-click="play_move" phx-value-dx="-1" phx-value-dy="0" class="btn btn-sm">
+                ←
+              </button>
+              <button phx-click="play_move" phx-value-dx="0" phx-value-dy="1" class="btn btn-sm">
+                ↓
+              </button>
+              <button phx-click="play_move" phx-value-dx="1" phx-value-dy="0" class="btn btn-sm">
+                →
+              </button>
+            </div>
+          </aside>
+        </div>
+      </section>
+    </Layouts.app>
+    """
+  end
+
+  attr :entity, :any, default: nil
+  attr :world, :any, required: true
+
+  defp play_inspector(assigns) do
+    ~H"""
+    <div id="play-inspector" class="rounded-box bg-base-200 p-3 space-y-2 text-xs">
+      <h2 class="text-sm font-semibold uppercase tracking-wide text-base-content/70">Inspector</h2>
+
+      <div :if={is_nil(@entity)} class="text-base-content/60">
+        Click an entity on the canvas to inspect its live state.
+      </div>
+
+      <div :if={@entity} class="space-y-2">
+        <div class="font-mono text-[11px]">
+          <div>id: {sim_id(@entity.id)}</div>
+          <div>type: {@entity.type_slug}</div>
+          <div :if={@entity.tag}>tag: {@entity.tag}</div>
+          <div>cell: ({@entity.cell_x}, {@entity.cell_y}) z={@entity.z}</div>
+          <div>alive: {@entity.alive}</div>
+        </div>
+
+        <div :if={(@entity.waypoints || []) != []}>
+          <p class="font-semibold text-base-content/80">Path · {movement_label(@entity)}</p>
+          <ol class="ml-4 list-decimal font-mono text-[11px]">
+            <li
+              :for={{wp, idx} <- Enum.with_index(@entity.waypoints || [])}
+              class={[idx == current_waypoint_index(@entity) && "text-info font-bold"]}
+            >
+              ({Elixir.Map.get(wp, "x", 0)}, {Elixir.Map.get(wp, "y", 0)})
+            </li>
+          </ol>
+        </div>
+
+        <div :if={visible_props(@entity.properties) != %{}}>
+          <p class="font-semibold text-base-content/80">Properties</p>
+          <ul class="ml-2 font-mono text-[11px]">
+            <li :for={{k, v} <- visible_props(@entity.properties)}>{k} = {inspect(v)}</li>
+          </ul>
+        </div>
+
+        <div>
+          <p class="font-semibold text-base-content/80">Last tick</p>
+          <p :if={fired_actions_for(@world, @entity.id) == []} class="text-base-content/60">
+            (no actions fired)
+          </p>
+          <ul :if={fired_actions_for(@world, @entity.id) != []} class="ml-2 font-mono text-[11px]">
+            <li :for={action_id <- fired_actions_for(@world, @entity.id)}>
+              {action_label(@entity, action_id)}
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  # === Play-mode helpers ===
+
+  defp alive_world_entities(world) do
+    world.entities
+    |> Elixir.Map.values()
+    |> Enum.filter(& &1.alive)
+    |> Enum.sort_by(& &1.z)
+  end
+
+  defp play_selected_entity(_world, nil), do: nil
+
+  defp play_selected_entity(world, id) do
+    case Elixir.Map.get(world.entities, id) do
+      %{alive: true} = e -> e
+      _ -> nil
+    end
+  end
+
+  defp play_path_cells(nil, _world), do: MapSet.new()
+
+  defp play_path_cells(entity, world) do
+    case entity.waypoints || [] do
+      [] ->
+        MapSet.new()
+
+      waypoints ->
+        start = {entity.cell_x, entity.cell_y}
+        blocked = dig_blocked(world, entity.z)
+        blocked? = fn cell -> cell != start and MapSet.member?(blocked, cell) end
+        opts = [bounds: world[:bounds] || {1_000_000, 1_000_000}, blocked?: blocked?]
+
+        case Boxland.Pathfinding.preview_path(start, waypoints, opts) do
+          :empty -> MapSet.new()
+          {:ok, cells} -> MapSet.new(cells)
+          {:partial, cells, _leg} -> MapSet.new(cells)
+        end
+    end
+  end
+
+  defp dig_blocked(world, z) do
+    world
+    |> Elixir.Map.get(:blocked_by_z, %{})
+    |> Elixir.Map.get(z, MapSet.new())
+  end
+
+  # Maps each level entity's *design* cell(s) to its visual_ref so the play
+  # canvas suppresses the painted layer tile a moving entity sits on.
+  defp build_entity_design_tile_index(level) do
+    Enum.reduce(level.entities, %{}, fn e, acc ->
+      case e.entity_type.visual_ref do
+        %{"kind" => "group", "group_id" => gid} = ref ->
+          Enum.reduce(group_members_indexed(gid, level), acc, fn {x, y, _tile}, acc ->
+            Elixir.Map.put(acc, {x, y}, ref)
+          end)
+
+        nil ->
+          acc
+
+        ref ->
+          Elixir.Map.put(acc, {div(e.pos_x, @cell_px), div(e.pos_y, @cell_px)}, ref)
+      end
+    end)
+  end
+
+  defp tile_owned_by_entity?(layer, design_tiles, x, y) do
+    case Elixir.Map.get(design_tiles, {x, y}) do
+      %{"kind" => "tile", "asset_id" => aid, "tile_index" => idx} ->
+        match?(%{"asset_id" => ^aid, "tile_index" => ^idx}, Maps.tile_at(layer.tiles, x, y))
+
+      %{"kind" => "group", "group_id" => gid} ->
+        match?(%{"group_id" => ^gid}, Maps.tile_at(layer.tiles, x, y))
+
+      _ ->
+        false
+    end
+  end
+
+  defp sim_entity_style(e) do
+    "position: absolute; transform: translate(#{e.cell_x * @cell_px}px, #{e.cell_y * @cell_px}px); z-index: #{e.z || 0};"
+  end
+
+  defp sim_id({:spawned, n}), do: "spawned-#{n}"
+  defp sim_id(id) when is_integer(id), do: Integer.to_string(id)
+  defp sim_id(id), do: to_string(id)
+
+  defp world_has_sprite?(sprite_styles, id) do
+    case Elixir.Map.get(sprite_styles, id) do
+      m when is_map(m) and map_size(m) > 0 -> true
+      _ -> false
+    end
+  end
+
+  defp world_entity_color(entity) do
+    case entity.type_slug do
+      "preset-spawn" -> "bg-secondary/70 text-secondary-content opacity-90"
+      "preset-collision" -> "bg-error/40 text-error-content opacity-90"
+      "preset-portal" -> "bg-info/70 text-info-content opacity-90"
+      "preset-sign" -> "bg-warning/70 text-warning-content opacity-90"
+      "preset-collectible" -> "bg-success/70 text-success-content opacity-90"
+      _ -> "bg-primary/70 text-primary-content opacity-90"
+    end
+  end
+
+  defp world_entity_label(entity) do
+    case entity.type_slug do
+      "preset-" <> slug -> slug |> String.first() |> String.upcase()
+      "invisible-box" -> "□"
+      slug -> slug |> String.first() |> String.upcase()
+    end
+  end
+
+  defp world_entity_title(entity) do
+    if entity.tag, do: "#{entity.tag} (#{entity.type_slug})", else: entity.type_slug
+  end
+
+  defp movement_label(entity) do
+    movement = Elixir.Map.get(entity, :movement) || %{}
+    mode = Elixir.Map.get(movement, "mode", "loop")
+    ticks = Elixir.Map.get(movement, "ticks_per_step", 1)
+    wait = Elixir.Map.get(movement, "wait_at_waypoint", 0)
+
+    extras = Enum.filter([ticks > 1 && "step ÷ #{ticks}", wait > 0 && "wait #{wait}"], & &1)
+
+    case extras do
+      [] -> mode
+      _ -> "#{mode} · #{Enum.join(extras, ", ")}"
+    end
+  end
+
+  defp visible_props(props) when is_map(props) do
+    props
+    |> Enum.reject(fn {k, _} -> is_binary(k) and String.starts_with?(k, "_") end)
+    |> Enum.into(%{})
+  end
+
+  defp visible_props(_), do: %{}
+
+  defp current_waypoint_index(entity) do
+    case entity.waypoints || [] do
+      [] -> nil
+      wps -> rem(Elixir.Map.get(entity.properties || %{}, "_waypoint_index", 0), length(wps))
+    end
+  end
+
+  defp fired_actions_for(world, entity_id) do
+    case Elixir.Map.get(world, :fired) do
+      %MapSet{} = set ->
+        set
+        |> Enum.filter(fn
+          {^entity_id, _action_id} -> true
+          _ -> false
+        end)
+        |> Enum.map(fn {_id, action_id} -> action_id end)
+
+      _ ->
+        []
+    end
+  end
+
+  defp action_label(entity, action_id) do
+    case Enum.find(entity.actions || [], &(&1["id"] == action_id)) do
+      %{"name" => name, "function" => %{"kind" => kind}} -> "#{name} (#{kind})"
+      %{"function" => %{"kind" => kind}} -> kind
+      _ -> inspect(action_id)
+    end
   end
 end
