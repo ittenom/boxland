@@ -16,11 +16,13 @@ defmodule BoxlandWeb.AssetLive do
     socket =
       socket
       |> assign(:tilesets, Library.list_tilesets(designer.id))
+      |> assign(:spritesheets, Library.list_spritesheets(designer.id))
       |> assign(:selected_asset, nil)
       |> assign(:selected_tile, 0)
+      |> assign(:selected_animation, nil)
       |> assign(:upload_open?, false)
       |> assign(:rename_id, nil)
-      |> assign(:form, to_form(%{"name" => ""}, as: :asset))
+      |> assign(:form, to_form(%{"name" => "", "kind" => "tileset"}, as: :asset))
       |> auto_select_asset()
       |> allow_upload(:tileset,
         accept: ~w(.png image/png),
@@ -35,7 +37,7 @@ defmodule BoxlandWeb.AssetLive do
     {:noreply,
      socket
      |> assign(:upload_open?, true)
-     |> assign(:form, to_form(%{"name" => ""}, as: :asset))}
+     |> assign(:form, to_form(%{"name" => "", "kind" => "tileset"}, as: :asset))}
   end
 
   def handle_event("close_upload", _params, socket) do
@@ -46,8 +48,9 @@ defmodule BoxlandWeb.AssetLive do
     {:noreply, assign(socket, :form, to_form(params, as: :asset))}
   end
 
-  def handle_event("upload", %{"asset" => %{"name" => name}}, socket) do
+  def handle_event("upload", %{"asset" => %{"name" => name} = params}, socket) do
     designer = socket.assigns.current_designer
+    kind = if params["kind"] == "spritesheet", do: "spritesheet", else: "tileset"
 
     {assets, errors} =
       consume_uploaded_entries(socket, :tileset, fn %{path: path}, entry ->
@@ -55,7 +58,7 @@ defmodule BoxlandWeb.AssetLive do
              :ok <- validate_tileset_dimensions(width, height),
              {:ok, tile_indexes} <- Library.visible_tile_indexes(path, width, height),
              {:ok, attrs} <- persist_upload(path, entry, name, width, height, tile_indexes),
-             {:ok, asset} <- Library.create_tileset(designer.id, attrs) do
+             {:ok, asset} <- create_asset(kind, designer.id, attrs) do
           {:ok, asset}
         else
           {:error, reason} -> {:ok, {:error, upload_error(reason)}}
@@ -67,12 +70,13 @@ defmodule BoxlandWeb.AssetLive do
       [asset | _] ->
         {:noreply,
          socket
-         |> put_flash(:info, "Tileset uploaded.")
-         |> assign(:tilesets, Library.list_tilesets(designer.id))
+         |> put_flash(:info, "#{String.capitalize(kind)} uploaded.")
+         |> reload_assets()
          |> assign(:selected_asset, asset)
          |> assign(:selected_tile, first_tile_index(asset))
+         |> assign(:selected_animation, nil)
          |> assign(:upload_open?, false)
-         |> assign(:form, to_form(%{"name" => ""}, as: :asset))}
+         |> assign(:form, to_form(%{"name" => "", "kind" => "tileset"}, as: :asset))}
 
       _ ->
         {:noreply, put_flash(socket, :error, upload_result_error(socket, errors))}
@@ -86,11 +90,86 @@ defmodule BoxlandWeb.AssetLive do
      socket
      |> assign(:selected_asset, asset)
      |> assign(:selected_tile, first_tile_index(asset))
+     |> assign(:selected_animation, first_animation_name(asset))
      |> assign(:rename_id, nil)}
   end
 
   def handle_event("select_tile", %{"tile" => tile}, socket) do
     {:noreply, assign(socket, :selected_tile, String.to_integer(tile))}
+  end
+
+  # === Spritesheet animation editing ===
+
+  def handle_event("anim_new", %{"animation" => %{"name" => raw_name}}, socket) do
+    asset = socket.assigns.selected_asset
+    name = String.trim(raw_name)
+    animation = %{"name" => name, "frames" => [], "fps" => 8, "loop" => true}
+
+    cond do
+      name == "" ->
+        {:noreply, put_flash(socket, :error, "Animation name can't be blank.")}
+
+      Library.animation(asset, name) ->
+        {:noreply, put_flash(socket, :error, "An animation named \"#{name}\" already exists.")}
+
+      true ->
+        case Library.put_animations(asset, animations(asset) ++ [animation]) do
+          {:ok, updated} ->
+            {:noreply, socket |> replace_asset(updated) |> assign(:selected_animation, name)}
+
+          {:error, message} ->
+            {:noreply, put_flash(socket, :error, animation_error(message))}
+        end
+    end
+  end
+
+  def handle_event("anim_select", %{"name" => name}, socket) do
+    {:noreply, assign(socket, :selected_animation, name)}
+  end
+
+  def handle_event("anim_delete", %{"name" => name}, socket) do
+    asset = socket.assigns.selected_asset
+    remaining = Enum.reject(animations(asset), &(&1["name"] == name))
+
+    case Library.put_animations(asset, remaining) do
+      {:ok, updated} ->
+        selected =
+          if socket.assigns.selected_animation == name,
+            do: first_animation_name(updated),
+            else: socket.assigns.selected_animation
+
+        {:noreply, socket |> replace_asset(updated) |> assign(:selected_animation, selected)}
+
+      {:error, message} ->
+        {:noreply, put_flash(socket, :error, animation_error(message))}
+    end
+  end
+
+  def handle_event("anim_settings", %{"animation" => params}, socket) do
+    update_selected_animation(socket, fn animation ->
+      animation
+      |> Map.put("fps", parse_fps(params["fps"], animation["fps"]))
+      |> Map.put("loop", params["loop"] == "true")
+    end)
+  end
+
+  def handle_event("anim_toggle_frame", %{"frame" => frame}, socket) do
+    frame = String.to_integer(frame)
+
+    update_selected_animation(socket, fn animation ->
+      frames = animation["frames"]
+
+      frames =
+        if frame in frames,
+          do: Enum.reject(frames, &(&1 == frame)),
+          else: frames ++ [frame]
+
+      Map.put(animation, "frames", frames)
+    end)
+  end
+
+  def handle_event("anim_clear_frames", _params, socket) do
+    update_selected_animation(socket, &Map.put(&1, "frames", []))
   end
 
   def handle_event("quick_set", %{"mode" => mode}, socket) do
@@ -179,13 +258,13 @@ defmodule BoxlandWeb.AssetLive do
 
         {:noreply,
          socket
-         |> assign(:tilesets, Library.list_tilesets(designer.id))
+         |> reload_assets()
          |> assign(:selected_asset, selected)
          |> assign(:rename_id, nil)
-         |> put_flash(:info, "Tileset renamed.")}
+         |> put_flash(:info, "Asset renamed.")}
 
       {:error, _} ->
-        {:noreply, put_flash(socket, :error, "Could not rename tileset.")}
+        {:noreply, put_flash(socket, :error, "Could not rename asset.")}
     end
   end
 
@@ -196,8 +275,8 @@ defmodule BoxlandWeb.AssetLive do
 
     socket =
       socket
-      |> assign(:tilesets, Library.list_tilesets(designer.id))
-      |> put_flash(:info, "Tileset deleted.")
+      |> reload_assets()
+      |> put_flash(:info, "Asset deleted.")
 
     selected_id = socket.assigns.selected_asset && socket.assigns.selected_asset.id
 
@@ -235,6 +314,7 @@ defmodule BoxlandWeb.AssetLive do
             </:actions>
             <.library_panel
               tilesets={@tilesets}
+              spritesheets={@spritesheets}
               selected_asset={@selected_asset}
               rename_id={@rename_id}
             />
@@ -244,7 +324,7 @@ defmodule BoxlandWeb.AssetLive do
         <:viewport>
           <.ide_toolbar id="asset-toolbar">
             <h1 class="mr-2 text-sm font-semibold text-base-content">
-              {(@selected_asset && @selected_asset.name) || "Tilesets"}
+              {(@selected_asset && @selected_asset.name) || "Assets"}
             </h1>
             <div class="flex-1"></div>
             <button
@@ -257,21 +337,33 @@ defmodule BoxlandWeb.AssetLive do
           </.ide_toolbar>
 
           <div class="min-h-0 flex-1 overflow-auto p-4">
-            <.workspace_panel selected_asset={@selected_asset} selected_tile={@selected_tile} />
+            <.workspace_panel
+              selected_asset={@selected_asset}
+              selected_tile={@selected_tile}
+              selected_animation={@selected_animation}
+            />
           </div>
         </:viewport>
 
         <:inspector>
-          <.editor_panel selected_asset={@selected_asset} selected_tile={@selected_tile} />
+          <.editor_panel
+            selected_asset={@selected_asset}
+            selected_tile={@selected_tile}
+            selected_animation={@selected_animation}
+          />
         </:inspector>
 
         <:status>
           <span class="font-mono">
-            {length(@tilesets)} tileset{if length(@tilesets) == 1, do: "", else: "s"}
+            {length(@tilesets)} tileset{if length(@tilesets) == 1, do: "", else: "s"} · {length(
+              @spritesheets
+            )} spritesheet{if length(@spritesheets) == 1, do: "", else: "s"}
           </span>
           <span :if={@selected_asset} class="font-mono">tile: {@selected_tile}</span>
           <span class="flex-1"></span>
-          <span class="text-base-content/50">Upload PNG tilesets · paint per-tile collision</span>
+          <span class="text-base-content/50">
+            Upload PNG tilesets &amp; spritesheets · collisions · animations
+          </span>
         </:status>
       </.ide_shell>
 
@@ -281,25 +373,49 @@ defmodule BoxlandWeb.AssetLive do
   end
 
   attr :tilesets, :list, required: true
+  attr :spritesheets, :list, required: true
   attr :selected_asset, :any, required: true
   attr :rename_id, :any, required: true
 
   defp library_panel(assigns) do
     ~H"""
-    <div class="px-1.5">
-      <p :if={@tilesets == []} class="rounded-box bg-base-300/40 p-4 text-xs text-base-content/60">
-        No tilesets yet. Upload a 32×32 tileset PNG to start editing collisions.
+    <div class="space-y-3 px-1.5">
+      <p
+        :if={@tilesets == [] and @spritesheets == []}
+        class="rounded-box bg-base-300/40 p-4 text-xs text-base-content/60"
+      >
+        No assets yet. Upload a 32×32 tileset or spritesheet PNG to get started.
       </p>
 
-      <ul :if={@tilesets != []} class="space-y-1">
-        <li :for={asset <- @tilesets}>
-          <.library_item
-            asset={asset}
-            selected?={@selected_asset && @selected_asset.id == asset.id}
-            renaming?={@rename_id == asset.id}
-          />
-        </li>
-      </ul>
+      <div :if={@tilesets != []}>
+        <p class="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wide text-base-content/50">
+          Tilesets
+        </p>
+        <ul class="space-y-1">
+          <li :for={asset <- @tilesets}>
+            <.library_item
+              asset={asset}
+              selected?={@selected_asset && @selected_asset.id == asset.id}
+              renaming?={@rename_id == asset.id}
+            />
+          </li>
+        </ul>
+      </div>
+
+      <div :if={@spritesheets != []}>
+        <p class="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wide text-base-content/50">
+          Spritesheets
+        </p>
+        <ul class="space-y-1">
+          <li :for={asset <- @spritesheets}>
+            <.library_item
+              asset={asset}
+              selected?={@selected_asset && @selected_asset.id == asset.id}
+              renaming?={@rename_id == asset.id}
+            />
+          </li>
+        </ul>
+      </div>
     </div>
     """
   end
@@ -349,8 +465,18 @@ defmodule BoxlandWeb.AssetLive do
         id={"asset-#{@asset.id}"}
       >
         <span class="block truncate text-sm font-medium">{@asset.name}</span>
-        <span class="block text-xs text-base-content/60">
-          {@asset.metadata["columns"]}×{@asset.metadata["rows"]} · {tile_count(@asset)} tiles
+        <span :if={@asset.kind == "tileset"} class="block text-xs text-base-content/60">
+          {meta_cols(@asset)}×{meta_rows(@asset)} · {tile_count(@asset)} tiles
+        </span>
+        <span :if={@asset.kind == "spritesheet"} class="block text-xs text-base-content/60">
+          {meta_cols(@asset)}×{meta_rows(@asset)} · {length(animations(@asset))} animation{if length(
+                                                                                                animations(
+                                                                                                  @asset
+                                                                                                )
+                                                                                              ) == 1,
+                                                                                              do: "",
+                                                                                              else:
+                                                                                                "s"}
         </span>
       </button>
 
@@ -389,6 +515,71 @@ defmodule BoxlandWeb.AssetLive do
 
   attr :selected_asset, :any, required: true
   attr :selected_tile, :integer, required: true
+  attr :selected_animation, :any, default: nil
+
+  defp workspace_panel(%{selected_asset: %{kind: "spritesheet"}} = assigns) do
+    assigns =
+      assign(
+        assigns,
+        :animation,
+        Library.animation(assigns.selected_asset, assigns.selected_animation)
+      )
+
+    ~H"""
+    <section class="space-y-3">
+      <div class="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 class="text-xl font-semibold leading-tight">{@selected_asset.name}</h2>
+          <p class="text-sm text-base-content/60">
+            {meta_cols(@selected_asset)} cols × {meta_rows(@selected_asset)} rows · {@selected_asset.metadata[
+              "frame_count"
+            ]} frames
+          </p>
+        </div>
+        <p :if={@animation} class="text-sm text-base-content/60">
+          Editing <span class="font-semibold text-base-content">{@animation["name"]}</span>
+          — click frames to add or remove them, in playback order.
+        </p>
+        <p :if={!@animation} class="text-sm text-base-content/60">
+          Create an animation on the right, then click frames to build it.
+        </p>
+      </div>
+
+      <div class="rounded-box bg-base-200/40 p-3">
+        <div class="grid gap-2" style="grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));">
+          <button
+            :for={index <- tile_indexes(@selected_asset)}
+            type="button"
+            class={[
+              "group relative aspect-square rounded border bg-base-100 transition",
+              @animation && index in @animation["frames"] && "border-primary ring-2 ring-primary",
+              !(@animation && index in @animation["frames"]) &&
+                "border-base-300/60 hover:border-base-content/40"
+            ]}
+            disabled={is_nil(@animation)}
+            phx-click="anim_toggle_frame"
+            phx-value-frame={index}
+            aria-label={"Frame #{index}"}
+            aria-pressed={@animation && index in @animation["frames"]}
+          >
+            <span
+              class="absolute inset-0 bg-no-repeat"
+              style={tile_card_style(@selected_asset, index)}
+              aria-hidden="true"
+            />
+            <span
+              :if={@animation && index in @animation["frames"]}
+              class="absolute right-1 top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-content ring-1 ring-base-100"
+              title="Playback order"
+            >
+              {Enum.find_index(@animation["frames"], &(&1 == index)) + 1}
+            </span>
+          </button>
+        </div>
+      </div>
+    </section>
+    """
+  end
 
   defp workspace_panel(assigns) do
     ~H"""
@@ -467,6 +658,135 @@ defmodule BoxlandWeb.AssetLive do
 
   attr :selected_asset, :any, required: true
   attr :selected_tile, :integer, required: true
+  attr :selected_animation, :any, default: nil
+
+  defp editor_panel(%{selected_asset: %{kind: "spritesheet"}} = assigns) do
+    assigns =
+      assigns
+      |> assign(:animation, Library.animation(assigns.selected_asset, assigns.selected_animation))
+      |> assign(:preview_box, @preview_size)
+
+    ~H"""
+    <aside class="space-y-3 lg:sticky lg:top-4 lg:self-start">
+      <div class="rounded-box bg-base-200/60 p-4 space-y-4">
+        <header>
+          <h3 class="text-base font-semibold">Animations</h3>
+          <p class="text-xs text-base-content/60">
+            Named frame sequences other tools can play (map tiles, entities).
+          </p>
+        </header>
+
+        <ul :if={animations(@selected_asset) != []} class="space-y-1">
+          <li
+            :for={animation <- animations(@selected_asset)}
+            class={[
+              "group flex items-center gap-2 rounded-md px-2 py-1.5 transition",
+              @selected_animation == animation["name"] && "bg-primary/15 ring-1 ring-primary/40",
+              @selected_animation != animation["name"] && "hover:bg-base-300/40"
+            ]}
+          >
+            <button
+              type="button"
+              class="min-w-0 flex-1 text-left"
+              phx-click="anim_select"
+              phx-value-name={animation["name"]}
+            >
+              <span class="block truncate text-sm font-medium">{animation["name"]}</span>
+              <span class="block text-xs text-base-content/60">
+                {length(animation["frames"])} frame{if length(animation["frames"]) == 1,
+                  do: "",
+                  else: "s"} · {animation["fps"]} fps · {if animation["loop"],
+                  do: "loop",
+                  else: "once"}
+              </span>
+            </button>
+            <button
+              type="button"
+              class="btn btn-ghost btn-xs btn-square opacity-0 transition group-hover:opacity-100"
+              phx-click="anim_delete"
+              phx-value-name={animation["name"]}
+              data-confirm={"Delete animation \"#{animation["name"]}\"?"}
+              aria-label={"Delete #{animation["name"]}"}
+            >
+              <.icon name="hero-trash" class="size-3.5" />
+            </button>
+          </li>
+        </ul>
+
+        <form phx-submit="anim_new" class="flex items-center gap-2">
+          <input
+            type="text"
+            name="animation[name]"
+            placeholder="New animation name"
+            class="input input-sm flex-1"
+            autocomplete="off"
+          />
+          <button type="submit" class="btn btn-sm btn-primary">Add</button>
+        </form>
+      </div>
+
+      <div :if={@animation} class="rounded-box bg-base-200/60 p-4 space-y-4">
+        <header>
+          <h3 class="text-base font-semibold">{@animation["name"]}</h3>
+          <p class="text-xs text-base-content/60">
+            Click frames in the grid to add or remove them.
+          </p>
+        </header>
+
+        <div
+          :if={@animation["frames"] != []}
+          id={"anim-preview-#{@selected_asset.id}-#{@animation["name"]}"}
+          phx-hook="Sprite"
+          data-sprite-url={@selected_asset.content_url}
+          data-sprite-cols={meta_cols(@selected_asset)}
+          data-sprite-rows={meta_rows(@selected_asset)}
+          data-sprite-tile={@preview_box}
+          data-sprite-frames={Enum.join(@animation["frames"], ",")}
+          data-sprite-fps={@animation["fps"]}
+          data-sprite-loop={to_string(@animation["loop"])}
+          data-sprite-sync="ambient"
+          class="mx-auto rounded border border-base-300 bg-base-100 bg-no-repeat"
+          style={"width: #{@preview_box}px; height: #{@preview_box}px; image-rendering: pixelated;"}
+        />
+        <p
+          :if={@animation["frames"] == []}
+          class="rounded-box bg-base-300/40 p-4 text-center text-xs text-base-content/60"
+        >
+          No frames yet — click frames in the grid to add them.
+        </p>
+
+        <form phx-change="anim_settings" class="grid grid-cols-2 items-end gap-2">
+          <label class="form-control">
+            <span class="label-text text-xs">FPS</span>
+            <input
+              type="number"
+              name="animation[fps]"
+              value={@animation["fps"]}
+              min="1"
+              max="60"
+              class="input input-sm w-full"
+            />
+          </label>
+          <label class="label cursor-pointer justify-start gap-2 pb-1.5">
+            <input type="hidden" name="animation[loop]" value="false" />
+            <input
+              type="checkbox"
+              name="animation[loop]"
+              value="true"
+              checked={@animation["loop"]}
+              class="checkbox checkbox-sm"
+            />
+            <span class="label-text text-xs">Loop</span>
+          </label>
+        </form>
+
+        <button type="button" class="btn btn-sm btn-ghost" phx-click="anim_clear_frames">
+          <.icon name="hero-x-mark" class="size-4" /> Clear frames
+        </button>
+      </div>
+    </aside>
+    """
+  end
 
   defp editor_panel(assigns) do
     ~H"""
@@ -753,7 +1073,7 @@ defmodule BoxlandWeb.AssetLive do
       >
         <div class="mb-4 flex items-start justify-between">
           <div>
-            <h2 class="text-lg font-semibold">Upload tileset</h2>
+            <h2 class="text-lg font-semibold">Upload asset</h2>
             <p class="text-sm text-base-content/60">PNG only. Width and height divisible by 32.</p>
           </div>
           <button
@@ -773,7 +1093,17 @@ defmodule BoxlandWeb.AssetLive do
           phx-submit="upload"
           class="space-y-4"
         >
-          <.input field={@form[:name]} type="text" label="Tileset name" />
+          <.input field={@form[:name]} type="text" label="Asset name" />
+
+          <.input
+            field={@form[:kind]}
+            type="select"
+            label="Kind"
+            options={[
+              {"Tileset (map tiles + collision)", "tileset"},
+              {"Spritesheet (animations)", "spritesheet"}
+            ]}
+          />
 
           <label
             for={@uploads.tileset.ref}
@@ -802,13 +1132,19 @@ defmodule BoxlandWeb.AssetLive do
             <button type="button" class="btn btn-ghost btn-sm" phx-click="close_upload">
               Cancel
             </button>
-            <button type="submit" class="btn btn-primary btn-sm">Upload tileset</button>
+            <button type="submit" class="btn btn-primary btn-sm">Upload</button>
           </div>
         </.form>
       </div>
     </div>
     """
   end
+
+  defp create_asset("spritesheet", owner_id, attrs) do
+    Library.create_spritesheet(owner_id, Map.put(attrs, :frame_indexes, attrs.tile_indexes))
+  end
+
+  defp create_asset(_kind, owner_id, attrs), do: Library.create_tileset(owner_id, attrs)
 
   defp persist_upload(path, entry, name, width, height, tile_indexes) do
     body = File.read!(path)
@@ -855,13 +1191,13 @@ defmodule BoxlandWeb.AssetLive do
     end)
     |> Enum.join(", ")
     |> case do
-      "" -> "Could not save tileset."
-      message -> "Could not save tileset: #{message}."
+      "" -> "Could not save asset."
+      message -> "Could not save asset: #{message}."
     end
   end
 
-  defp upload_error(reason) when is_binary(reason), do: "Could not upload tileset: #{reason}."
-  defp upload_error(reason), do: "Could not upload tileset: #{inspect(reason)}."
+  defp upload_error(reason) when is_binary(reason), do: "Could not upload asset: #{reason}."
+  defp upload_error(reason), do: "Could not upload asset: #{inspect(reason)}."
 
   defp upload_result_error(_socket, [{:error, message} | _]), do: message
 
@@ -884,9 +1220,13 @@ defmodule BoxlandWeb.AssetLive do
     sprite_style(asset, index)
   end
 
+  # Tilesets store the grid as columns/rows; spritesheets as grid_cols/grid_rows.
+  defp meta_cols(asset), do: asset.metadata["columns"] || asset.metadata["grid_cols"] || 1
+  defp meta_rows(asset), do: asset.metadata["rows"] || asset.metadata["grid_rows"] || 1
+
   defp preview_style(asset, index) do
-    columns = asset.metadata["columns"]
-    rows = asset.metadata["rows"]
+    columns = meta_cols(asset)
+    rows = meta_rows(asset)
     x = rem(index, columns)
     y = div(index, columns)
 
@@ -908,8 +1248,8 @@ defmodule BoxlandWeb.AssetLive do
   # divides by (cols - 1) because CSS interprets % as a fraction of the unused
   # space (image size - container size), not container size.
   defp sprite_style(asset, index) do
-    columns = asset.metadata["columns"] || 1
-    rows = asset.metadata["rows"] || 1
+    columns = meta_cols(asset)
+    rows = meta_rows(asset)
     x = rem(index, columns)
     y = div(index, columns)
     pos_x = if columns > 1, do: x / (columns - 1) * 100, else: 0
@@ -923,6 +1263,14 @@ defmodule BoxlandWeb.AssetLive do
 
   defp format_percent(value) do
     :erlang.float_to_binary(value * 1.0, decimals: 4)
+  end
+
+  defp tile_indexes(%{kind: "spritesheet"} = asset) do
+    Map.get(
+      asset.metadata,
+      "frame_indexes",
+      Enum.to_list(0..((asset.metadata["frame_count"] || 1) - 1))
+    )
   end
 
   defp tile_indexes(asset) do
@@ -1015,18 +1363,65 @@ defmodule BoxlandWeb.AssetLive do
   defp replace_asset(socket, asset) do
     socket
     |> assign(:selected_asset, asset)
-    |> assign(:tilesets, Library.list_tilesets(socket.assigns.current_designer.id))
+    |> reload_assets()
+  end
+
+  defp reload_assets(socket) do
+    designer = socket.assigns.current_designer
+
+    socket
+    |> assign(:tilesets, Library.list_tilesets(designer.id))
+    |> assign(:spritesheets, Library.list_spritesheets(designer.id))
   end
 
   defp auto_select_asset(socket) do
-    case {socket.assigns.selected_asset, socket.assigns.tilesets} do
+    case {socket.assigns.selected_asset, socket.assigns.tilesets ++ socket.assigns.spritesheets} do
       {nil, [first | _]} ->
         socket
         |> assign(:selected_asset, first)
         |> assign(:selected_tile, first_tile_index(first))
+        |> assign(:selected_animation, first_animation_name(first))
 
       _ ->
         socket
+    end
+  end
+
+  defp animations(asset), do: Map.get(asset.metadata, "animations", [])
+
+  defp first_animation_name(%{kind: "spritesheet"} = asset) do
+    case animations(asset) do
+      [first | _] -> first["name"]
+      _ -> nil
+    end
+  end
+
+  defp first_animation_name(_asset), do: nil
+
+  defp update_selected_animation(socket, fun) do
+    asset = socket.assigns.selected_asset
+    name = socket.assigns.selected_animation
+
+    updated_animations =
+      Enum.map(animations(asset), fn animation ->
+        if animation["name"] == name, do: fun.(animation), else: animation
+      end)
+
+    case Library.put_animations(asset, updated_animations) do
+      {:ok, updated} -> {:noreply, replace_asset(socket, updated)}
+      {:error, message} -> {:noreply, put_flash(socket, :error, animation_error(message))}
+    end
+  end
+
+  defp animation_error(message) when is_binary(message),
+    do: "Could not save animation: #{message}."
+
+  defp animation_error(other), do: "Could not save animation: #{inspect(other)}."
+
+  defp parse_fps(raw, fallback) do
+    case Integer.parse(to_string(raw)) do
+      {n, _} -> n
+      :error -> fallback
     end
   end
 

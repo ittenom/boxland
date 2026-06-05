@@ -145,6 +145,49 @@ defmodule Boxland.Game.SimulationTest do
       assert player(replayed.current) == {1, 0}
     end
 
+    test "transforms, auto-facing, and moving survive scrubbing and keyframes" do
+      flip = %{
+        "id" => "flip",
+        "trigger" => %{"kind" => "waypoint", "index" => "any"},
+        "function" => %{"kind" => "transform", "op" => "mirror_y"}
+      }
+
+      e =
+        walker("t", [%{"x" => 0, "y" => 0}, %{"x" => 3, "y" => 0}], "ping_pong")
+        |> Map.put(:actions, [flip])
+        |> Map.put(:movement, %{"mode" => "ping_pong", "auto_facing" => true})
+
+      sim = Simulation.new(world([e], 7))
+
+      # Run well past the 32-tick keyframe boundary.
+      head = Enum.reduce(1..70, sim, fn _, s -> Simulation.advance(s) end)
+
+      sample = fn s, t ->
+        w = Simulation.at(s, t).current
+        ent = w.entities["t"]
+        {ent.cell_x, ent.cell_y, ent[:transform], ent.moving}
+      end
+
+      forward =
+        Enum.scan(1..70, world([e], 7), fn _, w -> Boxland.Game.Eca.tick(w) end)
+        |> Enum.map(fn w ->
+          ent = w.entities["t"]
+          {ent.cell_x, ent.cell_y, ent[:transform], ent.moving}
+        end)
+
+      for t <- [1, 15, 31, 32, 33, 50, 70] do
+        assert sample.(head, t) == Enum.at(forward, t - 1),
+               "scrubbed state at tick #{t} diverged from forward iteration"
+      end
+
+      # The transform actually changed at some point (mirror_y toggled) and
+      # auto-facing flipped mirror_x both ways across the run.
+      transforms = Enum.map(forward, fn {_, _, tr, _} -> tr end) |> Enum.reject(&is_nil/1)
+      assert Enum.any?(transforms, & &1["mirror_y"])
+      assert Enum.any?(transforms, & &1["mirror_x"])
+      assert Enum.any?(transforms, &(&1["mirror_x"] == false))
+    end
+
     test "reset returns to spawn state and clears inputs", %{sim: sim} do
       head =
         sim

@@ -20,20 +20,25 @@ defmodule BoxlandWeb.LevelEditorLive do
     designer = socket.assigns.current_designer
     level = Levels.get_level!(designer.id, id) |> preload_map_layers()
     tilesets = Library.list_tilesets(designer.id)
+    spritesheets = Library.list_spritesheets(designer.id)
     sprites = list_sprites(designer.id)
+    assets = tilesets ++ spritesheets ++ sprites
 
     {:ok,
      socket
      |> assign(:level, level)
      |> assign(:tilesets, tilesets)
+     |> assign(:spritesheets, spritesheets)
      |> assign(:sprites, sprites)
-     |> assign(:assets_by_id, Elixir.Map.new(tilesets ++ sprites, &{&1.id, &1}))
+     |> assign(:assets, assets)
+     |> assign(:assets_by_id, Elixir.Map.new(assets, &{&1.id, &1}))
      |> assign(:groups, list_groups(level))
      |> assign(:tool, "select")
      |> assign(:palette_mode, "preset")
      |> assign(:preset, "spawn")
      |> assign(:selected_tile, nil)
      |> assign(:selected_sprite_id, nil)
+     |> assign(:selected_animated, nil)
      |> assign(:selected_group_id, nil)
      |> assign(:invisible_size, %{"w" => 1, "h" => 1})
      |> assign(:place_z, default_place_z(level))
@@ -294,6 +299,17 @@ defmodule BoxlandWeb.LevelEditorLive do
      socket
      |> assign(:selected_sprite_id, String.to_integer(asset_id))
      |> assign(:palette_mode, "sprite")
+     |> assign(:tool, "place")}
+  end
+
+  def handle_event("pick_animated", %{"asset_id" => asset_id, "animation" => animation}, socket) do
+    {:noreply,
+     socket
+     |> assign(:selected_animated, %{
+       "asset_id" => String.to_integer(asset_id),
+       "animation" => animation
+     })
+     |> assign(:palette_mode, "animated")
      |> assign(:tool, "place")}
   end
 
@@ -628,6 +644,40 @@ defmodule BoxlandWeb.LevelEditorLive do
     end
   end
 
+  def handle_event("binding_set", %{"state" => state, "value" => value}, socket) do
+    case selected_entity(socket) do
+      nil ->
+        {:noreply, socket}
+
+      entity ->
+        {:ok, _} = Entities.put_animation_binding(entity.entity_type, state, value)
+        {:noreply, refresh_level(socket)}
+    end
+  end
+
+  # === Transform events ===
+
+  def handle_event("transform_set", params, socket) do
+    case selected_entity(socket) do
+      nil ->
+        {:noreply, socket}
+
+      entity ->
+        # Checkboxes and inputs all live in one form, so read every field
+        # explicitly (an unchecked box would otherwise be lost).
+        transform = %{
+          "mirror_x" => params["mirror_x"] in ["true", "on", true],
+          "mirror_y" => params["mirror_y"] in ["true", "on", true],
+          "rotation" => params["rotation"] |> safe_int(0) |> Integer.mod(360),
+          "scale" => safe_scale(params["scale"])
+        }
+
+        overrides = Map.put(entity.instance_overrides || %{}, "transform", transform)
+        {:ok, _} = Levels.update_entity(entity, %{"instance_overrides" => overrides})
+        {:noreply, refresh_level(socket)}
+    end
+  end
+
   # === Waypoint events ===
 
   def handle_event("waypoint_add", _params, socket) do
@@ -688,6 +738,7 @@ defmodule BoxlandWeb.LevelEditorLive do
           |> stash_movement_field(params, "mode")
           |> stash_movement_field(params, "ticks_per_step")
           |> stash_movement_field(params, "wait_at_waypoint")
+          |> stash_movement_field(params, "auto_facing")
 
         {:ok, _} = Levels.update_entity(entity, %{"movement" => next})
         {:noreply, refresh_level(socket)}
@@ -1008,6 +1059,9 @@ defmodule BoxlandWeb.LevelEditorLive do
               do: Map.put(current, "mode", value),
               else: current
 
+          "auto_facing" ->
+            Map.put(current, "auto_facing", value in ["true", "on", true])
+
           _ ->
             Map.put(current, key, safe_int(value, Map.get(current, key, 0)))
         end
@@ -1051,6 +1105,9 @@ defmodule BoxlandWeb.LevelEditorLive do
 
       "sprite" ->
         place_sprite(socket, designer, level, x, y)
+
+      "animated" ->
+        place_animated(socket, designer, level, x, y)
 
       "group" ->
         place_group(socket, designer, level)
@@ -1098,6 +1155,24 @@ defmodule BoxlandWeb.LevelEditorLive do
     end
   end
 
+  defp place_animated(socket, designer, _level_id, x, y) do
+    case socket.assigns.selected_animated do
+      %{"asset_id" => asset_id, "animation" => animation} ->
+        {:ok, type} =
+          Levels.ensure_entity_type_for(designer.id, {:animated, asset_id, animation})
+
+        Levels.spawn_entity(designer.id, socket.assigns.level.id, %{
+          "entity_type_id" => type.id,
+          "pos_x" => x * @cell_px,
+          "pos_y" => y * @cell_px,
+          "z_index_override" => socket.assigns.place_z
+        })
+
+      _ ->
+        {:error, :no_animation_selected}
+    end
+  end
+
   defp place_group(socket, designer, _level_id) do
     case socket.assigns.selected_group_id do
       nil ->
@@ -1134,6 +1209,10 @@ defmodule BoxlandWeb.LevelEditorLive do
 
   defp format_place_error(:no_tile_selected), do: "Select a tile from the palette first."
   defp format_place_error(:no_sprite_selected), do: "Select a sprite from the palette first."
+
+  defp format_place_error(:no_animation_selected),
+    do: "Select a spritesheet animation from the palette first."
+
   defp format_place_error(:no_group_selected), do: "Select a group from the palette first."
   defp format_place_error(_), do: "Could not place entity."
 
@@ -1164,6 +1243,13 @@ defmodule BoxlandWeb.LevelEditorLive do
   defp coerce_value("boolean", v) when is_binary(v), do: v in ["true", "1", "on"]
   defp coerce_value("boolean", v) when is_boolean(v), do: v
   defp coerce_value(_, v), do: v
+
+  defp safe_scale(raw) do
+    case Float.parse(to_string(raw)) do
+      {f, _} when f >= 0 -> f
+      _ -> 1.0
+    end
+  end
 
   defp put_in_action(action, [last], value), do: Map.put(action, last, value)
 
@@ -1408,6 +1494,7 @@ defmodule BoxlandWeb.LevelEditorLive do
       |> assign(:selection_highlight, selection_highlight)
       |> assign(:affected_layer_ids, affected_layers)
       |> assign(:entity_cell_index, entity_cell_index)
+      |> assign(:entity_anim_attrs, build_entity_anim_attrs(assigns.level, assigns.assets_by_id))
       |> assign(:waypoint_markers, waypoint_markers)
       |> assign(:path_cells, path_cells)
       |> assign(:path_directions, path_directions)
@@ -1434,10 +1521,12 @@ defmodule BoxlandWeb.LevelEditorLive do
             palette_mode={@palette_mode}
             preset={@preset}
             tilesets={@tilesets}
+            spritesheets={@spritesheets}
             sprites={@sprites}
             palette_groups={@groups}
             selected_tile={@selected_tile}
             selected_sprite_id={@selected_sprite_id}
+            selected_animated={@selected_animated}
             selected_group_id={@selected_group_id}
             invisible_size={@invisible_size}
             place_z={@place_z}
@@ -1514,12 +1603,13 @@ defmodule BoxlandWeb.LevelEditorLive do
           <.canvas
             level={@level}
             layers={@layers}
-            tilesets={@tilesets}
+            tilesets={@assets}
             tool={@tool}
             show_grid={@show_grid}
             selected_entity_id={selected_entity_id_for_canvas(@selection)}
             highlight_cells={@selection_highlight}
             entity_cell_index={@entity_cell_index}
+            entity_anim_attrs={@entity_anim_attrs}
             waypoint_markers={@waypoint_markers}
             path_cells={@path_cells}
             path_directions={@path_directions}
@@ -1532,7 +1622,12 @@ defmodule BoxlandWeb.LevelEditorLive do
             <% {:layer, _} -> %>
               <.layer_inspector layer={@selected_layer} />
             <% _ -> %>
-              <.inspector selection={@selection} entity={@selected} tool={@tool} />
+              <.inspector
+                selection={@selection}
+                entity={@selected}
+                tool={@tool}
+                assets_by_id={@assets_by_id}
+              />
           <% end %>
         </:inspector>
 
@@ -1619,6 +1714,7 @@ defmodule BoxlandWeb.LevelEditorLive do
       %{"kind" => "invisible"} -> "hero-cube-transparent"
       %{"kind" => "group"} -> "hero-rectangle-group"
       %{"kind" => "sprite"} -> "hero-user"
+      %{"kind" => "animated"} -> "hero-film"
       _ -> "hero-square-2-stack"
     end
   end
@@ -1635,10 +1731,12 @@ defmodule BoxlandWeb.LevelEditorLive do
   attr :palette_mode, :string, required: true
   attr :preset, :string, required: true
   attr :tilesets, :list, required: true
+  attr :spritesheets, :list, required: true
   attr :sprites, :list, required: true
   attr :palette_groups, :list, required: true
   attr :selected_tile, :any, required: true
   attr :selected_sprite_id, :any, required: true
+  attr :selected_animated, :any, required: true
   attr :selected_group_id, :any, required: true
   attr :invisible_size, :map, required: true
   attr :place_z, :integer, required: true
@@ -1757,10 +1855,12 @@ defmodule BoxlandWeb.LevelEditorLive do
           mode={@palette_mode}
           preset={@preset}
           tilesets={@tilesets}
+          spritesheets={@spritesheets}
           sprites={@sprites}
           groups={@palette_groups}
           selected_tile={@selected_tile}
           selected_sprite_id={@selected_sprite_id}
+          selected_animated={@selected_animated}
           selected_group_id={@selected_group_id}
           invisible_size={@invisible_size}
           place_z={@place_z}
@@ -1959,16 +2059,18 @@ defmodule BoxlandWeb.LevelEditorLive do
   attr :groups, :list
   attr :selected_tile, :any
   attr :selected_sprite_id, :any
+  attr :selected_animated, :any, default: nil
   attr :selected_group_id, :any
   attr :invisible_size, :map
   attr :place_z, :integer
+  attr :spritesheets, :list, default: []
 
   defp palette(assigns) do
     ~H"""
     <aside id="level-palette" class="space-y-3">
       <nav class="tabs tabs-boxed bg-base-200 text-xs" role="tablist">
         <a
-          :for={tab <- ~w(preset tile sprite group invisible)}
+          :for={tab <- ~w(preset tile sprite animated group invisible)}
           id={"palette-tab-#{tab}"}
           phx-click="palette_mode"
           phx-value-mode={tab}
@@ -2048,6 +2150,48 @@ defmodule BoxlandWeb.LevelEditorLive do
         </button>
       </div>
 
+      <div :if={@mode == "animated"} class="space-y-2">
+        <p :if={@spritesheets == []} class="text-xs text-base-content/60">
+          No spritesheets uploaded. Upload one in the Asset Library and define animations.
+        </p>
+
+        <div :for={sheet <- @spritesheets} class="space-y-1">
+          <div class="text-[10px] font-semibold uppercase tracking-wide text-base-content/60">
+            {sheet.name}
+          </div>
+          <p
+            :if={(sheet.metadata["animations"] || []) == []}
+            class="text-xs text-base-content/60"
+          >
+            No animations defined yet.
+          </p>
+          <div class="grid grid-cols-6 gap-1">
+            <button
+              :for={animation <- sheet.metadata["animations"] || []}
+              id={"palette-animated-#{sheet.id}-#{animation["name"]}"}
+              phx-click="pick_animated"
+              phx-value-asset_id={sheet.id}
+              phx-value-animation={animation["name"]}
+              title={"#{animation["name"]} · #{animation["fps"]} fps"}
+              class={[
+                "h-8 w-8 border",
+                @selected_animated == %{"asset_id" => sheet.id, "animation" => animation["name"]} &&
+                  "ring-2 ring-primary border-primary",
+                @selected_animated != %{"asset_id" => sheet.id, "animation" => animation["name"]} &&
+                  "border-base-300"
+              ]}
+            >
+              <span
+                id={"palette-animated-swatch-#{sheet.id}-#{animation["name"]}"}
+                class="block h-full w-full bg-no-repeat"
+                style="image-rendering: pixelated;"
+                {BoxlandWeb.LevelRender.sprite_attrs(BoxlandWeb.LevelRender.animation_data(sheet, animation["name"]))}
+              />
+            </button>
+          </div>
+        </div>
+      </div>
+
       <div :if={@mode == "group"} class="space-y-1">
         <p :if={@groups == []} class="text-xs text-base-content/60">
           No tile groups on this map. Use Mapmaker to create one.
@@ -2108,6 +2252,7 @@ defmodule BoxlandWeb.LevelEditorLive do
   attr :selected_entity_id, :any
   attr :highlight_cells, :any, default: nil
   attr :entity_cell_index, :map, default: %{}
+  attr :entity_anim_attrs, :map, default: %{}
   attr :waypoint_markers, :map, default: %{}
   attr :path_cells, :any, default: nil
   attr :path_directions, :map, default: %{}
@@ -2159,6 +2304,7 @@ defmodule BoxlandWeb.LevelEditorLive do
               :for={layer <- @layers}
               class="pointer-events-none absolute inset-0 bg-no-repeat"
               style={layer_cell_style(@tilesets, layer, x, y)}
+              {cell_anim_attrs(@tilesets, layer, x, y)}
             />
 
             <span
@@ -2192,6 +2338,7 @@ defmodule BoxlandWeb.LevelEditorLive do
                 covering.entity.id == @selected_entity_id && "entity-pulse"
               ]}
               style={covering.sprite_style}
+              {Elixir.Map.get(@entity_anim_attrs, covering.entity.id, [])}
               aria-label={"entity #{covering.entity.id}"}
             >
               <span :if={covering.anchor? and is_nil(covering.sprite_style)}>
@@ -2250,6 +2397,7 @@ defmodule BoxlandWeb.LevelEditorLive do
   attr :selection, :any, default: nil
   attr :entity, :any
   attr :tool, :string, default: "select"
+  attr :assets_by_id, :map, default: %{}
 
   defp inspector(assigns) do
     ~H"""
@@ -2373,6 +2521,109 @@ defmodule BoxlandWeb.LevelEditorLive do
           </form>
         </div>
 
+        <div class="rounded-box bg-base-200 p-3" id="inspector-transform">
+          <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-base-content/70">
+            Transform
+          </h2>
+
+          <% transform = current_transform(@entity) %>
+
+          <form phx-change="transform_set" class="grid grid-cols-2 gap-2 text-xs">
+            <label class="label cursor-pointer justify-start gap-2 py-0">
+              <input type="hidden" name="mirror_x" value="false" />
+              <input
+                id="transform-mirror-x"
+                type="checkbox"
+                name="mirror_x"
+                value="true"
+                checked={transform["mirror_x"]}
+                class="checkbox checkbox-xs"
+              />
+              <span class="text-base-content/60">Mirror X</span>
+            </label>
+            <label class="label cursor-pointer justify-start gap-2 py-0">
+              <input type="hidden" name="mirror_y" value="false" />
+              <input
+                id="transform-mirror-y"
+                type="checkbox"
+                name="mirror_y"
+                value="true"
+                checked={transform["mirror_y"]}
+                class="checkbox checkbox-xs"
+              />
+              <span class="text-base-content/60">Mirror Y</span>
+            </label>
+            <label class="flex flex-col">
+              <span class="text-base-content/60">Rotation°</span>
+              <input
+                id="transform-rotation"
+                type="number"
+                name="rotation"
+                value={transform["rotation"]}
+                min="0"
+                max="359"
+                phx-debounce="300"
+                class="input input-xs input-bordered"
+              />
+            </label>
+            <label class="flex flex-col">
+              <span class="text-base-content/60">Scale</span>
+              <input
+                id="transform-scale"
+                type="number"
+                name="scale"
+                value={transform["scale"]}
+                min="0"
+                step="0.1"
+                phx-debounce="300"
+                class="input input-xs input-bordered"
+              />
+            </label>
+          </form>
+          <p class="mt-1 text-[10px] text-base-content/50">
+            Initial render transform. ECA transform actions can change it at runtime.
+          </p>
+        </div>
+
+        <div
+          :if={match?(%{"kind" => "animated"}, @entity.entity_type.visual_ref)}
+          class="rounded-box bg-base-200 p-3"
+          id="inspector-bindings"
+        >
+          <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-base-content/70">
+            Animation bindings
+          </h2>
+
+          <% bindings = @entity.entity_type.animation_bindings || %{} %>
+          <% sheet_animations = bindable_animations(@entity, @assets_by_id) %>
+
+          <form
+            :for={state <- ~w(idle moving default)}
+            phx-change="binding_set"
+            phx-value-state={state}
+            class="mb-1 flex items-center gap-2 text-xs"
+          >
+            <span class="w-16 font-mono text-base-content/70">{state}</span>
+            <select
+              id={"binding-#{state}"}
+              name="value"
+              class="select select-xs select-bordered flex-1"
+            >
+              <option value="" selected={is_nil(bindings[state])}>—</option>
+              <option
+                :for={name <- sheet_animations}
+                value={name}
+                selected={bindings[state] == name}
+              >
+                {name}
+              </option>
+            </select>
+          </form>
+          <p class="mt-1 text-[10px] text-base-content/50">
+            Which animation plays per state; "default" is the fallback.
+          </p>
+        </div>
+
         <div class="rounded-box bg-base-200 p-3" id="inspector-path">
           <div class="mb-2 flex items-center justify-between">
             <h2 class="text-sm font-semibold uppercase tracking-wide text-base-content/70">
@@ -2436,6 +2687,21 @@ defmodule BoxlandWeb.LevelEditorLive do
                 max="1000"
                 class="input input-xs input-bordered"
               />
+            </label>
+            <label
+              class="label col-span-3 cursor-pointer justify-start gap-2 py-0"
+              title="Mirror the sprite automatically when moving left vs right (art faces right)"
+            >
+              <input type="hidden" name="auto_facing" value="false" />
+              <input
+                id="movement-auto-facing"
+                type="checkbox"
+                name="auto_facing"
+                value="true"
+                checked={movement["auto_facing"]}
+                class="checkbox checkbox-xs"
+              />
+              <span class="text-base-content/60">Auto-facing (mirror on direction)</span>
             </label>
           </form>
 
@@ -2590,13 +2856,30 @@ defmodule BoxlandWeb.LevelEditorLive do
                 >
                   <select name="value" class="select select-xs select-bordered w-full">
                     <option
-                      :for={k <- ~w(spawn despawn proximity property)}
+                      :for={k <- ~w(spawn despawn proximity property waypoint)}
                       value={k}
                       selected={action["trigger"]["kind"] == k}
                     >
                       {k}
                     </option>
                   </select>
+                </form>
+
+                <form
+                  :if={action["trigger"]["kind"] == "waypoint"}
+                  phx-change="type_update_action"
+                  phx-value-action_id={action["id"]}
+                  phx-value-field="trigger.index"
+                  class="mt-1"
+                >
+                  <input
+                    name="value"
+                    value={action["trigger"]["index"] || "any"}
+                    placeholder={~s{waypoint # or "any"}}
+                    phx-debounce="300"
+                    class="input input-xs input-bordered w-full"
+                    title={~s{Which waypoint fires this: an index (0-based) or "any"}}
+                  />
                 </form>
               </div>
 
@@ -2611,7 +2894,7 @@ defmodule BoxlandWeb.LevelEditorLive do
                     <option
                       :for={
                         k <-
-                          ~w(spawn_self despawn_self spawn_other despawn_other modify_property)
+                          ~w(spawn_self despawn_self spawn_other despawn_other modify_property transform)
                       }
                       value={k}
                       selected={action["function"]["kind"] == k}
@@ -2620,6 +2903,81 @@ defmodule BoxlandWeb.LevelEditorLive do
                     </option>
                   </select>
                 </form>
+
+                <div :if={action["function"]["kind"] == "transform"} class="mt-1 space-y-1">
+                  <form
+                    phx-change="type_update_action"
+                    phx-value-action_id={action["id"]}
+                    phx-value-field="function.op"
+                  >
+                    <select name="value" class="select select-xs select-bordered w-full">
+                      <option
+                        :for={op <- ~w(mirror_x mirror_y rotate scale)}
+                        value={op}
+                        selected={action["function"]["op"] == op}
+                      >
+                        {op}
+                      </option>
+                    </select>
+                  </form>
+
+                  <form
+                    phx-change="type_update_action"
+                    phx-value-action_id={action["id"]}
+                    phx-value-field="function.mode"
+                  >
+                    <select name="value" class="select select-xs select-bordered w-full">
+                      <option
+                        :for={{mode, label} <- transform_mode_options(action["function"]["op"])}
+                        value={mode}
+                        selected={transform_mode_selected?(action["function"], mode)}
+                      >
+                        {label}
+                      </option>
+                    </select>
+                  </form>
+
+                  <form
+                    :if={action["function"]["op"] in ["rotate", "scale"]}
+                    phx-change="type_update_action"
+                    phx-value-action_id={action["id"]}
+                    phx-value-field="function.value"
+                  >
+                    <input
+                      name="value"
+                      type="number"
+                      step="any"
+                      value={action["function"]["value"]}
+                      placeholder={
+                        if action["function"]["op"] == "rotate", do: "degrees", else: "factor"
+                      }
+                      phx-debounce="300"
+                      class="input input-xs input-bordered w-full"
+                    />
+                  </form>
+
+                  <form
+                    :if={
+                      action["function"]["op"] in [nil, "mirror_x", "mirror_y"] and
+                        action["function"]["mode"] == "set"
+                    }
+                    phx-change="type_update_action"
+                    phx-value-action_id={action["id"]}
+                    phx-value-field="function.value"
+                  >
+                    <select name="value" class="select select-xs select-bordered w-full">
+                      <option value="true" selected={action["function"]["value"] in [true, "true"]}>
+                        mirrored
+                      </option>
+                      <option
+                        value="false"
+                        selected={action["function"]["value"] in [false, "false"]}
+                      >
+                        not mirrored
+                      </option>
+                    </select>
+                  </form>
+                </div>
               </div>
             </div>
           </div>
@@ -2641,6 +2999,32 @@ defmodule BoxlandWeb.LevelEditorLive do
       {"random", "Random pick"},
       {"off", "Off (don't move)"}
     ]
+  end
+
+  defp current_transform(entity) do
+    Map.get(entity.instance_overrides || %{}, "transform", Eca.default_transform())
+  end
+
+  defp bindable_animations(entity, assets_by_id) do
+    case entity.entity_type.visual_ref do
+      %{"kind" => "animated", "asset_id" => asset_id} ->
+        case Elixir.Map.get(assets_by_id, asset_id) do
+          %{metadata: meta} -> Enum.map(meta["animations"] || [], & &1["name"])
+          _ -> []
+        end
+
+      _ ->
+        []
+    end
+  end
+
+  defp transform_mode_options("rotate"), do: [{"set", "set"}, {"add", "add"}]
+  defp transform_mode_options("scale"), do: [{"set", "set"}, {"multiply", "multiply"}]
+  defp transform_mode_options(_mirror_or_nil), do: [{"toggle", "toggle"}, {"set", "set"}]
+
+  defp transform_mode_selected?(function, mode) do
+    default = if function["op"] in ["rotate", "scale"], do: "set", else: "toggle"
+    (function["mode"] || default) == mode
   end
 
   defp cell_highlighted?(nil, _x, _y), do: false
@@ -2690,10 +3074,42 @@ defmodule BoxlandWeb.LevelEditorLive do
     end
   end
 
+  # Sprite-hook attributes for animated layer cells (empty for static cells).
+  defp cell_anim_attrs(assets, layer, x, y) do
+    cell = Maps.tile_at(layer.tiles, x, y)
+
+    if BoxlandWeb.LevelRender.animated_cell?(cell) do
+      asset = Enum.find(assets, &(&1.id == cell["asset_id"]))
+
+      case BoxlandWeb.LevelRender.animation_data(asset, cell["animation"]) do
+        nil ->
+          []
+
+        data ->
+          [{"id", "lv-anim-#{layer.id}-#{x}-#{y}"} | BoxlandWeb.LevelRender.sprite_attrs(data)]
+      end
+    else
+      []
+    end
+  end
+
+  # Sprite-hook attributes per animated entity, for edit-mode coverings
+  # (ambient playback of the idle/default binding).
+  defp build_entity_anim_attrs(level, assets_by_id) do
+    refs = BoxlandWeb.LevelRender.entity_anim_refs(level, assets_by_id)
+
+    for e <- level.entities, asset = refs[e.id], asset != nil, into: %{} do
+      name = BoxlandWeb.LevelRender.resolved_animation(e.entity_type, "idle")
+
+      {e.id,
+       BoxlandWeb.LevelRender.sprite_attrs(BoxlandWeb.LevelRender.animation_data(asset, name))}
+    end
+  end
+
   defp tile_style(nil, _index), do: ""
 
   defp tile_style(asset, index) do
-    columns = asset.metadata["columns"]
+    columns = asset.metadata["columns"] || asset.metadata["grid_cols"] || 1
     x = rem(index, columns) * 32
     y = div(index, columns) * 32
 
@@ -2719,6 +3135,7 @@ defmodule BoxlandWeb.LevelEditorLive do
       |> assign(:play_selected, selected)
       |> assign(:path_cells, play_path_cells(selected, world))
       |> assign(:layers, visible_layers(assigns.level.map))
+      |> assign(:anim_index, build_play_anim_index(assigns.level, assigns.assets_by_id))
       |> assign(:px_w, assigns.level.map.width * @cell_px)
       |> assign(:px_h, assigns.level.map.height * @cell_px)
 
@@ -2842,7 +3259,8 @@ defmodule BoxlandWeb.LevelEditorLive do
                     :for={layer <- @layers}
                     :if={not tile_owned_by_entity?(layer, @design_tiles, x, y)}
                     class="pointer-events-none absolute inset-0 bg-no-repeat"
-                    style={layer_cell_style(@tilesets, layer, x, y)}
+                    style={layer_cell_style(@assets, layer, x, y)}
+                    {cell_anim_attrs(@assets, layer, x, y)}
                   />
                 </div>
               </div>
@@ -2863,11 +3281,20 @@ defmodule BoxlandWeb.LevelEditorLive do
                   id={"sim-entity-#{sim_id(e.id)}"}
                   style={sim_entity_style(e)}
                 >
-                  <span
-                    :for={{{dx, dy}, style} <- Elixir.Map.get(@sprite_styles, e.id, %{})}
-                    class="pointer-events-none absolute h-8 w-8 bg-no-repeat"
-                    style={"left: #{dx * 32}px; top: #{dy * 32}px; #{style}"}
-                  />
+                  <%!-- Visual wrapper: render transform (mirror/rotate/scale)
+                       lives here, separate from the position translate above. --%>
+                  <div
+                    class="pointer-events-none absolute left-0 top-0"
+                    style={sim_visual_style(e)}
+                  >
+                    <span
+                      :for={{{dx, dy}, style} <- Elixir.Map.get(@sprite_styles, e.id, %{})}
+                      id={"sim-sprite-#{sim_id(e.id)}-#{dx}x#{dy}"}
+                      class="pointer-events-none absolute h-8 w-8 bg-no-repeat"
+                      style={"left: #{dx * 32}px; top: #{dy * 32}px; #{style}"}
+                      {play_anim_attrs(@anim_index, e, @sim.tick)}
+                    />
+                  </div>
                   <button
                     phx-click="play_select_entity"
                     phx-value-id={sim_id(e.id)}
@@ -3094,6 +3521,47 @@ defmodule BoxlandWeb.LevelEditorLive do
 
   defp sim_entity_style(e) do
     "position: absolute; transform: translate(#{e.cell_x * @cell_px}px, #{e.cell_y * @cell_px}px); z-index: #{e.z || 0};"
+  end
+
+  # The inner visual wrapper carries the entity's render transform
+  # (mirror/rotate/scale about its own center), sized to the entity so
+  # multi-cell sprites flip as one unit. Identity transforms still render
+  # the wrapper, just without a transform declaration.
+  defp sim_visual_style(e) do
+    size = e[:size] || %{"w" => 1, "h" => 1}
+    w = (size["w"] || 1) * @cell_px
+    h = (size["h"] || 1) * @cell_px
+
+    "width: #{w}px; height: #{h}px; " <> BoxlandWeb.LevelRender.transform_style(e[:transform])
+  end
+
+  # `%{entity_id => %{asset, type}}` for animated design entities — used to
+  # bind the right animation (idle vs moving) per sim tick. Spawned-at-runtime
+  # entities have no level entity and keep their letter fallback.
+  defp build_play_anim_index(level, assets_by_id) do
+    refs = BoxlandWeb.LevelRender.entity_anim_refs(level, assets_by_id)
+
+    for e <- level.entities, asset = refs[e.id], asset != nil, into: %{} do
+      {e.id, %{asset: asset, type: e.entity_type}}
+    end
+  end
+
+  # Tick-synced sprite attributes: the frame is a pure function of the sim
+  # tick, so scrubbing the timeline reproduces frames deterministically.
+  defp play_anim_attrs(anim_index, e, tick) do
+    case Elixir.Map.get(anim_index, e.id) do
+      nil ->
+        []
+
+      %{asset: asset, type: type} ->
+        state = if e[:moving], do: "moving", else: "idle"
+        name = BoxlandWeb.LevelRender.resolved_animation(type, state)
+
+        case BoxlandWeb.LevelRender.animation_data(asset, name) do
+          nil -> []
+          data -> BoxlandWeb.LevelRender.sprite_attrs(data, sync: "tick", tick: tick)
+        end
+    end
   end
 
   defp sim_id({:spawned, n}), do: "spawned-#{n}"

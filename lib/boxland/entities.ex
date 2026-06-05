@@ -116,5 +116,22 @@ defmodule Boxland.Entities do
     })
   end
 
+  @doc """
+  Set one animation binding (state → animation name) on an entity type.
+  A nil/blank name removes the binding. States are free-form strings; the
+  runtime uses "idle", "moving", and the "default" fallback.
+  """
+  def put_animation_binding(%EntityType{} = type, state, name) do
+    bindings = type.animation_bindings || %{}
+
+    bindings =
+      case name do
+        empty when empty in [nil, ""] -> Elixir.Map.delete(bindings, state)
+        name -> Elixir.Map.put(bindings, state, name)
+      end
+
+    update_entity_type(type, %{"animation_bindings" => bindings})
+  end
+
   defp new_id, do: Ecto.UUID.generate()
 end

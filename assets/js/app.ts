@@ -379,6 +379,171 @@ const TileMaskPainter = {
   },
 }
 
+// === Sprite animation hook =========================================
+//
+// Plays a named spritesheet animation by stepping `background-position`
+// through a 32px frame grid. All playback state lives client-side; the
+// server only renders `data-sprite-*` attributes:
+//
+//   data-sprite-url     spritesheet image URL
+//   data-sprite-cols    frames per row in the sheet
+//   data-sprite-rows    rows in the sheet
+//   data-sprite-tile    rendered frame size in px (32, or larger for zoomed previews)
+//   data-sprite-frames  comma-separated frame indexes in playback order
+//   data-sprite-fps     frames per second (ambient mode)
+//   data-sprite-loop    "true" | "false"
+//   data-sprite-sync    "ambient" (free-running, shared rAF ticker) or
+//                       "tick" (frame is a pure function of data-sprite-tick —
+//                       deterministic under the play-mode scrubber)
+//   data-sprite-tick    current sim tick (tick mode only)
+//   data-sprite-ticks-per-frame  sim ticks per animation frame (tick mode, default 2)
+//
+// One module-level rAF loop drives every ambient sprite (per-element fps via
+// ms accumulators) instead of per-element timers.
+
+type SpriteRecord = {
+  el: HTMLElement;
+  url: string;
+  cols: number;
+  rows: number;
+  tile: number;
+  frames: number[];
+  fps: number;
+  loop: boolean;
+  accMs: number;
+  index: number;
+  lastFrame: number | null;
+}
+
+const spriteRegistry = new Set<SpriteRecord>()
+let spriteRafId: number | null = null
+let spriteLastTs: number | null = null
+
+function spriteLoop(ts: number) {
+  const dt = spriteLastTs === null ? 0 : ts - spriteLastTs
+  spriteLastTs = ts
+
+  spriteRegistry.forEach(rec => {
+    if (rec.frames.length === 0) return
+    rec.accMs += dt
+    const frameMs = 1000 / rec.fps
+    while (rec.accMs >= frameMs) {
+      rec.accMs -= frameMs
+      if (rec.loop) {
+        rec.index = (rec.index + 1) % rec.frames.length
+      } else if (rec.index < rec.frames.length - 1) {
+        rec.index += 1
+      }
+    }
+    spritePaint(rec, rec.frames[Math.min(rec.index, rec.frames.length - 1)])
+  })
+
+  if (spriteRegistry.size > 0) {
+    spriteRafId = requestAnimationFrame(spriteLoop)
+  } else {
+    spriteRafId = null
+    spriteLastTs = null
+  }
+}
+
+function spriteEnsureLoop() {
+  if (spriteRafId === null && spriteRegistry.size > 0) {
+    spriteLastTs = null
+    spriteRafId = requestAnimationFrame(spriteLoop)
+  }
+}
+
+function spritePaint(rec: SpriteRecord, frame: number) {
+  if (rec.lastFrame === frame) return
+  rec.lastFrame = frame
+  const col = frame % rec.cols
+  const row = Math.floor(frame / rec.cols)
+  rec.el.style.backgroundPosition = `-${col * rec.tile}px -${row * rec.tile}px`
+}
+
+// LiveView owns the `style` attribute and may re-render it on any patch, so
+// the image/size/position must be re-asserted from JS after every update.
+function spriteAssertBase(rec: SpriteRecord) {
+  rec.el.style.backgroundImage = `url('${rec.url}')`
+  rec.el.style.backgroundSize = `${rec.cols * rec.tile}px ${rec.rows * rec.tile}px`
+  rec.el.style.backgroundRepeat = "no-repeat"
+  rec.lastFrame = null
+}
+
+type SpriteHook = {
+  el: HTMLElement;
+  rec: SpriteRecord | null;
+  signature: string;
+  sync: () => void;
+}
+
+const Sprite = {
+  mounted(this: SpriteHook) {
+    this.rec = null
+    this.signature = ""
+    this.sync()
+  },
+
+  updated(this: SpriteHook) {
+    this.sync()
+  },
+
+  destroyed(this: SpriteHook) {
+    if (this.rec) spriteRegistry.delete(this.rec)
+    this.rec = null
+  },
+
+  sync(this: SpriteHook) {
+    const d = this.el.dataset
+    const frames = (d["spriteFrames"] ?? "")
+      .split(",")
+      .map(s => parseInt(s, 10))
+      .filter(n => Number.isFinite(n) && n >= 0)
+
+    const rec: SpriteRecord = {
+      el: this.el,
+      url: d["spriteUrl"] ?? "",
+      cols: Math.max(1, parseInt(d["spriteCols"] ?? "1", 10) || 1),
+      rows: Math.max(1, parseInt(d["spriteRows"] ?? "1", 10) || 1),
+      tile: Math.max(1, parseInt(d["spriteTile"] ?? "32", 10) || 32),
+      frames,
+      fps: Math.max(1, parseInt(d["spriteFps"] ?? "8", 10) || 8),
+      loop: d["spriteLoop"] !== "false",
+      accMs: this.rec?.accMs ?? 0,
+      index: this.rec?.index ?? 0,
+      lastFrame: null,
+    }
+
+    // Restart playback when the animation itself changed (different sheet
+    // or frame list, e.g. an idle→moving binding switch).
+    const signature = `${rec.url}|${rec.frames.join(",")}|${d["spriteSync"] ?? "ambient"}`
+    if (signature !== this.signature) {
+      this.signature = signature
+      rec.accMs = 0
+      rec.index = 0
+    }
+
+    if (this.rec) spriteRegistry.delete(this.rec)
+    this.rec = rec
+    spriteAssertBase(rec)
+    if (rec.frames.length === 0) return
+
+    if ((d["spriteSync"] ?? "ambient") === "tick") {
+      // Deterministic: frame is a pure function of the sim tick, so
+      // scrubbing the timeline always reproduces the same frame.
+      const tick = parseInt(d["spriteTick"] ?? "0", 10) || 0
+      const perFrame = Math.max(1, parseInt(d["spriteTicksPerFrame"] ?? "2", 10) || 2)
+      const step = Math.floor(tick / perFrame)
+      const idx = rec.loop ? step % rec.frames.length : Math.min(step, rec.frames.length - 1)
+      spritePaint(rec, rec.frames[idx])
+    } else {
+      spritePaint(rec, rec.frames[Math.min(rec.index, rec.frames.length - 1)])
+      spriteRegistry.add(rec)
+      spriteEnsureLoop()
+    }
+  },
+}
+
 // === IDE shell hooks ===============================================
 
 // Right-click context menus. Place on a wrapper; any descendant carrying
@@ -596,7 +761,7 @@ const WaypointDrag = {
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, MapmakerCanvas, TileMaskPainter, ContextMenu, TreeDnD, WaypointDrag},
+  hooks: {...colocatedHooks, MapmakerCanvas, TileMaskPainter, ContextMenu, TreeDnD, WaypointDrag, Sprite},
 })
 
 // Show progress bar on live navigation and form submits

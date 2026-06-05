@@ -38,6 +38,49 @@ defmodule BoxlandWeb.MapmakerLiveTest do
     assert html =~ "ground"
   end
 
+  test "paints animated tiles from a spritesheet animation", %{
+    conn: conn,
+    designer: designer,
+    map: map
+  } do
+    {:ok, sheet} =
+      Boxland.Library.create_spritesheet(designer.id, %{
+        name: "water",
+        sha256: :crypto.strong_rand_bytes(32),
+        content_url: "http://example.com/water.png",
+        byte_size: 1024,
+        mime_type: "image/png",
+        width: 128,
+        height: 32
+      })
+
+    {:ok, sheet} =
+      Boxland.Library.put_animations(sheet, [
+        %{"name" => "ripple", "frames" => [1, 2, 3], "fps" => 6, "loop" => true}
+      ])
+
+    {:ok, view, _html} = live(conn, ~p"/app/maps/#{map.id}")
+
+    # Selecting the spritesheet auto-selects its first animation.
+    render_change(view, "select_asset", %{"asset_id" => to_string(sheet.id)})
+    html = render_click(view, "cell", %{"x" => "2", "y" => "3"})
+
+    [layer] = Maps.list_layers(map.id)
+
+    assert %{
+             "asset_id" => asset_id,
+             "tile_index" => 1,
+             "kind" => "animated",
+             "animation" => "ripple"
+           } = Maps.tile_at(layer.tiles, 2, 3)
+
+    assert asset_id == sheet.id
+
+    # The canvas cell carries the ambient Sprite hook.
+    assert html =~ "map-anim-#{layer.id}-2-3"
+    assert html =~ ~s(data-sprite-frames="1,2,3")
+  end
+
   test "adds a new layer", %{conn: conn, map: map} do
     {:ok, view, _html} = live(conn, ~p"/app/maps/#{map.id}")
     render_click(view, "add_layer")

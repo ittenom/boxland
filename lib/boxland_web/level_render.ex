@@ -63,11 +63,157 @@ defmodule BoxlandWeb.LevelRender do
   def tile_style(nil, _index), do: ""
 
   def tile_style(asset, index) do
-    columns = asset.metadata["columns"] || 1
+    columns = asset.metadata["columns"] || asset.metadata["grid_cols"] || 1
     x = rem(index, columns) * @cell_px
     y = div(index, columns) * @cell_px
 
     "background-image: url('#{asset.content_url}'); background-position: -#{x}px -#{y}px;"
+  end
+
+  # === Spritesheet animations ===
+
+  @doc """
+  Playback data for a named animation on a spritesheet asset, or nil when
+  the asset/animation is missing or the animation has no frames. Accepts
+  both `%Asset{}` structs and string-keyed snapshot asset maps.
+  """
+  def animation_data(nil, _name), do: nil
+
+  def animation_data(%{"metadata" => meta, "content_url" => url}, name),
+    do: do_animation_data(meta, url, name)
+
+  def animation_data(%{metadata: meta, content_url: url}, name),
+    do: do_animation_data(meta, url, name)
+
+  defp do_animation_data(meta, url, name) do
+    case Enum.find(meta["animations"] || [], &(&1["name"] == name)) do
+      %{"frames" => [_ | _] = frames} = animation ->
+        %{
+          url: url,
+          cols: meta["grid_cols"] || 1,
+          rows: meta["grid_rows"] || 1,
+          frames: frames,
+          fps: animation["fps"] || 8,
+          loop: Map.get(animation, "loop", true)
+        }
+
+      _ ->
+        nil
+    end
+  end
+
+  @doc """
+  HTML attributes (including `phx-hook="Sprite"`) that make an element play
+  an animation. The caller must give the element a stable DOM id. Options:
+
+    * `:sync` — "ambient" (default) or "tick"
+    * `:tick` — current sim tick (required for tick sync)
+    * `:ticks_per_frame` — sim ticks per animation frame (tick sync, default 2)
+    * `:tile` — rendered frame size in px (default #{@cell_px})
+  """
+  def sprite_attrs(data, opts \\ [])
+  def sprite_attrs(nil, _opts), do: []
+
+  def sprite_attrs(data, opts) do
+    base = [
+      {"phx-hook", "Sprite"},
+      {"data-sprite-url", data.url},
+      {"data-sprite-cols", data.cols},
+      {"data-sprite-rows", data.rows},
+      {"data-sprite-tile", Keyword.get(opts, :tile, @cell_px)},
+      {"data-sprite-frames", Enum.join(data.frames, ",")},
+      {"data-sprite-fps", data.fps},
+      {"data-sprite-loop", to_string(data.loop)},
+      {"data-sprite-sync", Keyword.get(opts, :sync, "ambient")}
+    ]
+
+    case Keyword.get(opts, :tick) do
+      nil ->
+        base
+
+      tick ->
+        base ++
+          [
+            {"data-sprite-tick", tick},
+            {"data-sprite-ticks-per-frame", Keyword.get(opts, :ticks_per_frame, 2)}
+          ]
+    end
+  end
+
+  @doc "True when a layer-tile cell references a spritesheet animation."
+  def animated_cell?(%{"kind" => "animated", "animation" => _}), do: true
+  def animated_cell?(_cell), do: false
+
+  @doc "Animation playback data for an animated layer-tile cell."
+  def tile_anim_data(%{"asset_id" => asset_id, "animation" => name}, assets_by_id),
+    do: animation_data(Map.get(assets_by_id, asset_id), name)
+
+  def tile_anim_data(_cell, _assets_by_id), do: nil
+
+  @doc """
+  Pick the animation name for an entity given its sim state ("moving" or
+  "idle"): explicit binding → "default" binding → the visual_ref's own
+  animation. Accepts EntityType structs or string-keyed snapshot type maps.
+  """
+  def resolved_animation(%{"animation_bindings" => bindings, "visual_ref" => ref}, state),
+    do: do_resolved_animation(bindings, ref, state)
+
+  def resolved_animation(%{animation_bindings: bindings, visual_ref: ref}, state),
+    do: do_resolved_animation(bindings, ref, state)
+
+  defp do_resolved_animation(bindings, ref, state) do
+    bindings = bindings || %{}
+    bindings[state] || bindings["default"] || (ref || %{})["animation"]
+  end
+
+  @doc """
+  Spritesheet assets for every entity whose visual_ref is `"animated"`:
+  `%{entity_id => asset}`. Parallels `entity_sprite_styles/2` (which keeps
+  serving the static first-frame fallback for these entities).
+  """
+  def entity_anim_refs(level, assets_by_id) do
+    for e <- level.entities,
+        %{"kind" => "animated", "asset_id" => asset_id} <- [e.entity_type.visual_ref],
+        asset = Map.get(assets_by_id, asset_id),
+        asset != nil,
+        into: %{} do
+      {e.id, asset}
+    end
+  end
+
+  @doc "First frame of an animation — the static fallback frame."
+  def first_animation_frame(asset, name) do
+    case animation_data(asset, name) do
+      %{frames: [first | _]} -> first
+      _ -> 0
+    end
+  end
+
+  # === Graphics transforms ===
+
+  @default_transform %{"mirror_x" => false, "mirror_y" => false, "rotation" => 0, "scale" => 1.0}
+
+  @doc """
+  CSS for an entity's render transform (`%{"mirror_x", "mirror_y",
+  "rotation", "scale"}`). Mirrors fold into negative scale; the identity
+  transform renders as an empty string. Apply this to a wrapper sized to
+  the entity (not the positioned outer element — position translate and
+  visual transform must live on separate elements).
+  """
+  def transform_style(nil), do: ""
+
+  def transform_style(t) when is_map(t) do
+    t = Map.merge(@default_transform, t)
+    scale = if is_number(t["scale"]), do: t["scale"], else: 1.0
+    sx = scale * if t["mirror_x"], do: -1, else: 1
+    sy = scale * if t["mirror_y"], do: -1, else: 1
+    rotation = if is_number(t["rotation"]), do: t["rotation"], else: 0
+
+    if sx == 1 and sy == 1 and rotation == 0 do
+      ""
+    else
+      "transform: scale(#{sx}, #{sy}) rotate(#{rotation}deg); transform-origin: center;"
+    end
   end
 
   @doc """
@@ -105,6 +251,13 @@ defmodule BoxlandWeb.LevelRender do
         case Map.get(assets_by_id, asset_id) do
           nil -> %{}
           asset -> %{{0, 0} => sprite_full_style(asset)}
+        end
+
+      %{"kind" => "animated", "asset_id" => asset_id} = ref ->
+        # Static fallback (first frame); the Sprite hook animates over it.
+        case Map.get(assets_by_id, asset_id) do
+          nil -> %{}
+          asset -> %{{0, 0} => tile_style(asset, first_animation_frame(asset, ref["animation"]))}
         end
 
       _ ->

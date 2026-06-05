@@ -426,6 +426,18 @@ defmodule Boxland.Levels do
     {"sprite-#{asset_id}", "Sprite #{asset_id}", %{"kind" => "sprite", "asset_id" => asset_id}}
   end
 
+  defp type_descriptor_for({:animated, asset_id, animation}) do
+    # Animation names are designer-entered free text; hash them into the
+    # slug (like groups) so the slug regex always holds.
+    hash =
+      :crypto.hash(:sha256, "#{asset_id}:#{animation}")
+      |> Base.encode16(case: :lower)
+      |> binary_part(0, 12)
+
+    {"animated-#{asset_id}-#{hash}", "Animated #{animation}",
+     %{"kind" => "animated", "asset_id" => asset_id, "animation" => animation}}
+  end
+
   defp type_descriptor_for({:group, group_id}) do
     # group_id is URL-safe base64 (mixed case + _/-), which doesn't satisfy
     # EntityType's slug regex. Use a hex digest so the slug stays deterministic
@@ -524,7 +536,7 @@ defmodule Boxland.Levels do
 
   defp snapshot(level) do
     map = Repo.preload(level.map, :layers)
-    asset_ids = tile_asset_ids(map.layers)
+    asset_ids = Enum.uniq(tile_asset_ids(map.layers) ++ entity_asset_ids(level.entities))
     assets = assets_snapshot(asset_ids)
 
     %{
@@ -567,6 +579,7 @@ defmodule Boxland.Levels do
             "slug" => et.slug,
             "name" => et.name,
             "visual_ref" => et.visual_ref,
+            "animation_bindings" => et.animation_bindings,
             "size" => et.size,
             "properties" => et.properties,
             "actions" => et.actions,
@@ -587,6 +600,11 @@ defmodule Boxland.Levels do
             "z_index" => entity.z_index_override || entity.entity_type.default_z_index,
             "properties" => Entities.merge_properties(entity.entity_type, entity.properties),
             "instance_overrides" => entity.instance_overrides,
+            "waypoints" => entity.waypoints || [],
+            "movement" => entity.movement || %{},
+            "transform" =>
+              Elixir.Map.get(entity.instance_overrides || %{}, "transform") ||
+                Boxland.Game.Eca.default_transform(),
             "alive" => Elixir.Map.get(entity.script_state || %{}, "alive", true)
           }
         end)
@@ -599,6 +617,20 @@ defmodule Boxland.Levels do
       layer.tiles
       |> Map.values()
       |> Enum.map(& &1["asset_id"])
+    end)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+  end
+
+  # Assets referenced by entity visuals (sprites, tiles, spritesheet
+  # animations) — without these, published levels can't render entities.
+  defp entity_asset_ids(entities) do
+    entities
+    |> Enum.map(fn entity ->
+      case entity.entity_type.visual_ref do
+        %{"asset_id" => asset_id} -> asset_id
+        _ -> nil
+      end
     end)
     |> Enum.reject(&is_nil/1)
     |> Enum.uniq()

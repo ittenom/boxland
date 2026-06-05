@@ -83,7 +83,8 @@ defmodule Boxland.Levels.LevelEntity do
     %{
       "mode" => mode,
       "ticks_per_step" => clamp_int(Map.get(raw, "ticks_per_step"), 1, 1, 100),
-      "wait_at_waypoint" => clamp_int(Map.get(raw, "wait_at_waypoint"), 0, 0, 1000)
+      "wait_at_waypoint" => clamp_int(Map.get(raw, "wait_at_waypoint"), 0, 0, 1000),
+      "auto_facing" => Map.get(raw, "auto_facing", false) in [true, "true", "on"]
     }
   end
 

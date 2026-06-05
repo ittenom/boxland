@@ -243,6 +243,144 @@ defmodule BoxlandWeb.LevelEditorLiveTest do
     assert updated["trigger"]["kind"] == "proximity"
   end
 
+  test "action editor supports the waypoint trigger and transform function", %{
+    conn: conn,
+    designer: d,
+    level: level
+  } do
+    {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+    render_click(view, "preset", %{"preset" => "sign"})
+    render_click(view, "cell", %{"x" => "0", "y" => "0"})
+
+    [e] = Levels.get_level!(d.id, level.id).entities
+    render_click(view, "select_entity", %{"id" => to_string(e.id)})
+    render_click(view, "type_add_action")
+
+    [action] = Levels.get_entity(d.id, level.id, e.id).entity_type.actions
+
+    for {field, value} <- [
+          {"trigger.kind", "waypoint"},
+          {"trigger.index", "any"},
+          {"function.kind", "transform"},
+          {"function.op", "mirror_x"},
+          {"function.mode", "toggle"}
+        ] do
+      render_change(view, "type_update_action", %{
+        "action_id" => action["id"],
+        "field" => field,
+        "value" => value
+      })
+    end
+
+    [updated] = Levels.get_entity(d.id, level.id, e.id).entity_type.actions
+    assert updated["trigger"] == %{"kind" => "waypoint", "index" => "any"}
+
+    assert updated["function"] == %{
+             "kind" => "transform",
+             "op" => "mirror_x",
+             "mode" => "toggle"
+           }
+  end
+
+  test "transform inspector writes the instance transform override", %{
+    conn: conn,
+    designer: d,
+    level: level
+  } do
+    {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+    render_click(view, "preset", %{"preset" => "sign"})
+    render_click(view, "cell", %{"x" => "0", "y" => "0"})
+
+    [e] = Levels.get_level!(d.id, level.id).entities
+    render_click(view, "select_entity", %{"id" => to_string(e.id)})
+
+    render_change(view, "transform_set", %{
+      "mirror_x" => "true",
+      "mirror_y" => "false",
+      "rotation" => "450",
+      "scale" => "1.5"
+    })
+
+    e_after = Levels.get_entity(d.id, level.id, e.id)
+
+    assert e_after.instance_overrides["transform"] == %{
+             "mirror_x" => true,
+             "mirror_y" => false,
+             "rotation" => 90,
+             "scale" => 1.5
+           }
+  end
+
+  test "movement form stores the auto-facing flag", %{conn: conn, designer: d, level: level} do
+    {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+    render_click(view, "preset", %{"preset" => "sign"})
+    render_click(view, "cell", %{"x" => "0", "y" => "0"})
+
+    [e] = Levels.get_level!(d.id, level.id).entities
+    render_click(view, "select_entity", %{"id" => to_string(e.id)})
+
+    render_change(view, "movement_set", %{"auto_facing" => "true"})
+    assert Levels.get_entity(d.id, level.id, e.id).movement["auto_facing"] == true
+
+    render_change(view, "movement_set", %{"auto_facing" => "false"})
+    assert Levels.get_entity(d.id, level.id, e.id).movement["auto_facing"] == false
+  end
+
+  test "animated palette places an entity that tick-syncs in play mode", %{
+    conn: conn,
+    designer: d,
+    level: level
+  } do
+    {:ok, sheet} =
+      Boxland.Library.create_spritesheet(d.id, %{
+        name: "crab",
+        sha256: :crypto.strong_rand_bytes(32),
+        content_url: "http://example.com/crab.png",
+        byte_size: 1024,
+        mime_type: "image/png",
+        width: 128,
+        height: 32
+      })
+
+    {:ok, sheet} =
+      Boxland.Library.put_animations(sheet, [
+        %{"name" => "scuttle", "frames" => [0, 1, 2], "fps" => 8, "loop" => true}
+      ])
+
+    {:ok, view, _html} = live(conn, ~p"/app/levels/#{level.id}")
+
+    render_click(view, "pick_animated", %{
+      "asset_id" => to_string(sheet.id),
+      "animation" => "scuttle"
+    })
+
+    html = render_click(view, "cell", %{"x" => "2", "y" => "2"})
+
+    [e] = Levels.get_level!(d.id, level.id).entities
+
+    assert e.entity_type.visual_ref == %{
+             "kind" => "animated",
+             "asset_id" => sheet.id,
+             "animation" => "scuttle"
+           }
+
+    # Edit mode plays the animation ambiently.
+    assert html =~ ~s(data-sprite-sync="ambient")
+    assert html =~ ~s(data-sprite-frames="0,1,2")
+
+    # Play mode tick-syncs it, and scrubbing re-renders the tick.
+    html = render_click(view, "enter_play")
+    assert html =~ ~s(data-sprite-sync="tick")
+    assert html =~ ~s(data-sprite-tick="0")
+
+    render_click(view, "step")
+    html = render_click(view, "step")
+    assert html =~ ~s(data-sprite-tick="2")
+
+    html = render_change(view, "scrub", %{"tick" => "1"})
+    assert html =~ ~s(data-sprite-tick="1")
+  end
+
   test "delete entity removes it and clears selection", %{
     conn: conn,
     designer: d,

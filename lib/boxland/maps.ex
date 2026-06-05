@@ -648,11 +648,23 @@ defmodule Boxland.Maps do
   end
 
   defp stringify_tile(tile) do
-    %{
+    base = %{
       "asset_id" => tile.asset_id,
       "tile_index" => tile.tile_index,
       "rotation" => tile.rotation
     }
+
+    # Animated cells reference a named spritesheet animation; `tile_index`
+    # stays the animation's first frame so static readers degrade gracefully.
+    case Elixir.Map.get(tile, :animation) do
+      nil ->
+        base
+
+      animation ->
+        base
+        |> Elixir.Map.put("kind", "animated")
+        |> Elixir.Map.put("animation", animation)
+    end
   end
 
   defp next_z_index(map_id) do

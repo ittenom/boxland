@@ -324,6 +324,58 @@ defmodule Boxland.LevelsTest do
 
       assert %PublishedLevelVersion{} = Boxland.Levels.latest_published_version(level.id)
     end
+
+    test "snapshot carries movement, transform, bindings, and entity assets", %{
+      designer: d,
+      level: level
+    } do
+      {:ok, _spawn} = Boxland.Levels.create_preset_entity(d.id, level.id, "spawn", 0, 0)
+
+      {:ok, sheet} =
+        Boxland.Library.create_spritesheet(d.id, %{
+          name: "walker",
+          sha256: :crypto.strong_rand_bytes(32),
+          content_url: "http://example.com/walker.png",
+          byte_size: 1024,
+          mime_type: "image/png",
+          width: 128,
+          height: 32
+        })
+
+      {:ok, sheet} =
+        Boxland.Library.put_animations(sheet, [
+          %{"name" => "walk", "frames" => [0, 1, 2, 3], "fps" => 8, "loop" => true}
+        ])
+
+      {:ok, type} = Boxland.Levels.ensure_entity_type_for(d.id, {:animated, sheet.id, "walk"})
+      {:ok, type} = Boxland.Entities.put_animation_binding(type, "moving", "walk")
+
+      {:ok, walker} =
+        Boxland.Levels.spawn_entity(d.id, level.id, %{
+          "entity_type_id" => type.id,
+          "pos_x" => 32,
+          "pos_y" => 0,
+          "waypoints" => [%{"x" => 3, "y" => 0}],
+          "movement" => %{"mode" => "loop", "auto_facing" => true},
+          "instance_overrides" => %{"transform" => %{"mirror_x" => true}}
+        })
+
+      assert {:ok, version} = Boxland.Levels.publish_level(d.id, level.id)
+      snapshot = version.snapshot
+
+      walker_snap = Enum.find(snapshot["entities"], &(&1["id"] == walker.id))
+      assert walker_snap["waypoints"] == [%{"x" => 3, "y" => 0}]
+      assert walker_snap["movement"]["auto_facing"] == true
+      assert walker_snap["transform"]["mirror_x"] == true
+
+      type_snap = Enum.find(snapshot["entity_types"], &(&1["id"] == type.id))
+      assert type_snap["animation_bindings"] == %{"moving" => "walk"}
+      assert type_snap["visual_ref"]["kind"] == "animated"
+
+      # The spritesheet referenced only by the entity's visual_ref (not by
+      # any map tile) must still be captured.
+      assert Enum.any?(snapshot["assets"], &(&1["id"] == sheet.id))
+    end
   end
 
   describe "blocked_cells_by_z/2" do

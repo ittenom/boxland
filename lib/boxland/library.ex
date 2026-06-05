@@ -25,6 +25,13 @@ defmodule Boxland.Library do
     |> Repo.all()
   end
 
+  def list_spritesheets(owner_id) do
+    Asset
+    |> where([a], a.owner_id == ^owner_id and a.kind == "spritesheet")
+    |> order_by([a], asc: a.name)
+    |> Repo.all()
+  end
+
   def get_asset!(owner_id, id) do
     Repo.get_by!(Asset, id: id, owner_id: owner_id)
   end
@@ -45,6 +52,77 @@ defmodule Boxland.Library do
       |> Repo.insert()
     end
   end
+
+  def create_spritesheet(owner_id, attrs) do
+    with {:ok, metadata} <- spritesheet_metadata(attrs) do
+      %Asset{}
+      |> Asset.changeset(%{
+        owner_id: owner_id,
+        kind: "spritesheet",
+        name: attrs.name,
+        sha256: attrs.sha256,
+        content_url: attrs.content_url,
+        byte_size: attrs.byte_size,
+        mime_type: attrs.mime_type,
+        metadata: metadata
+      })
+      |> Repo.insert()
+    end
+  end
+
+  @max_animation_fps 60
+
+  @doc """
+  Replace the named animations on a spritesheet. Each animation is
+  `%{"name", "frames", "fps", "loop"}`; frames index into the sheet's
+  `grid_cols x grid_rows` grid in playback order (repeats allowed).
+  """
+  def put_animations(%Asset{kind: "spritesheet"} = asset, animations) when is_list(animations) do
+    with :ok <- validate_animations(animations, asset.metadata["frame_count"] || 0) do
+      asset
+      |> Asset.changeset(%{metadata: Map.put(asset.metadata, "animations", animations)})
+      |> Repo.update()
+    end
+  end
+
+  def animation(%Asset{kind: "spritesheet"} = asset, name) do
+    asset.metadata
+    |> Map.get("animations", [])
+    |> Enum.find(&(&1["name"] == name))
+  end
+
+  def animation(_asset, _name), do: nil
+
+  defp validate_animations(animations, frame_count) do
+    names = Enum.map(animations, & &1["name"])
+
+    cond do
+      Enum.any?(animations, &(not valid_animation?(&1, frame_count))) ->
+        {:error,
+         "each animation needs a name, in-range frames, fps 1-#{@max_animation_fps}, and a loop flag"}
+
+      length(Enum.uniq(names)) != length(names) ->
+        {:error, "animation names must be unique"}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp valid_animation?(
+         %{"name" => name, "frames" => frames, "fps" => fps, "loop" => loop},
+         frame_count
+       ) do
+    # Frames may be empty mid-edit (the designer adds them one click at a
+    # time); renderers skip animations with no frames.
+    is_binary(name) and String.trim(name) != "" and
+      is_list(frames) and
+      Enum.all?(frames, &(is_integer(&1) and &1 >= 0 and &1 < frame_count)) and
+      is_integer(fps) and fps >= 1 and fps <= @max_animation_fps and
+      is_boolean(loop)
+  end
+
+  defp valid_animation?(_animation, _frame_count), do: false
 
   def put_tile_collision(%Asset{kind: "tileset"} = asset, tile_index, mask)
       when is_integer(tile_index) and is_map(mask) do
@@ -216,6 +294,34 @@ defmodule Boxland.Library do
            "tile_count" => tile_count,
            "tile_indexes" => tile_indexes,
            "collisions" => %{}
+         }}
+    end
+  end
+
+  defp spritesheet_metadata(attrs) do
+    rows = div(attrs.height, @tile_size)
+    columns = div(attrs.width, @tile_size)
+    frame_count = rows * columns
+    frame_indexes = Map.get(attrs, :frame_indexes, Enum.to_list(0..(frame_count - 1)))
+
+    cond do
+      rem(attrs.width, @tile_size) != 0 or rem(attrs.height, @tile_size) != 0 ->
+        {:error, "spritesheet dimensions must be divisible by #{@tile_size}px"}
+
+      rows == 0 or columns == 0 ->
+        {:error, "spritesheet must contain at least one frame"}
+
+      true ->
+        {:ok,
+         %{
+           "tile_size" => @tile_size,
+           "width" => attrs.width,
+           "height" => attrs.height,
+           "grid_rows" => rows,
+           "grid_cols" => columns,
+           "frame_count" => frame_count,
+           "frame_indexes" => frame_indexes,
+           "animations" => []
          }}
     end
   end

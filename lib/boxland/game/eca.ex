@@ -13,7 +13,16 @@ defmodule Boxland.Game.Eca do
       }
 
   Each `entity_map` has `id, type_slug, tag, cell_x, cell_y, z, properties,
-  alive, actions, size`.
+  alive, actions, size, waypoints, movement, transform, moving`.
+
+  `transform` is the entity's render transform — designer-visible graphics
+  state mutated by the `"transform"` function kind and by auto-facing:
+
+      %{"mirror_x" => false, "mirror_y" => false, "rotation" => 0, "scale" => 1.0}
+
+  `moving` is true only on a tick where the auto-mover translated the
+  entity by one cell (renderers use it to pick "moving" vs "idle"
+  animation bindings).
 
   `tick/2` runs through every alive entity, evaluates triggers
   edge-style (prev → current transitions), applies the matching
@@ -27,8 +36,11 @@ defmodule Boxland.Game.Eca do
 
   # Properties prefixed with underscore are runtime bookkeeping (auto-mover
   # state) and should be filtered out of designer-facing inspectors.
-  @movement_state_keys ~w(_waypoint_index _waypoint_dir _wait_remaining _tick_counter)
+  @movement_state_keys ~w(_waypoint_index _waypoint_dir _wait_remaining _tick_counter _arrived_wp)
   def movement_state_keys, do: @movement_state_keys
+
+  @default_transform %{"mirror_x" => false, "mirror_y" => false, "rotation" => 0, "scale" => 1.0}
+  def default_transform, do: @default_transform
 
   @doc """
   Tick the world once: evaluate triggers, apply functions, run the
@@ -162,7 +174,31 @@ defmodule Boxland.Game.Eca do
     now? and not was?
   end
 
+  # Waypoint arrival. The auto-mover stamps `"_arrived_wp" => idx` into the
+  # entity's properties on the tick it translates onto a waypoint (and runs
+  # AFTER the cascade), so this trigger fires on the NEXT tick's cascade and
+  # the marker is cleared by the same tick's auto-mover — exactly once per
+  # arrival, including across `wait_at_waypoint` windows. `"index"` may be
+  # an integer, a numeric string, or `"any"` (the default).
+  defp trigger_fires?(_world, entity, %{"kind" => "waypoint"} = t) do
+    case Elixir.Map.get(entity.properties || %{}, "_arrived_wp") do
+      idx when is_integer(idx) -> waypoint_index_matches?(t, idx)
+      _ -> false
+    end
+  end
+
   defp trigger_fires?(_world, _entity, _), do: false
+
+  defp waypoint_index_matches?(%{"index" => i}, arrived) when is_integer(i), do: i == arrived
+
+  defp waypoint_index_matches?(%{"index" => i}, arrived) when is_binary(i) and i != "any" do
+    case Integer.parse(i) do
+      {n, ""} -> n == arrived
+      _ -> true
+    end
+  end
+
+  defp waypoint_index_matches?(_t, _arrived), do: true
 
   defp dig(nil, _), do: nil
   defp dig(value, []), do: value
@@ -294,7 +330,9 @@ defmodule Boxland.Game.Eca do
           properties: Elixir.Map.merge(default_properties(type), f["properties"] || %{}),
           alive: true,
           actions: type.actions || [],
-          size: type.size || %{"w" => 1, "h" => 1}
+          size: type.size || %{"w" => 1, "h" => 1},
+          transform: normalize_transform(f["transform"] || %{}),
+          moving: false
         }
 
         put_in(world, [:entities, id], spawned)
@@ -322,7 +360,81 @@ defmodule Boxland.Game.Eca do
     end)
   end
 
+  # Graphics transform: mutate the target's render transform. Ops:
+  #
+  #   - mirror_x / mirror_y: toggle by default; mode "set" + value for absolute
+  #   - rotate: set by default; mode "add" accumulates; normalized to 0..359
+  #   - scale: set by default; mode "multiply" compounds; clamped >= 0
+  #
+  # The synthetic player target is silently skipped (no transform state).
+  defp apply_function(world, self_entity, %{"kind" => "transform"} = f) do
+    targets = resolve_targets(world, self_entity, f["target"] || %{"kind" => "self"})
+
+    Enum.reduce(targets, world, fn t, acc ->
+      if Elixir.Map.has_key?(acc.entities, t.id) do
+        update_in(acc, [:entities, t.id], fn e ->
+          tr = apply_transform_op(e[:transform] || @default_transform, f)
+          Elixir.Map.put(e, :transform, tr)
+        end)
+      else
+        acc
+      end
+    end)
+  end
+
   defp apply_function(world, _self_entity, _), do: world
+
+  defp apply_transform_op(tr, %{"op" => "mirror_x"} = f),
+    do: Elixir.Map.put(tr, "mirror_x", mirror_op(tr["mirror_x"], f))
+
+  defp apply_transform_op(tr, %{"op" => "mirror_y"} = f),
+    do: Elixir.Map.put(tr, "mirror_y", mirror_op(tr["mirror_y"], f))
+
+  defp apply_transform_op(tr, %{"op" => "rotate"} = f) do
+    base = if f["mode"] == "add", do: tr["rotation"] || 0, else: 0
+    Elixir.Map.put(tr, "rotation", norm_deg(base + transform_num(f["value"], 0)))
+  end
+
+  defp apply_transform_op(tr, %{"op" => "scale"} = f) do
+    value = transform_num(f["value"], 1)
+    next = if f["mode"] == "multiply", do: (tr["scale"] || 1.0) * value, else: value
+    Elixir.Map.put(tr, "scale", norm_scale(next))
+  end
+
+  defp apply_transform_op(tr, _f), do: tr
+
+  defp mirror_op(_current, %{"mode" => "set"} = f), do: truthy?(f["value"])
+  defp mirror_op(current, _f), do: not truthy?(current)
+
+  defp truthy?(v), do: v not in [false, nil, "false", 0]
+
+  defp transform_num(n, _default) when is_number(n), do: n
+
+  defp transform_num(n, default) when is_binary(n) do
+    case Float.parse(n) do
+      {f, _} -> f
+      :error -> default
+    end
+  end
+
+  defp transform_num(_, default), do: default
+
+  defp norm_deg(d) when is_number(d), do: Integer.mod(trunc(d), 360)
+  defp norm_deg(_), do: 0
+
+  defp norm_scale(s) when is_number(s) and s >= 0, do: s
+  defp norm_scale(_), do: 1.0
+
+  defp normalize_transform(t) when is_map(t) do
+    %{
+      "mirror_x" => truthy?(Elixir.Map.get(t, "mirror_x", false)),
+      "mirror_y" => truthy?(Elixir.Map.get(t, "mirror_y", false)),
+      "rotation" => norm_deg(Elixir.Map.get(t, "rotation", 0)),
+      "scale" => norm_scale(Elixir.Map.get(t, "scale", 1.0))
+    }
+  end
+
+  defp normalize_transform(_), do: @default_transform
 
   # === Auto-mover ===
   #
@@ -346,7 +458,10 @@ defmodule Boxland.Game.Eca do
       entity = acc.entities[id]
 
       if movable?(entity) do
-        step_entity(acc, entity)
+        # `moving` defaults to false each tick; only an actual translate
+        # (in move_one_step) flips it back to true.
+        acc = put_in(acc, [:entities, id, :moving], false)
+        step_entity(acc, acc.entities[id])
       else
         acc
       end
@@ -377,7 +492,10 @@ defmodule Boxland.Game.Eca do
   end
 
   defp step_entity(world, entity) do
-    props = entity.properties || %{}
+    # The arrival marker lives exactly one tick: stamped on arrival (after
+    # the cascade), read by the next tick's cascade, cleared here before the
+    # next step. Re-arrival re-stamps it below.
+    props = Elixir.Map.delete(entity.properties || %{}, "_arrived_wp")
     waypoints = entity.waypoints
     len = length(waypoints)
     mode = movement_mode(entity)
@@ -428,11 +546,23 @@ defmodule Boxland.Game.Eca do
           world
           |> put_in([:entities, entity.id, :cell_x], elem(next, 0))
           |> put_in([:entities, entity.id, :cell_y], elem(next, 1))
+          |> put_in([:entities, entity.id, :moving], true)
+          |> maybe_face(entity, elem(next, 0) - elem(cur, 0))
 
         if next == tgt do
           # Arrived in the same tick — advance index now so the next tick
-          # heads to the next waypoint without an idle "arrive" step.
-          advance(world, entity, props, idx, dir, len, mode, wait)
+          # heads to the next waypoint without an idle "arrive" step. Stamp
+          # the arrival marker so waypoint triggers fire next cascade.
+          advance(
+            world,
+            entity,
+            Elixir.Map.put(props, "_arrived_wp", idx),
+            idx,
+            dir,
+            len,
+            mode,
+            wait
+          )
         else
           put_props(world, entity.id, ensure_dir(props, idx, dir))
         end
@@ -488,6 +618,21 @@ defmodule Boxland.Game.Eca do
 
   defp normalize_idx(idx, len) when len > 0, do: rem(max(idx, 0), len)
   defp normalize_idx(_, _), do: 0
+
+  # Auto-facing: when enabled on the entity's movement config, a horizontal
+  # step updates mirror_x so one right-facing sprite serves both directions.
+  defp maybe_face(world, entity, dx) when dx != 0 do
+    if truthy?(Elixir.Map.get(Elixir.Map.get(entity, :movement) || %{}, "auto_facing", false)) do
+      update_in(world, [:entities, entity.id], fn e ->
+        tr = Elixir.Map.put(e[:transform] || @default_transform, "mirror_x", dx < 0)
+        Elixir.Map.put(e, :transform, tr)
+      end)
+    else
+      world
+    end
+  end
+
+  defp maybe_face(world, _entity, _dx), do: world
 
   defp ensure_dir(props, idx, dir) do
     props
@@ -585,7 +730,76 @@ defmodule Boxland.Game.Eca do
            movement: Elixir.Map.get(e, :movement, %{}) || %{},
            alive: Elixir.Map.get(e.script_state || %{}, "alive", true),
            actions: type.actions || [],
-           size: type.size || %{"w" => 1, "h" => 1}
+           size: type.size || %{"w" => 1, "h" => 1},
+           transform: initial_transform(e),
+           moving: false
+         }}
+      end)
+
+    {px, py} = player_cell
+    pz = Keyword.get(opts, :player_z, 0)
+
+    %{
+      entities: entity_maps,
+      types: types,
+      player: %{cell_x: px, cell_y: py, z: pz},
+      bounds: Keyword.get(opts, :bounds, {1_000_000, 1_000_000}),
+      blocked_by_z: Keyword.get(opts, :blocked_by_z, %{}),
+      prev: %{},
+      depth: 0,
+      tick: 0,
+      seed: Keyword.get(opts, :seed, 0),
+      warnings: []
+    }
+  end
+
+  defp initial_transform(level_entity) do
+    overrides = Elixir.Map.get(level_entity, :instance_overrides) || %{}
+    normalize_transform(Elixir.Map.get(overrides, "transform") || %{})
+  end
+
+  @doc """
+  Build a starting world from a published-level snapshot (plain JSON maps,
+  as produced by `Boxland.Levels` publishing) and a player cell. Mirrors
+  `init_world/3` but reads string-keyed snapshot data; missing keys (old
+  snapshots) fall back to safe defaults.
+  """
+  def init_world_from_snapshot(snapshot, player_cell, opts \\ []) do
+    types_by_id =
+      Elixir.Map.new(snapshot["entity_types"] || [], fn et -> {et["id"], et} end)
+
+    types =
+      Elixir.Map.new(snapshot["entity_types"] || [], fn et ->
+        {et["slug"],
+         %{
+           slug: et["slug"],
+           default_z_index: et["default_z_index"],
+           properties: et["properties"],
+           actions: et["actions"],
+           size: et["size"]
+         }}
+      end)
+
+    entity_maps =
+      Elixir.Map.new(snapshot["entities"] || [], fn e ->
+        type = types_by_id[e["entity_type_id"]] || %{}
+
+        {e["id"],
+         %{
+           id: e["id"],
+           type_slug: type["slug"],
+           tag: e["tag"],
+           cell_x: div(e["pos_x"] || 0, 32),
+           cell_y: div(e["pos_y"] || 0, 32),
+           z: e["z_index"] || 0,
+           properties: e["properties"] || %{},
+           waypoints: e["waypoints"] || [],
+           movement: e["movement"] || %{},
+           alive: Elixir.Map.get(e, "alive", true),
+           actions: type["actions"] || [],
+           size: type["size"] || %{"w" => 1, "h" => 1},
+           transform: normalize_transform(e["transform"] || %{}),
+           moving: false
          }}
       end)
 

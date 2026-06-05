@@ -12,6 +12,7 @@ defmodule BoxlandWeb.MapmakerLive do
     map = Maps.get_map!(designer.id, id)
     primary = Maps.primary_layer(map)
     tilesets = Library.list_tilesets(designer.id)
+    spritesheets = Library.list_spritesheets(designer.id)
 
     {:ok,
      socket
@@ -19,8 +20,11 @@ defmodule BoxlandWeb.MapmakerLive do
      |> assign(:selected_layer_id, primary && primary.id)
      |> assign(:renaming_layer_id, nil)
      |> assign(:tilesets, tilesets)
+     |> assign(:spritesheets, spritesheets)
+     |> assign(:assets, tilesets ++ spritesheets)
      |> assign(:selected_asset_id, tilesets |> List.first() |> then(&(&1 && &1.id)))
      |> assign(:selected_tile, 0)
+     |> assign(:selected_animation, nil)
      |> assign(:tool, "place")
      |> assign(:selection, nil)
      |> assign(:clipboard, nil)
@@ -116,10 +120,24 @@ defmodule BoxlandWeb.MapmakerLive do
   end
 
   def handle_event("select_asset", %{"asset_id" => asset_id}, socket) do
+    asset_id = String.to_integer(asset_id)
+    asset = selected_asset(socket.assigns.assets, asset_id)
+
     {:noreply,
      socket
-     |> assign(:selected_asset_id, String.to_integer(asset_id))
+     |> assign(:selected_asset_id, asset_id)
      |> assign(:selected_tile, 0)
+     |> assign(:selected_animation, first_animation_name(asset))
+     |> assign(:tool, "place")
+     |> assign(:selection, nil)
+     |> assign(:move, nil)
+     |> assign(:cursor_cell, nil)}
+  end
+
+  def handle_event("select_animation", %{"name" => name}, socket) do
+    {:noreply,
+     socket
+     |> assign(:selected_animation, name)
      |> assign(:tool, "place")
      |> assign(:selection, nil)
      |> assign(:move, nil)
@@ -471,7 +489,7 @@ defmodule BoxlandWeb.MapmakerLive do
             </.panel_section>
 
             <.panel_section
-              title="Tilesets"
+              title="Palette"
               open={section_open?(@closed_sections, "tilesets")}
               phx-click="toggle_section"
               phx-value-id="tilesets"
@@ -480,14 +498,15 @@ defmodule BoxlandWeb.MapmakerLive do
                 id="tileset-select"
                 name="asset_id"
                 type="select"
-                label="Tileset"
+                label="Asset"
                 value={@selected_asset_id}
-                options={Enum.map(@tilesets, &{&1.name, &1.id})}
+                options={asset_options(@tilesets, @spritesheets)}
                 phx-change="select_asset"
               />
               <.tile_palette
-                asset={selected_asset(@tilesets, @selected_asset_id)}
+                asset={selected_asset(@assets, @selected_asset_id)}
                 selected_tile={@selected_tile}
+                selected_animation={@selected_animation}
               />
             </.panel_section>
           </.panel>
@@ -620,7 +639,8 @@ defmodule BoxlandWeb.MapmakerLive do
                 <span
                   :for={layer <- visible_layers(@map)}
                   class="pointer-events-none absolute inset-0 bg-no-repeat"
-                  style={layer_cell_style(@tilesets, layer, x, y)}
+                  style={layer_cell_style(@assets, layer, x, y)}
+                  {cell_anim_attrs(@assets, layer, x, y)}
                 />
               </button>
 
@@ -638,7 +658,7 @@ defmodule BoxlandWeb.MapmakerLive do
                 w={@move.w}
                 h={@move.h}
                 cursor_cell={@cursor_cell}
-                tilesets={@tilesets}
+                tilesets={@assets}
               />
 
               <.ghost_preview
@@ -648,7 +668,7 @@ defmodule BoxlandWeb.MapmakerLive do
                 w={@clipboard.w}
                 h={@clipboard.h}
                 cursor_cell={@cursor_cell}
-                tilesets={@tilesets}
+                tilesets={@assets}
                 ring_class="ring-secondary/70"
               />
             </div>
@@ -709,11 +729,48 @@ defmodule BoxlandWeb.MapmakerLive do
 
   attr :asset, :any, required: true
   attr :selected_tile, :integer, required: true
+  attr :selected_animation, :any, default: nil
 
   defp tile_palette(%{asset: nil} = assigns) do
     ~H"""
     <div class="rounded-box bg-base-200 p-4 text-sm text-base-content/60">
       Upload a tileset first.
+    </div>
+    """
+  end
+
+  defp tile_palette(%{asset: %{kind: "spritesheet"}} = assigns) do
+    assigns = assign(assigns, :animations, assigns.asset.metadata["animations"] || [])
+
+    ~H"""
+    <div :if={@animations == []} class="rounded-box bg-base-200 p-4 text-xs text-base-content/60">
+      No animations on this spritesheet yet — define them in the Asset Library.
+    </div>
+    <div :if={@animations != []} class="space-y-1">
+      <div class="grid grid-cols-6 gap-1">
+        <button
+          :for={animation <- @animations}
+          id={"anim-palette-#{@asset.id}-#{animation["name"]}"}
+          phx-click="select_animation"
+          phx-value-name={animation["name"]}
+          title={"#{animation["name"]} · #{animation["fps"]} fps"}
+          class={[
+            "h-8 w-8 border",
+            @selected_animation == animation["name"] && "border-primary",
+            @selected_animation != animation["name"] && "border-base-300"
+          ]}
+        >
+          <span
+            id={"anim-swatch-#{@asset.id}-#{animation["name"]}"}
+            class="block h-full w-full bg-no-repeat"
+            style="image-rendering: pixelated;"
+            {BoxlandWeb.LevelRender.sprite_attrs(BoxlandWeb.LevelRender.animation_data(@asset, animation["name"]))}
+          />
+        </button>
+      </div>
+      <p :if={@selected_animation} class="text-xs text-base-content/60">
+        Painting <span class="font-semibold">{@selected_animation}</span> as animated tiles.
+      </p>
     </div>
     """
   end
@@ -895,15 +952,11 @@ defmodule BoxlandWeb.MapmakerLive do
   defp paint_tile(%{assigns: %{tool: "place", selected_asset_id: asset_id}} = socket, x, y)
        when not is_nil(asset_id) do
     with %{} = layer <- active_layer(socket.assigns.map, socket.assigns.selected_layer_id),
-         true <- layer_editable?(layer) do
+         true <- layer_editable?(layer),
+         %{} = tile_value <- place_tile_value(socket) do
       tiles = layer.tiles
 
-      new_tiles =
-        Maps.put_tile(tiles, x, y, %{
-          asset_id: asset_id,
-          tile_index: socket.assigns.selected_tile,
-          rotation: 0
-        })
+      new_tiles = Maps.put_tile(tiles, x, y, tile_value)
 
       if new_tiles == tiles do
         {:noreply, socket}
@@ -965,11 +1018,10 @@ defmodule BoxlandWeb.MapmakerLive do
     new_tiles =
       case socket.assigns.tool do
         "place" ->
-          Maps.put_tile(tiles, x, y, %{
-            asset_id: socket.assigns.selected_asset_id,
-            tile_index: socket.assigns.selected_tile,
-            rotation: 0
-          })
+          case place_tile_value(socket) do
+            nil -> tiles
+            tile_value -> Maps.put_tile(tiles, x, y, tile_value)
+          end
 
         "delete" ->
           Maps.delete_tile(tiles, x, y)
@@ -1413,6 +1465,55 @@ defmodule BoxlandWeb.MapmakerLive do
     for y <- selection.y1..selection.y2, x <- selection.x1..selection.x2, do: {x, y}
   end
 
+  # The tile value the "place" tool writes: a static tileset tile, or an
+  # animated cell when a spritesheet animation is selected (nil = nothing
+  # paintable, e.g. spritesheet without a chosen animation).
+  defp place_tile_value(socket) do
+    case selected_asset(socket.assigns.assets, socket.assigns.selected_asset_id) do
+      %{kind: "spritesheet"} = sheet ->
+        case socket.assigns.selected_animation do
+          name when is_binary(name) ->
+            %{
+              asset_id: sheet.id,
+              tile_index: BoxlandWeb.LevelRender.first_animation_frame(sheet, name),
+              rotation: 0,
+              animation: name
+            }
+
+          _ ->
+            nil
+        end
+
+      %{} ->
+        %{
+          asset_id: socket.assigns.selected_asset_id,
+          tile_index: socket.assigns.selected_tile,
+          rotation: 0
+        }
+
+      nil ->
+        nil
+    end
+  end
+
+  defp asset_options(tilesets, []), do: Enum.map(tilesets, &{&1.name, &1.id})
+
+  defp asset_options(tilesets, spritesheets) do
+    [
+      {"Tilesets", Enum.map(tilesets, &{&1.name, &1.id})},
+      {"Spritesheets", Enum.map(spritesheets, &{&1.name, &1.id})}
+    ]
+  end
+
+  defp first_animation_name(%{kind: "spritesheet"} = asset) do
+    case asset.metadata["animations"] || [] do
+      [first | _] -> first["name"]
+      _ -> nil
+    end
+  end
+
+  defp first_animation_name(_asset), do: nil
+
   defp layer_cell_style(tilesets, layer, x, y) do
     case Maps.tile_at(layer.tiles, x, y) do
       nil ->
@@ -1427,10 +1528,29 @@ defmodule BoxlandWeb.MapmakerLive do
     end
   end
 
+  # Sprite-hook attributes for animated layer cells (empty for static cells).
+  defp cell_anim_attrs(assets, layer, x, y) do
+    cell = Maps.tile_at(layer.tiles, x, y)
+
+    if BoxlandWeb.LevelRender.animated_cell?(cell) do
+      asset = selected_asset(assets, cell["asset_id"])
+
+      case BoxlandWeb.LevelRender.animation_data(asset, cell["animation"]) do
+        nil ->
+          []
+
+        data ->
+          [{"id", "map-anim-#{layer.id}-#{x}-#{y}"} | BoxlandWeb.LevelRender.sprite_attrs(data)]
+      end
+    else
+      []
+    end
+  end
+
   defp tile_style(nil, _index), do: ""
 
   defp tile_style(asset, index) do
-    columns = asset.metadata["columns"]
+    columns = asset.metadata["columns"] || asset.metadata["grid_cols"] || 1
     x = rem(index, columns) * 32
     y = div(index, columns) * 32
 

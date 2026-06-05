@@ -81,6 +81,72 @@ defmodule BoxlandWeb.AssetLiveTest do
     assert html =~ ~s(id="upload-modal")
   end
 
+  describe "spritesheet animation editor" do
+    setup %{designer: designer} do
+      {:ok, sheet} =
+        Library.create_spritesheet(designer.id, %{
+          name: "hero",
+          sha256: :crypto.strong_rand_bytes(32),
+          content_url: "http://example.com/hero.png",
+          byte_size: 2048,
+          mime_type: "image/png",
+          width: 128,
+          height: 64
+        })
+
+      {:ok, sheet: sheet}
+    end
+
+    test "creates, edits, and deletes an animation", %{
+      conn: conn,
+      designer: designer,
+      sheet: sheet
+    } do
+      {:ok, view, _html} = live(conn, ~p"/app/assets")
+      render_click(view, "select_asset", %{"id" => sheet.id})
+
+      # Create.
+      render_submit(view, "anim_new", %{"animation" => %{"name" => "walk"}})
+      sheet = Library.get_asset!(designer.id, sheet.id)
+
+      assert [%{"name" => "walk", "frames" => [], "fps" => 8, "loop" => true}] =
+               sheet.metadata["animations"]
+
+      # Build the frame list by clicking frames (order preserved), toggle one off.
+      render_click(view, "anim_toggle_frame", %{"frame" => "4"})
+      render_click(view, "anim_toggle_frame", %{"frame" => "5"})
+      render_click(view, "anim_toggle_frame", %{"frame" => "6"})
+      render_click(view, "anim_toggle_frame", %{"frame" => "5"})
+
+      sheet = Library.get_asset!(designer.id, sheet.id)
+      assert [%{"frames" => [4, 6]}] = sheet.metadata["animations"]
+
+      # Settings.
+      render_change(view, "anim_settings", %{"animation" => %{"fps" => "12", "loop" => "false"}})
+      sheet = Library.get_asset!(designer.id, sheet.id)
+      assert [%{"fps" => 12, "loop" => false}] = sheet.metadata["animations"]
+
+      # The live preview plays via the Sprite hook.
+      assert render(view) =~ ~s(data-sprite-frames="4,6")
+
+      # Delete.
+      render_click(view, "anim_delete", %{"name" => "walk"})
+      sheet = Library.get_asset!(designer.id, sheet.id)
+      assert sheet.metadata["animations"] == []
+    end
+
+    test "rejects duplicate animation names", %{conn: conn, designer: designer, sheet: sheet} do
+      {:ok, view, _html} = live(conn, ~p"/app/assets")
+      render_click(view, "select_asset", %{"id" => sheet.id})
+
+      render_submit(view, "anim_new", %{"animation" => %{"name" => "walk"}})
+      render_submit(view, "anim_new", %{"animation" => %{"name" => "walk"}})
+
+      sheet = Library.get_asset!(designer.id, sheet.id)
+      assert length(sheet.metadata["animations"]) == 1
+    end
+  end
+
   defp create_tileset(designer, name) do
     Library.create_tileset(designer.id, %{
       name: name,
