@@ -3,8 +3,7 @@
 Boxland is a Phoenix application packaged for Railway with the root
 `Dockerfile` and `railway.toml`.
 
-This guide covers setting up a Railway project that can later be converted into
-a reusable Railway Template.
+This guide covers setting up a Railway project. With some config changes, you can deploy locally or on the platform of your choice.
 
 ## What Railway Uses From This Repo
 
@@ -125,21 +124,6 @@ If migrations fail:
 - Confirm the Postgres service is deployed and healthy.
 - Confirm the web service can read `DATABASE_URL`.
 
-## Create A Railway Template
-
-After the Railway project deploys successfully:
-
-1. Open the Railway project settings.
-2. Use Railway's "Generate Template from Project" flow.
-3. Confirm the template includes:
-   - The Boxland web service from this repo.
-   - The PostgreSQL service.
-   - The web service variables listed above.
-   - The checked-in `railway.toml` deployment settings.
-4. Mark `DESIGNER_EMAIL_DOMAIN` as optional so template users can decide
-   whether to restrict designer signups.
-5. Deploy the generated template once into a fresh project to verify the full
-   one-click flow.
 
 ## Local Reference
 
