@@ -379,6 +379,317 @@ const TileMaskPainter = {
   },
 }
 
+// === Tile collision editor hooks ===================================
+//
+// Shared geometry for the zoomed tile preview: pointer position → cell
+// coordinate in the tile's pixel grid. Derived from the overlay's bounding
+// box (not elementFromPoint), so drags keep tracking even when the pointer
+// leaves the preview, and clamped to the grid.
+
+function tileGridSize(el: HTMLElement): number {
+  const size = parseInt(el.dataset["grid"] ?? "", 10)
+  return Number.isFinite(size) && size > 0 ? size : 32
+}
+
+function tileCellAt(
+  el: HTMLElement,
+  event: {clientX: number; clientY: number},
+): {x: number; y: number} {
+  const bounds = el.getBoundingClientRect()
+  const size = tileGridSize(el)
+  const fx = ((event.clientX - bounds.left) / bounds.width) * size
+  const fy = ((event.clientY - bounds.top) / bounds.height) * size
+  return {
+    x: Math.min(size - 1, Math.max(0, Math.floor(fx))),
+    y: Math.min(size - 1, Math.max(0, Math.floor(fy))),
+  }
+}
+
+// --- TileRectDrag --------------------------------------------------
+//
+// Draws a collision rectangle by dragging on the tile preview. A marquee
+// div gives live feedback; the rect is only pushed to the server on
+// release.
+
+type TileRectDragHook = {
+  el: HTMLElement;
+  pushEvent(event: string, payload: Record<string, unknown>): void;
+  dragging: boolean;
+  start: {x: number; y: number} | null;
+  marquee: HTMLDivElement | null;
+  pointerDown: (event: PointerEvent) => void;
+  pointerMove: (event: PointerEvent) => void;
+  pointerUp: (event: PointerEvent) => void;
+  currentRect(event: PointerEvent): {x: number; y: number; width: number; height: number};
+  drawMarquee(rect: {x: number; y: number; width: number; height: number}): void;
+  removeMarquee(): void;
+}
+
+const TileRectDrag = {
+  mounted(this: TileRectDragHook) {
+    this.dragging = false
+    this.start = null
+    this.marquee = null
+
+    this.currentRect = event => {
+      const cell = tileCellAt(this.el, event)
+      const start = this.start ?? cell
+      const x = Math.min(start.x, cell.x)
+      const y = Math.min(start.y, cell.y)
+      return {
+        x,
+        y,
+        width: Math.max(start.x, cell.x) - x + 1,
+        height: Math.max(start.y, cell.y) - y + 1,
+      }
+    }
+
+    this.drawMarquee = rect => {
+      if (!this.marquee) {
+        this.marquee = document.createElement("div")
+        this.marquee.className =
+          "pointer-events-none absolute z-10 border-2 border-info bg-info/30"
+        this.el.appendChild(this.marquee)
+      }
+      const size = tileGridSize(this.el)
+      this.marquee.style.left = `${(rect.x / size) * 100}%`
+      this.marquee.style.top = `${(rect.y / size) * 100}%`
+      this.marquee.style.width = `${(rect.width / size) * 100}%`
+      this.marquee.style.height = `${(rect.height / size) * 100}%`
+    }
+
+    this.removeMarquee = () => {
+      this.marquee?.remove()
+      this.marquee = null
+    }
+
+    this.pointerDown = event => {
+      if (event.button !== 0) return
+      event.preventDefault()
+      this.dragging = true
+      this.start = tileCellAt(this.el, event)
+      this.el.setPointerCapture(event.pointerId)
+      this.drawMarquee(this.currentRect(event))
+    }
+
+    this.pointerMove = event => {
+      if (!this.dragging) return
+      event.preventDefault()
+      this.drawMarquee(this.currentRect(event))
+    }
+
+    this.pointerUp = event => {
+      if (!this.dragging) return
+      event.preventDefault()
+      if (this.el.hasPointerCapture(event.pointerId)) {
+        this.el.releasePointerCapture(event.pointerId)
+      }
+      this.dragging = false
+      this.removeMarquee()
+      if (event.type !== "pointercancel") {
+        this.pushEvent("set_rect", this.currentRect(event))
+      }
+      this.start = null
+    }
+
+    this.el.addEventListener("pointerdown", this.pointerDown)
+    this.el.addEventListener("pointermove", this.pointerMove)
+    this.el.addEventListener("pointerup", this.pointerUp)
+    this.el.addEventListener("pointercancel", this.pointerUp)
+  },
+
+  destroyed(this: TileRectDragHook) {
+    this.removeMarquee()
+    this.el.removeEventListener("pointerdown", this.pointerDown)
+    this.el.removeEventListener("pointermove", this.pointerMove)
+    this.el.removeEventListener("pointerup", this.pointerUp)
+    this.el.removeEventListener("pointercancel", this.pointerUp)
+  },
+}
+
+// --- TilePolygonDraw -----------------------------------------------
+//
+// Click on the preview to append a vertex; drag an existing vertex handle
+// to move it. The outline and handles are server-rendered SVG; during a
+// drag they are repositioned client-side for live feedback and the final
+// position is pushed on release.
+
+type TilePolygonDrawHook = {
+  el: HTMLElement;
+  pushEvent(event: string, payload: Record<string, unknown>): void;
+  dragIndex: number | null;
+  points: Array<[number, number]> | null;
+  pointerDown: (event: PointerEvent) => void;
+  pointerMove: (event: PointerEvent) => void;
+  pointerUp: (event: PointerEvent) => void;
+  readPoints(): Array<[number, number]>;
+  renderPoints(): void;
+}
+
+const TilePolygonDraw = {
+  mounted(this: TilePolygonDrawHook) {
+    this.dragIndex = null
+    this.points = null
+
+    this.readPoints = () => {
+      const circles = Array.from(this.el.querySelectorAll<SVGCircleElement>("[data-vertex]"))
+      circles.sort((a, b) => Number(a.dataset["index"]) - Number(b.dataset["index"]))
+      return circles.map(circle => [
+        Number(circle.getAttribute("cx")),
+        Number(circle.getAttribute("cy")),
+      ])
+    }
+
+    this.renderPoints = () => {
+      if (!this.points) return
+      const outline = this.el.querySelector("[data-polygon-outline]")
+      outline?.setAttribute("points", this.points.map(([x, y]) => `${x},${y}`).join(" "))
+      for (const circle of this.el.querySelectorAll<SVGCircleElement>("[data-vertex]")) {
+        const point = this.points[Number(circle.dataset["index"])]
+        if (point) {
+          circle.setAttribute("cx", `${point[0]}`)
+          circle.setAttribute("cy", `${point[1]}`)
+        }
+      }
+    }
+
+    this.pointerDown = event => {
+      if (event.button !== 0) return
+      event.preventDefault()
+
+      const handle =
+        event.target instanceof Element
+          ? event.target.closest<SVGElement>("[data-vertex]")
+          : null
+
+      if (handle && this.el.contains(handle)) {
+        const index = parseInt(handle.dataset["index"] ?? "", 10)
+        if (!Number.isFinite(index)) return
+        this.dragIndex = index
+        this.points = this.readPoints()
+        this.el.setPointerCapture(event.pointerId)
+        return
+      }
+
+      this.pushEvent("polygon_add_point", tileCellAt(this.el, event))
+    }
+
+    this.pointerMove = event => {
+      if (this.dragIndex === null || !this.points) return
+      event.preventDefault()
+      const cell = tileCellAt(this.el, event)
+      this.points[this.dragIndex] = [cell.x, cell.y]
+      this.renderPoints()
+    }
+
+    this.pointerUp = event => {
+      if (this.dragIndex === null) return
+      event.preventDefault()
+      if (this.el.hasPointerCapture(event.pointerId)) {
+        this.el.releasePointerCapture(event.pointerId)
+      }
+      const index = this.dragIndex
+      this.dragIndex = null
+      this.points = null
+      if (event.type !== "pointercancel") {
+        this.pushEvent("polygon_move_point", {index, ...tileCellAt(this.el, event)})
+      }
+    }
+
+    this.el.addEventListener("pointerdown", this.pointerDown)
+    this.el.addEventListener("pointermove", this.pointerMove)
+    this.el.addEventListener("pointerup", this.pointerUp)
+    this.el.addEventListener("pointercancel", this.pointerUp)
+  },
+
+  destroyed(this: TilePolygonDrawHook) {
+    this.el.removeEventListener("pointerdown", this.pointerDown)
+    this.el.removeEventListener("pointermove", this.pointerMove)
+    this.el.removeEventListener("pointerup", this.pointerUp)
+    this.el.removeEventListener("pointercancel", this.pointerUp)
+  },
+}
+
+// --- TileColorPicker -----------------------------------------------
+//
+// Eyedropper for color-driven collision: the tileset image is drawn to an
+// offscreen canvas and clicks on the preview sample the pixel under the
+// cursor, toggling that color on the server. Assets are served from a CDN,
+// so the image is requested with CORS; if the canvas ends up tainted (no
+// CORS headers) the server is told so it can point at the manual picker.
+
+type TileColorPickerHook = {
+  el: HTMLElement;
+  pushEvent(event: string, payload: Record<string, unknown>): void;
+  ctx: CanvasRenderingContext2D | null;
+  gone: boolean;
+  onClick: (event: MouseEvent) => void;
+  reportUnavailable(): void;
+}
+
+const TileColorPicker = {
+  mounted(this: TileColorPickerHook) {
+    this.ctx = null
+    this.gone = false
+
+    this.reportUnavailable = () => {
+      if (this.gone) return
+      this.pushEvent("eyedropper_unavailable", {})
+    }
+
+    const url = this.el.dataset["imageUrl"]
+    if (url) {
+      const image = new Image()
+      image.crossOrigin = "anonymous"
+      image.onload = () => {
+        if (this.gone) return
+        const canvas = document.createElement("canvas")
+        canvas.width = image.naturalWidth
+        canvas.height = image.naturalHeight
+        const ctx = canvas.getContext("2d", {willReadFrequently: true})
+        if (!ctx) {
+          this.reportUnavailable()
+          return
+        }
+        ctx.drawImage(image, 0, 0)
+        try {
+          ctx.getImageData(0, 0, 1, 1)
+        } catch {
+          this.reportUnavailable()
+          return
+        }
+        this.ctx = ctx
+      }
+      image.onerror = () => this.reportUnavailable()
+      image.src = url
+    } else {
+      this.reportUnavailable()
+    }
+
+    this.onClick = event => {
+      if (!this.ctx) return
+      const size = tileGridSize(this.el)
+      const cell = tileCellAt(this.el, event)
+      const tile = Number(this.el.dataset["tile"] ?? "0")
+      const cols = Math.max(1, Number(this.el.dataset["cols"] ?? "1"))
+      const sx = (tile % cols) * size + cell.x
+      const sy = Math.floor(tile / cols) * size + cell.y
+      const data = this.ctx.getImageData(sx, sy, 1, 1).data
+      const [r, g, b, a] = [data[0] ?? 0, data[1] ?? 0, data[2] ?? 0, data[3] ?? 0]
+      if (a === 0) return
+      const hex = [r, g, b].map(v => v.toString(16).padStart(2, "0")).join("")
+      this.pushEvent("pick_color", {color: `#${hex.toUpperCase()}`})
+    }
+
+    this.el.addEventListener("click", this.onClick)
+  },
+
+  destroyed(this: TileColorPickerHook) {
+    this.gone = true
+    this.el.removeEventListener("click", this.onClick)
+  },
+}
+
 // === Sprite animation hook =========================================
 //
 // Plays a named spritesheet animation by stepping `background-position`
@@ -761,7 +1072,7 @@ const WaypointDrag = {
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, MapmakerCanvas, TileMaskPainter, ContextMenu, TreeDnD, WaypointDrag, Sprite},
+  hooks: {...colocatedHooks, MapmakerCanvas, TileMaskPainter, TileRectDrag, TilePolygonDraw, TileColorPicker, ContextMenu, TreeDnD, WaypointDrag, Sprite},
 })
 
 // Show progress bar on live navigation and form submits

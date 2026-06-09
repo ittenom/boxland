@@ -61,6 +61,126 @@ defmodule BoxlandWeb.AssetLiveTest do
     assert Enum.at(Enum.at(rows, 2), 2) == false
   end
 
+  test "set_rect event from the drag hook stores a rectangle mask", %{
+    conn: conn,
+    designer: designer
+  } do
+    {:ok, asset} = create_tileset(designer, "Forest")
+
+    {:ok, view, _html} = live(conn, ~p"/app/assets")
+
+    render_click(view, "set_mode", %{"mode" => "rectangle"})
+    render_hook(view, "set_rect", %{"x" => 4, "y" => 8, "width" => 10, "height" => 6})
+
+    mask = Library.tile_collision(Library.get_asset!(designer.id, asset.id), 0)
+    assert mask["mode"] == "rectangle"
+    assert mask["rect"] == %{"x" => 4, "y" => 8, "width" => 10, "height" => 6}
+
+    rows = Boxland.Library.CollisionMask.rows(mask)
+    assert Enum.at(Enum.at(rows, 8), 4) == true
+    assert Enum.at(Enum.at(rows, 13), 13) == true
+    assert Enum.at(Enum.at(rows, 8), 3) == false
+    assert Enum.at(Enum.at(rows, 14), 4) == false
+  end
+
+  test "set_rect clamps out-of-range coordinates to the tile", %{
+    conn: conn,
+    designer: designer
+  } do
+    {:ok, asset} = create_tileset(designer, "Forest")
+
+    {:ok, view, _html} = live(conn, ~p"/app/assets")
+
+    render_click(view, "set_mode", %{"mode" => "rectangle"})
+    render_hook(view, "set_rect", %{"x" => 30, "y" => -2, "width" => 99, "height" => 0})
+
+    mask = Library.tile_collision(Library.get_asset!(designer.id, asset.id), 0)
+    assert mask["rect"] == %{"x" => 30, "y" => 0, "width" => 2, "height" => 1}
+  end
+
+  test "polygon vertices are added, moved, undone, and cleared by hook events", %{
+    conn: conn,
+    designer: designer
+  } do
+    {:ok, asset} = create_tileset(designer, "Forest")
+
+    {:ok, view, _html} = live(conn, ~p"/app/assets")
+
+    # Switching to polygon mode seeds the default full-tile square.
+    render_click(view, "set_mode", %{"mode" => "polygon"})
+
+    render_hook(view, "polygon_add_point", %{"x" => 16, "y" => 40})
+
+    mask = Library.tile_collision(Library.get_asset!(designer.id, asset.id), 0)
+    assert length(mask["points"]) == 5
+    # Out-of-range coordinates are clamped to the tile.
+    assert Enum.at(mask["points"], 4) == %{"x" => 16, "y" => 31}
+
+    render_hook(view, "polygon_move_point", %{"index" => 4, "x" => 10, "y" => 12})
+    mask = Library.tile_collision(Library.get_asset!(designer.id, asset.id), 0)
+    assert Enum.at(mask["points"], 4) == %{"x" => 10, "y" => 12}
+
+    # Out-of-range index is ignored.
+    render_hook(view, "polygon_move_point", %{"index" => 9, "x" => 0, "y" => 0})
+    mask = Library.tile_collision(Library.get_asset!(designer.id, asset.id), 0)
+    assert length(mask["points"]) == 5
+
+    render_click(view, "polygon_undo_point")
+    mask = Library.tile_collision(Library.get_asset!(designer.id, asset.id), 0)
+    assert length(mask["points"]) == 4
+
+    render_click(view, "polygon_clear_points")
+    mask = Library.tile_collision(Library.get_asset!(designer.id, asset.id), 0)
+    assert mask["points"] == []
+    refute mask |> Boxland.Library.CollisionMask.to_booleans() |> Enum.any?()
+  end
+
+  test "colors are sampled, added, and removed without text entry", %{
+    conn: conn,
+    designer: designer
+  } do
+    {:ok, asset} = create_tileset(designer, "Forest")
+
+    {:ok, view, _html} = live(conn, ~p"/app/assets")
+
+    render_click(view, "set_mode", %{"mode" => "colors"})
+
+    # Eyedropper toggles: first click adds (normalized upcase), second removes.
+    render_hook(view, "pick_color", %{"color" => "#aabbcc"})
+    mask = Library.tile_collision(Library.get_asset!(designer.id, asset.id), 0)
+    assert mask["colors"] == ["#AABBCC"]
+
+    render_hook(view, "pick_color", %{"color" => "#AABBCC"})
+    mask = Library.tile_collision(Library.get_asset!(designer.id, asset.id), 0)
+    assert mask["colors"] == []
+
+    # Native color input adds; duplicates are ignored.
+    render_submit(view, "add_color", %{"color" => "#112233"})
+    render_submit(view, "add_color", %{"color" => "#112233"})
+    mask = Library.tile_collision(Library.get_asset!(designer.id, asset.id), 0)
+    assert mask["colors"] == ["#112233"]
+
+    # Invalid values are rejected.
+    render_hook(view, "pick_color", %{"color" => "not-a-color"})
+    mask = Library.tile_collision(Library.get_asset!(designer.id, asset.id), 0)
+    assert mask["colors"] == ["#112233"]
+
+    render_click(view, "remove_color", %{"color" => "#112233"})
+    mask = Library.tile_collision(Library.get_asset!(designer.id, asset.id), 0)
+    assert mask["colors"] == []
+  end
+
+  test "eyedropper_unavailable shows the fallback hint", %{conn: conn, designer: designer} do
+    {:ok, _asset} = create_tileset(designer, "Forest")
+
+    {:ok, view, _html} = live(conn, ~p"/app/assets")
+
+    render_click(view, "set_mode", %{"mode" => "colors"})
+    html = render_hook(view, "eyedropper_unavailable", %{})
+
+    assert html =~ "Pixel sampling isn&#39;t available"
+  end
+
   test "renders inside the IDE shell with the library and a selected asset", %{
     conn: conn,
     designer: designer

@@ -22,6 +22,7 @@ defmodule BoxlandWeb.AssetLive do
       |> assign(:selected_animation, nil)
       |> assign(:upload_open?, false)
       |> assign(:rename_id, nil)
+      |> assign(:eyedropper_unavailable?, false)
       |> assign(:form, to_form(%{"name" => "", "kind" => "tileset"}, as: :asset))
       |> auto_select_asset()
       |> allow_upload(:tileset,
@@ -91,7 +92,8 @@ defmodule BoxlandWeb.AssetLive do
      |> assign(:selected_asset, asset)
      |> assign(:selected_tile, first_tile_index(asset))
      |> assign(:selected_animation, first_animation_name(asset))
-     |> assign(:rename_id, nil)}
+     |> assign(:rename_id, nil)
+     |> assign(:eyedropper_unavailable?, false)}
   end
 
   def handle_event("select_tile", %{"tile" => tile}, socket) do
@@ -182,24 +184,94 @@ defmodule BoxlandWeb.AssetLive do
     apply_mask(socket, new_mask)
   end
 
-  def handle_event("update_rect", %{"rect" => params}, socket) do
-    mask = Library.collision_from_params("rectangle", params)
-    apply_mask(socket, mask)
+  def handle_event(
+        "set_rect",
+        %{"x" => x, "y" => y, "width" => width, "height" => height},
+        socket
+      )
+      when is_integer(x) and is_integer(y) and is_integer(width) and is_integer(height) do
+    size = CollisionMask.size()
+    x = clamp(x, 0, size - 1)
+    y = clamp(y, 0, size - 1)
+    width = clamp(width, 1, size - x)
+    height = clamp(height, 1, size - y)
+
+    apply_mask(socket, CollisionMask.rectangle(x, y, width, height))
   end
 
-  def handle_event("update_polygon", %{"polygon" => %{"points" => raw}}, socket) do
-    case parse_polygon_points(raw) do
-      {:ok, points} ->
-        apply_mask(socket, CollisionMask.polygon(points))
+  def handle_event("polygon_add_point", %{"x" => x, "y" => y}, socket)
+      when is_integer(x) and is_integer(y) do
+    apply_mask(socket, CollisionMask.polygon(polygon_points(socket) ++ [clamp_point(x, y)]))
+  end
+
+  def handle_event("polygon_move_point", %{"index" => index, "x" => x, "y" => y}, socket)
+      when is_integer(index) and is_integer(x) and is_integer(y) do
+    points = polygon_points(socket)
+
+    if index >= 0 and index < length(points) do
+      points = List.replace_at(points, index, clamp_point(x, y))
+      apply_mask(socket, CollisionMask.polygon(points))
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event("polygon_undo_point", _params, socket) do
+    case polygon_points(socket) do
+      [] -> {:noreply, socket}
+      points -> apply_mask(socket, CollisionMask.polygon(Enum.drop(points, -1)))
+    end
+  end
+
+  def handle_event("polygon_clear_points", _params, socket) do
+    apply_mask(socket, CollisionMask.polygon([]))
+  end
+
+  def handle_event("pick_color", %{"color" => color}, socket) do
+    case normalize_color(color) do
+      {:ok, color} ->
+        colors = mask_colors(socket)
+
+        colors =
+          if color in colors,
+            do: List.delete(colors, color),
+            else: colors ++ [color]
+
+        apply_mask(socket, CollisionMask.colors(colors))
 
       :error ->
         {:noreply, socket}
     end
   end
 
-  def handle_event("update_colors", %{"colors" => %{"colors" => raw}}, socket) do
-    mask = Library.collision_from_params("colors", %{"colors" => raw})
-    apply_mask(socket, mask)
+  def handle_event("add_color", %{"color" => color}, socket) do
+    case normalize_color(color) do
+      {:ok, color} ->
+        colors = mask_colors(socket)
+
+        if color in colors do
+          {:noreply, socket}
+        else
+          apply_mask(socket, CollisionMask.colors(colors ++ [color]))
+        end
+
+      :error ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_event("remove_color", %{"color" => color}, socket) do
+    case normalize_color(color) do
+      {:ok, color} ->
+        apply_mask(socket, CollisionMask.colors(List.delete(mask_colors(socket), color)))
+
+      :error ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_event("eyedropper_unavailable", _params, socket) do
+    {:noreply, assign(socket, :eyedropper_unavailable?, true)}
   end
 
   def handle_event("paint_pixels", %{"pixels" => pixels, "value" => value}, socket)
@@ -350,6 +422,7 @@ defmodule BoxlandWeb.AssetLive do
             selected_asset={@selected_asset}
             selected_tile={@selected_tile}
             selected_animation={@selected_animation}
+            eyedropper_unavailable?={@eyedropper_unavailable?}
           />
         </:inspector>
 
@@ -659,6 +732,7 @@ defmodule BoxlandWeb.AssetLive do
   attr :selected_asset, :any, required: true
   attr :selected_tile, :integer, required: true
   attr :selected_animation, :any, default: nil
+  attr :eyedropper_unavailable?, :boolean, default: false
 
   defp editor_panel(%{selected_asset: %{kind: "spritesheet"}} = assigns) do
     assigns =
@@ -807,6 +881,7 @@ defmodule BoxlandWeb.AssetLive do
           asset={@selected_asset}
           selected_tile={@selected_tile}
           mode={current_mode(@selected_asset, @selected_tile)}
+          eyedropper_unavailable?={@eyedropper_unavailable?}
         />
       </div>
 
@@ -829,13 +904,23 @@ defmodule BoxlandWeb.AssetLive do
       |> assign(:zoom, @preview_zoom)
 
     mode = assigns.mask["mode"]
-    paintable? = mode == "manual"
-    show_overlay? = mode not in ["none", "colors"]
+
+    overlay_hook =
+      case mode do
+        "manual" -> "TileMaskPainter"
+        "rectangle" -> "TileRectDrag"
+        "polygon" -> "TilePolygonDraw"
+        "colors" -> "TileColorPicker"
+        _ -> nil
+      end
 
     assigns =
       assigns
-      |> assign(:paintable?, paintable?)
-      |> assign(:show_overlay?, show_overlay?)
+      |> assign(:mode, mode)
+      |> assign(:overlay_hook, overlay_hook)
+      |> assign(:show_overlay?, mode != "none")
+      |> assign(:show_cells?, mode not in ["none", "colors"])
+      |> assign(:polygon_points, mask_points(assigns.mask))
 
     ~H"""
     <div
@@ -850,17 +935,20 @@ defmodule BoxlandWeb.AssetLive do
 
       <div
         :if={@show_overlay?}
-        id={"mask-overlay-#{@asset.id}-#{@selected_tile}"}
-        phx-hook={(@paintable? && "TileMaskPainter") || nil}
+        id={"mask-overlay-#{@asset.id}-#{@selected_tile}-#{@mode}"}
+        phx-hook={@overlay_hook}
         data-tile={@selected_tile}
+        data-grid={@tile_size}
+        data-cols={meta_cols(@asset)}
+        data-image-url={@asset.content_url}
         class={[
           "absolute inset-0 grid touch-none",
-          @paintable? && "cursor-crosshair"
+          @overlay_hook && "cursor-crosshair"
         ]}
         style={"grid-template-columns: repeat(#{@tile_size}, 1fr); grid-template-rows: repeat(#{@tile_size}, 1fr);"}
       >
         <div
-          :for={{solid?, x, y} <- mask_pixels(@asset, @selected_tile)}
+          :for={{solid?, x, y} <- (@show_cells? && mask_pixels(@asset, @selected_tile)) || []}
           data-mask-cell
           data-x={x}
           data-y={y}
@@ -871,6 +959,34 @@ defmodule BoxlandWeb.AssetLive do
             !solid? && "bg-transparent"
           ]}
         />
+
+        <svg
+          :if={@mode == "polygon"}
+          viewBox={"0 0 #{@tile_size} #{@tile_size}"}
+          class="absolute inset-0 h-full w-full"
+          style="pointer-events: none;"
+          aria-hidden="true"
+        >
+          <polygon
+            :if={@polygon_points != []}
+            data-polygon-outline
+            points={Enum.map_join(@polygon_points, " ", fn {x, y} -> "#{x},#{y}" end)}
+            class="fill-info/25 stroke-info"
+            stroke-width="0.3"
+            stroke-linejoin="round"
+          />
+          <circle
+            :for={{{x, y}, index} <- Enum.with_index(@polygon_points)}
+            data-vertex
+            data-index={index}
+            cx={x}
+            cy={y}
+            r="1"
+            class="fill-info stroke-base-100"
+            stroke-width="0.3"
+            style="pointer-events: auto; cursor: grab;"
+          />
+        </svg>
       </div>
     </div>
     """
@@ -899,108 +1015,76 @@ defmodule BoxlandWeb.AssetLive do
   attr :asset, :map, required: true
   attr :selected_tile, :integer, required: true
   attr :mode, :string, required: true
+  attr :eyedropper_unavailable?, :boolean, default: false
 
   defp mode_controls(%{mode: "rectangle"} = assigns) do
     rect = current_mask(assigns.asset, assigns.selected_tile)["rect"] || %{}
     assigns = assign(assigns, :rect, rect)
 
     ~H"""
-    <form phx-change="update_rect" class="space-y-2">
+    <div class="space-y-2">
       <p class="text-xs text-base-content/60">
-        Rectangle covers the area you set. Values are in 32-pixel tile coordinates.
+        Drag on the preview above to draw the collision rectangle. Coordinates are in 32-pixel tile space.
       </p>
-      <div class="grid grid-cols-2 gap-2">
-        <label class="form-control">
-          <span class="label-text text-xs">X</span>
-          <input
-            type="number"
-            name="rect[x]"
-            value={Map.get(@rect, "x", 0)}
-            min="0"
-            max="31"
-            class="input input-sm w-full"
-          />
-        </label>
-        <label class="form-control">
-          <span class="label-text text-xs">Y</span>
-          <input
-            type="number"
-            name="rect[y]"
-            value={Map.get(@rect, "y", 0)}
-            min="0"
-            max="31"
-            class="input input-sm w-full"
-          />
-        </label>
-        <label class="form-control">
-          <span class="label-text text-xs">Width</span>
-          <input
-            type="number"
-            name="rect[width]"
-            value={Map.get(@rect, "width", 32)}
-            min="1"
-            max="32"
-            class="input input-sm w-full"
-          />
-        </label>
-        <label class="form-control">
-          <span class="label-text text-xs">Height</span>
-          <input
-            type="number"
-            name="rect[height]"
-            value={Map.get(@rect, "height", 32)}
-            min="1"
-            max="32"
-            class="input input-sm w-full"
-          />
-        </label>
-      </div>
-    </form>
+      <p class="rounded bg-base-300/40 px-2 py-1 font-mono text-xs text-base-content/80">
+        x {Map.get(@rect, "x", 0)} · y {Map.get(@rect, "y", 0)} · w {Map.get(@rect, "width", 32)} · h {Map.get(
+          @rect,
+          "height",
+          32
+        )}
+      </p>
+    </div>
     """
   end
 
   defp mode_controls(%{mode: "polygon"} = assigns) do
-    points = current_mask(assigns.asset, assigns.selected_tile)["points"] || []
-    text = format_polygon_points(points)
-    assigns = assign(assigns, :points_text, text)
+    points = mask_points(current_mask(assigns.asset, assigns.selected_tile))
+    assigns = assign(assigns, :points, points)
 
     ~H"""
-    <form phx-change="update_polygon" phx-submit="update_polygon" class="space-y-2">
+    <div class="space-y-2">
       <p class="text-xs text-base-content/60">
-        Points as <code>x,y</code>
-        pairs separated by spaces. Example: <code>0,0 31,0 31,31 0,31</code>.
+        Click the preview above to add a vertex; drag a vertex to move it.
+        Pixels inside the outline become solid.
       </p>
-      <textarea
-        name="polygon[points]"
-        rows="3"
-        class="textarea textarea-sm w-full font-mono"
-        spellcheck="false"
-        phx-debounce="500"
-      >{@points_text}</textarea>
-    </form>
+      <p class="rounded bg-base-300/40 px-2 py-1 font-mono text-xs text-base-content/80">
+        {length(@points)} point{if length(@points) == 1, do: "", else: "s"}
+      </p>
+      <div class="flex flex-wrap gap-2">
+        <button
+          type="button"
+          class="btn btn-sm btn-ghost"
+          phx-click="polygon_undo_point"
+          disabled={@points == []}
+        >
+          <.icon name="hero-arrow-uturn-left" class="size-4" /> Undo point
+        </button>
+        <button
+          type="button"
+          class="btn btn-sm btn-ghost"
+          phx-click="polygon_clear_points"
+          disabled={@points == []}
+        >
+          <.icon name="hero-x-mark" class="size-4" /> Clear
+        </button>
+      </div>
+    </div>
     """
   end
 
   defp mode_controls(%{mode: "colors"} = assigns) do
     colors = current_mask(assigns.asset, assigns.selected_tile)["colors"] || []
-    assigns = assign(assigns, :colors_text, Enum.join(colors, ", "))
     assigns = assign(assigns, :colors_list, colors)
 
     ~H"""
-    <form phx-change="update_colors" class="space-y-2">
+    <div class="space-y-2">
       <p class="text-xs text-base-content/60">
-        Collision derived at runtime from these tile colors. Comma-separated <code>#rrggbb</code>
-        values.
+        Collision derived at runtime from these tile colors. Click the preview above to
+        sample a color from the tile; click a sampled color again to remove it.
       </p>
-      <input
-        type="text"
-        name="colors[colors]"
-        value={@colors_text}
-        placeholder="#000000, #5a5a5a"
-        class="input input-sm w-full font-mono"
-        spellcheck="false"
-        phx-debounce="500"
-      />
+      <p :if={@eyedropper_unavailable?} class="text-xs text-warning">
+        Pixel sampling isn't available for this image — add colors with the picker below.
+      </p>
       <div :if={@colors_list != []} class="flex flex-wrap gap-2">
         <span
           :for={color <- @colors_list}
@@ -1011,9 +1095,33 @@ defmodule BoxlandWeb.AssetLive do
             style={"background: #{color};"}
           />
           {color}
+          <button
+            type="button"
+            class="btn btn-ghost btn-xs btn-square -mr-1 h-4 min-h-4 w-4"
+            phx-click="remove_color"
+            phx-value-color={color}
+            aria-label={"Remove #{color}"}
+          >
+            <.icon name="hero-x-mark" class="size-3" />
+          </button>
         </span>
       </div>
-    </form>
+      <p :if={@colors_list == []} class="text-xs text-base-content/60">
+        No colors yet — click the preview to sample one.
+      </p>
+      <form phx-submit="add_color" class="flex items-center gap-2">
+        <input
+          type="color"
+          name="color"
+          value="#000000"
+          class="h-8 w-10 cursor-pointer rounded border border-base-300 bg-base-100 p-0.5"
+          aria-label="Pick a color to add"
+        />
+        <button type="submit" class="btn btn-sm btn-ghost">
+          <.icon name="hero-plus" class="size-4" /> Add color
+        </button>
+      </form>
+    </div>
     """
   end
 
@@ -1349,6 +1457,8 @@ defmodule BoxlandWeb.AssetLive do
   defp mask_for_mode("full", _current), do: CollisionMask.full()
   defp mask_for_mode(_, _current), do: CollisionMask.none()
 
+  defp clamp(value, lower, upper), do: value |> max(lower) |> min(upper)
+
   defp apply_mask(socket, mask) do
     {:ok, asset} =
       Library.put_tile_collision(
@@ -1425,36 +1535,28 @@ defmodule BoxlandWeb.AssetLive do
     end
   end
 
-  defp parse_polygon_points(raw) when is_binary(raw) do
-    raw
-    |> String.split(~r/\s+/, trim: true)
-    |> Enum.reduce_while([], fn pair, acc ->
-      case String.split(pair, ",", parts: 2) do
-        [x, y] ->
-          with {xi, ""} <- Integer.parse(String.trim(x)),
-               {yi, ""} <- Integer.parse(String.trim(y)) do
-            {:cont, [{xi, yi} | acc]}
-          else
-            _ -> {:halt, :error}
-          end
+  defp polygon_points(socket), do: mask_points(current_mask(socket))
 
-        _ ->
-          {:halt, :error}
-      end
-    end)
-    |> case do
-      :error -> :error
-      list when is_list(list) -> {:ok, Enum.reverse(list)}
-    end
-  end
-
-  defp parse_polygon_points(_), do: :error
-
-  defp format_polygon_points(points) do
-    points
-    |> Enum.map_join(" ", fn
-      %{"x" => x, "y" => y} -> "#{x},#{y}"
-      {x, y} -> "#{x},#{y}"
+  defp mask_points(mask) do
+    (mask["points"] || [])
+    |> Enum.flat_map(fn
+      %{"x" => x, "y" => y} when is_integer(x) and is_integer(y) -> [{x, y}]
+      _ -> []
     end)
   end
+
+  defp clamp_point(x, y) do
+    size = CollisionMask.size()
+    {clamp(x, 0, size - 1), clamp(y, 0, size - 1)}
+  end
+
+  defp mask_colors(socket), do: current_mask(socket)["colors"] || []
+
+  defp normalize_color(color) when is_binary(color) do
+    if Regex.match?(~r/^#[0-9a-fA-F]{6}$/, color),
+      do: {:ok, String.upcase(color)},
+      else: :error
+  end
+
+  defp normalize_color(_color), do: :error
 end
